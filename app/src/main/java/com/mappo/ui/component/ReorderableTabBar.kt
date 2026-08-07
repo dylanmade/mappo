@@ -134,6 +134,11 @@ fun ReorderableTabBar(
     // Remap Controls top bar.
     dense: Boolean = false,
     focusMotion: TabFocusMotion = TabFocusMotion.Scale,
+    // When true the tab strip wraps its content instead of stretching, so the chevrons flank
+    // the tab GROUP (and the whole bar can be centered by its parent) rather than pinning to
+    // the container edges. Overflowing tabs still consume all available width, which pushes
+    // the chevrons back out to the edges — exactly when they're needed for scrolling.
+    hugTabs: Boolean = false,
     menuContent: @Composable ColumnScope.(tab: TabBarItem) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -166,7 +171,7 @@ fun ReorderableTabBar(
             )
         }
         LazyRow(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = !hugTabs),
             state = listState,
             horizontalArrangement = Arrangement.Start,
         ) {

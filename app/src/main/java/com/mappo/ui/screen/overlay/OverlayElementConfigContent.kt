@@ -536,8 +536,9 @@ private fun <T> OptionPillRow(
     }
 }
 
-/** The stack a pre-layer element starts editing from: its light-appearance look, as layers. */
-private fun legacyAppearance(element: OverlayElement, defaultFill: Color): ElementAppearance =
+/** The stack a pre-layer element starts editing from: its light-appearance look, as layers.
+ *  Internal: the live editor's Customize menu seeds from the same rule. */
+internal fun legacyAppearance(element: OverlayElement, defaultFill: Color): ElementAppearance =
     ElementAppearance(
         corners = CornerRadii.uniform(
             when (element.shape) {

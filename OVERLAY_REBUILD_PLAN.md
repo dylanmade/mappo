@@ -255,6 +255,31 @@ layouts can be designed against it. While on, nothing can leave the square:
   taps on the masked area outside dismiss like scrim taps. Only the EXIT CONFIRM stays
   truly full-screen.
 
+### Editor rework — Assign + Customize in the cascading menu (2026-07-20) — 🔨 CODE COMPLETE
+The config drawer flunked the 1:1 test; per-button editing moved into the cascading menu
+(root "Edit" → two rows, both enabled on single selection):
+- **Assign** (edit icon, wide level): one row per commanded gesture — [press-type
+  MappoPillButton] ▸(lucide_play_filled)▸ [output MappoPillButton], the remap editor's
+  input→output row shape. Each pill opens the next menu level: press-type picker (occupied
+  gestures disabled; moves the binding) / output picker (None + OverlayCommonCommands).
+  "Add command" lists unbound gestures; a session-local `draft` list keeps added-but-still-
+  unbound rows visible (and rows set to None) while the level is open.
+- **Customize**: "Global" (wide level: element opacity, corner radius + per-corner
+  expander, text color w/ inline picker) then the layer stack top-first (Fill/Stroke items
+  numbered per kind → wide layer level: Paint solid/gradient radio picker level, solid
+  color row w/ inline picker OR embedded GradientEditor, layer opacity, stroke width/
+  alignment/style/gradient-mode (Value-trailing rows opening radio picker levels)/offsets,
+  move up/down (keepOpen), delete), then "Add fill"/"Add stroke" (keepOpen).
+- **Menu widget extensions**: `MenuEntry.Custom(key, content)` rows (embedded controls;
+  content gets an `openSubmenu(subKey, builder)` anchored at the row), `Item.keepOpen`
+  (in-place mutations), `Item.submenuWidthDp` (wide levels, `WIDE_MENU_WIDTH_DP` 240 vs
+  156), per-level width threaded through toggle/open/push/root paths. Fly-out max height
+  now = editable-bounds height (they scroll — anchored submenus carry no drag expectation,
+  unlike the draggable root panel); fly-out windows are now FOCUSABLE so MappoSlider value
+  fields can raise the IME.
+- The drawer (`showConfig`/`ConfigDrawer`) still exists and is reachable by tapping a
+  sole-selected button — retire or repoint once the menu flow is validated on device.
+
 ### Later (out of MVP scope, noted as seams)
 - Converge to the chosen editor; delete the other + the `OverlayTouchable*` bridge; retire
   the tabbed keyboard once superseded.

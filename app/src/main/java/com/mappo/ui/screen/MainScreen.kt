@@ -1,11 +1,7 @@
 package com.mappo.ui.screen
 
 import android.app.Activity
-import android.graphics.Rect
-import android.os.Build
 import android.util.Log
-import android.view.ViewTreeObserver
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.LocalIndication
@@ -44,6 +40,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.Palette
@@ -66,7 +63,6 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -77,7 +73,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -152,10 +147,7 @@ import com.mappo.ui.MappoGesture
 import com.mappo.ui.nav.MappoRoute
 import com.mappo.ui.screen.home.HandheldFrame
 import com.mappo.ui.screen.home.HandheldFrameSlideMillis
-import com.mappo.ui.screen.home.HomeFlower
-import com.mappo.ui.screen.home.HomeMenuEntry
-import com.mappo.ui.screen.keyboard.KeyboardHost
-import com.mappo.ui.screen.keyboard.KeyboardHostMode
+import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
 import com.mappo.ui.screen.keyboard.TabActionDialog
@@ -256,50 +248,40 @@ fun MainScreen(
     val navController = rememberNavController()
 
     // Toolbar-overlay deep launch: navigate to the requested route. Keyed on the nonce (not the
-    // route) so re-tapping the same destination after backing out re-navigates. startDestination
-    // stays MAIN, so Back from the deep screen returns to the Mappo home. nonce 0 = no request.
+    // route) so re-tapping the same destination after backing out re-navigates. singleTop so a
+    // request for the home route (REMAP_CONTROLS) doesn't stack a second copy on itself.
     LaunchedEffect(deepLinkNonce) {
         if (deepLinkNonce > 0 && deepLinkRoute != null) {
-            navController.navigate(deepLinkRoute)
+            navController.navigate(deepLinkRoute) { launchSingleTop = true }
         }
     }
 
-    // Toggle window flags + back-gesture suppression based on which destination is showing
-    // and whether the drawer is open. Keeping these conditional (vs. unconditional in
-    // MainActivity) is what makes back-gesture / back-button work on the secondary screens
-    // and on the drawer (drawer-open implies the user is choosing nav, not playing a game).
+    // The home route is the Remap Controls screen (the d-pad flower home was retired
+    // 2026-08-07): opening Mappo lands straight on the controls page.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
-    val isMainRoute = currentBackStackEntry?.destination?.route == MappoRoute.MAIN
-    val keyboardViewActive = isMainRoute && !frameVisible
-    SuppressEdgeBackGesture(active = keyboardViewActive)
-    // Back on the home dismisses the frame (which backgrounds the task — see the frameVisible
-    // effect below). Sub-screens pop via Navigation's own back handling, so this is scoped to
-    // the visible home only.
-    BackHandler(enabled = isMainRoute && frameVisible) {
-        frameVisible = false
-    }
+    val isHomeRoute = currentBackStackEntry?.destination?.route == MappoRoute.REMAP_CONTROLS
 
-    // The home is a fullscreen *transparent* window, so a dismissed frame on the MAIN route is
+    // The home is a fullscreen *transparent* window, so a dismissed frame on the home route is
     // an invisible trap: nothing is drawn, yet the activity still swallows every touch over
-    // the app the user can see underneath. Treat "frame dismissed on MAIN" (scrim tap / back /
-    // B) as "leave Mappo" — send the task to the back so touches fall through to that app.
-    // Navigations off MAIN don't touch frameVisible, so they never background the task.
+    // the app the user can see underneath. Treat "frame dismissed on home" (scrim tap / back)
+    // as "leave Mappo" — send the task to the back so touches fall through to that app.
+    // Navigations off the home don't touch frameVisible, so they never background the task.
     val activity = context as? Activity
-    val currentIsMainRoute by rememberUpdatedState(isMainRoute)
-    // Dismissing the home on MAIN means "leave Mappo": background the task so touches fall
-    // through to the app underneath. The delay lets the frame's slide-down exit play before
-    // the task disappears.
+    val currentIsHomeRoute by rememberUpdatedState(isHomeRoute)
+    // Dismissing the home means "leave Mappo": background the task so touches fall through to
+    // the app underneath. The delay lets the frame's slide-down exit play before the task
+    // disappears.
     LaunchedEffect(frameVisible) {
-        if (!frameVisible && currentIsMainRoute) {
+        if (!frameVisible && currentIsHomeRoute) {
             delay(HandheldFrameSlideMillis + 60L)
             activity?.moveTaskToBack(true)
         }
     }
-    // Re-entering MAIN (popping back from a settings screen) restores the frame, rather than
-    // dropping the user onto the empty transparent trap. First composition is already visible,
-    // so this is a no-op there.
-    LaunchedEffect(isMainRoute) {
-        if (isMainRoute) frameVisible = true
+    // Re-entering the home (popping back from a settings screen) restores the frame, rather
+    // than dropping the user onto the empty transparent trap. First composition is already
+    // visible, so this is a no-op there.
+    LaunchedEffect(isHomeRoute) {
+        if (isHomeRoute) frameVisible = true
     }
     // Select+A chord while Mappo is foreground (see InputAccessibilityService): toggle the
     // frame in place. Dismissing slides it down and backgrounds the task — directly here for
@@ -308,7 +290,7 @@ fun MainScreen(
         MainActivity.homeToggleRequests.collect {
             if (frameVisible) {
                 frameVisible = false
-                if (!currentIsMainRoute) {
+                if (!currentIsHomeRoute) {
                     delay(HandheldFrameSlideMillis + 60L)
                     activity?.moveTaskToBack(true)
                 }
@@ -356,7 +338,7 @@ fun MainScreen(
     val screenContent: @Composable () -> Unit = {
         NavHost(
             navController = navController,
-            startDestination = MappoRoute.MAIN,
+            startDestination = MappoRoute.REMAP_CONTROLS,
             // The soft keyboard OVERLAYS the UI — it must never move or squeeze it (imePadding
             // here used to shrink the routes inside the handheld frame's LCD whenever the IME
             // opened, shifting everything; removed 2026-07-11). Fields low on the screen may
@@ -368,236 +350,6 @@ fun MainScreen(
             popEnterTransition = { fadeIn(tween(250)) },
             popExitTransition = { fadeOut(tween(250)) },
         ) {
-            composable(MappoRoute.MAIN) {
-                // surfaceContainerLowest — root app Scaffold (M3 default; do not override to colorScheme.background)
-                Scaffold(
-                    snackbarHost = {
-                        val prompt = pendingPrompt
-                        if (prompt != null) {
-                            // Non-blocking inline banner (Card) instead of a Snackbar — the
-                            // 3-action prompt violates Snackbar's single-action contract,
-                            // and a banner-shaped card communicates "decision required" without
-                            // pretending to be a passive toast.
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = MaterialTheme.colorScheme.onSurface,
-                                ),
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(
-                                        text = stringResource(R.string.auto_switch_prompt_title, prompt.appLabel),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                    )
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
-                                    ) {
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.ignorePackageForever(prompt.pkg)
-                                                pendingPrompt = null
-                                            },
-                                            colors = ButtonDefaults.textButtonColors(
-                                                contentColor = MaterialTheme.colorScheme.error
-                                            )
-                                        ) { Text(stringResource(R.string.auto_switch_prompt_never)) }
-                                        TextButton(
-                                            onClick = { pendingPrompt = null },
-                                            colors = ButtonDefaults.textButtonColors(
-                                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        ) { Text(stringResource(R.string.auto_switch_prompt_no)) }
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.acceptCreateProfilePrompt(prompt.pkg, prompt.appLabel)
-                                                pendingPrompt = null
-                                            }
-                                        ) { Text(stringResource(R.string.auto_switch_prompt_yes)) }
-                                    }
-                                }
-                            }
-                        } else {
-                            SnackbarHost(snackbarHostState) { data ->
-                                Snackbar(
-                                    snackbarData = data,
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = MaterialTheme.colorScheme.onSurface,
-                                    actionColor = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    },
-                    // Transparent so the app underneath shows through the translucent window.
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                    contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0)
-                ) { _ ->
-                    // The d-pad flower home, rendered on the handheld's screen canvas.
-                    HomeFlower(
-                        // Master power (the old toolbar's master switch) drives remap AND the
-                        // button overlay to the same value in lockstep — one control for both
-                        // features. (Does NOT auto-show the overlay at app launch; the overlay
-                        // follows the toggle when the user flips it.)
-                        powerOn = remapEnabled,
-                        onPowerChange = { target ->
-                            if (remapEnabled != target) viewModel.toggleRemap()
-                            if (overlayShowing != target) viewModel.toggleOverlay()
-                        },
-                        onOpenProfile = { navController.navigate(MappoRoute.CHANGE_PROFILE) },
-                        onEditOverlay = {
-                            // Live overlay editing happens over the game — slide the handheld
-                            // away (backgrounding Mappo via the frameVisible effect) so the
-                            // editor chrome sits over the app underneath.
-                            viewModel.startLiveOverlayEdit()
-                            frameVisible = false
-                        },
-                        onEditControls = { navController.navigate(MappoRoute.REMAP_CONTROLS) },
-                        onDismiss = { frameVisible = false },
-                        settingsEntries = listOf(
-                            HomeMenuEntry("auto_switch", "Auto switch", Icons.Filled.SwapHoriz) {
-                                navController.navigate(MappoRoute.AUTO_SWITCH)
-                            },
-                            HomeMenuEntry("blocklist", "Blocklist", Icons.Filled.Block) {
-                                navController.navigate(MappoRoute.BLOCKLIST)
-                            },
-                            HomeMenuEntry("theme_studio", "Theme studio", Icons.Filled.Palette) {
-                                navController.navigate(MappoRoute.THEME_STUDIO)
-                            },
-                            HomeMenuEntry("frame_style", "Frame style", Icons.Filled.Smartphone) {
-                                navController.navigate(MappoRoute.FRAME_STYLE)
-                            },
-                            HomeMenuEntry("shizuku_setup", "Shizuku setup", Icons.Filled.SecurityUpdateGood) {
-                                navController.navigate(MappoRoute.SHIZUKU_SETUP)
-                            },
-                            HomeMenuEntry(
-                                "steam",
-                                if (steamAccountName != null) "Steam account" else "Connect to Steam",
-                                Icons.Filled.Person,
-                            ) { navController.navigate(MappoRoute.STEAM_SETUP) },
-                            HomeMenuEntry("compact_gallery", "Compact component gallery", Icons.Filled.Dashboard) {
-                                navController.navigate(MappoRoute.COMPACT_GALLERY)
-                            },
-                            HomeMenuEntry("color_picker", "Color picker (preview)", Icons.Filled.Colorize) {
-                                navController.navigate(MappoRoute.COLOR_PICKER_DEMO)
-                            },
-                            // Brick 1 dev affordance (OVERLAY_TOOLBAR_PLAN.md): mount the old
-                            // toolbar as a system overlay to verify passthrough.
-                            HomeMenuEntry("toolbar_overlay_dev", "Toolbar overlay (dev)", Icons.Filled.Dashboard) {
-                                viewModel.toggleToolbarOverlayDev()
-                            },
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // The in-activity virtual-keyboard host is hidden for now but kept — flip
-                    // `showKeyboardHome` (or wire a future "Edit keyboards" entry) to bring it
-                    // back; its edit wiring + VM logic stay intact.
-                    val showKeyboardHome = remember { false }
-                    if (showKeyboardHome) {
-                    KeyboardHost(
-                        state = viewModel,
-                        mode = KeyboardHostMode.Activity(
-                            isEditMode = viewModel.isEditMode,
-                            selectedButtonId = viewModel.selectedButtonId,
-                            tabContextMenuFor = viewModel.tabContextMenuFor,
-                            onOpenTabMenu = viewModel::openTabMenu,
-                            onCloseTabMenu = viewModel::closeTabMenu,
-                            onReorderTabs = viewModel::reorderTabs,
-                            onMenuEditButtons = viewModel::enterEditMode,
-                            onToggleEditMode = {
-                                if (isEditMode) viewModel.exitEditMode()
-                                else viewModel.enterEditMode(displayLayout.id)
-                            },
-                            onMenuConfigure = { id ->
-                                navController.navigate(MappoRoute.configureKeyboard(id))
-                            },
-                            onMenuDuplicate = viewModel::duplicateKeyboard,
-                            onMenuRemove = { id ->
-                                val layout = layouts.find { it.id == id }
-                                val profileName = activeProfile?.name ?: ""
-                                if (layout != null) {
-                                    tabActionDialog = TabActionDialog.RemoveConfirm(
-                                        layoutId = id,
-                                        name = layout.name,
-                                        profileName = profileName
-                                    )
-                                }
-                            },
-                            onMenuSaveTemplate = { id ->
-                                val layout = layouts.find { it.id == id }
-                                if (layout != null) {
-                                    tabActionDialog = TabActionDialog.SaveTemplateChooser(
-                                        layoutId = id,
-                                        keyboardName = layout.name
-                                    )
-                                }
-                            },
-                            onOpenDrawer = {
-                                // Drawer surfaces global navigation; opening it ends any per-tab
-                                // edit context. Add-keyboard cancellation, by contrast, leaves
-                                // edit mode intact (handled in the VM funnel).
-                                viewModel.exitEditMode()
-                                frameVisible = true
-                            },
-                            onAddKeyboard = { tabActionDialog = TabActionDialog.AddKeyboardChooser },
-                            onSelectButton = viewModel::selectButton,
-                            onMoveButton = viewModel::moveButton,
-                            onResizeButton = viewModel::resizeButton,
-                            onConfigureButton = { id ->
-                                val btn = displayLayout.buttons.find { it.id == id }
-                                if (btn != null) {
-                                    // The configure screen is instant-commit; setting selectedButtonId
-                                    // here makes viewModel.updateSelectedButton apply to the right one.
-                                    viewModel.selectButtonOnly(id)
-                                    navController.navigate(MappoRoute.configureButton(id))
-                                }
-                            },
-                            onDuplicateButton = viewModel::duplicateButton,
-                            onRemoveButton = { id ->
-                                val btn = displayLayout.buttons.find { it.id == id }
-                                if (btn != null) {
-                                    tabActionDialog = TabActionDialog.RemoveButtonConfirm(
-                                        buttonId = id,
-                                        buttonLabel = btn.label
-                                    )
-                                }
-                            },
-                            onAddAtCell = { col, row ->
-                                // Instant-commit add: create a default key-button at the cell first,
-                                // then navigate to its config screen for further editing. Backing out
-                                // leaves the button in place; the user removes it via long-press if
-                                // they didn't actually want it.
-                                viewModel.addButtonAt(col, row, GridButton(col = col, row = row, type = "key"))
-                                viewModel.selectedButtonId.value?.let { newId ->
-                                    navController.navigate(MappoRoute.configureButton(newId))
-                                }
-                            },
-                            onLongPressEmptyArea = { viewModel.enterEditMode(displayLayout.id) },
-                            onQuit = { (context as? Activity)?.finish() },
-                        ),
-                    )
-                    }
-                }
-            }
-            composable(MappoRoute.CHANGE_PROFILE) {
-                ChangeProfileScreen(
-                    profiles = profiles,
-                    activeProfile = activeProfile,
-                    onSelectProfile = { profile ->
-                        viewModel.selectProfile(profile)
-                        navController.popBackStack()
-                    },
-                    onAddProfile = { name -> viewModel.addProfile(name) },
-                    onDuplicateProfile = { profile -> viewModel.duplicateProfile(profile) },
-                    onDeleteProfile = { profile -> viewModel.deleteProfile(profile) },
-                    onBack = { navController.popBackStack() },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
             composable(MappoRoute.REMAP_CONTROLS) { entry ->
                 // Phase 2: the inline command picker pops back here, delivering its result via this
                 // entry's savedStateHandle (same key the InputEditor route used).
@@ -607,6 +359,61 @@ fun MainScreen(
                 RemapControlsScreen(
                     config = activeControllerConfig,
                     profileName = activeProfile?.name,
+                    // ── Profile panel (opened by the top bar's Select pill / physical Select) ──
+                    profiles = profiles,
+                    activeProfileId = activeProfile?.id,
+                    onSelectProfile = { profile -> viewModel.selectProfile(profile) },
+                    // ── Options panel: master power + the destinations that lived in the old
+                    // home screen's options fly-out ──
+                    // Master power (the old toolbar's master switch) drives remap AND the
+                    // button overlay to the same value in lockstep — one control for both
+                    // features. (Does NOT auto-show the overlay at app launch; the overlay
+                    // follows the toggle when the user flips it.)
+                    powerOn = remapEnabled,
+                    onPowerChange = { target ->
+                        if (remapEnabled != target) viewModel.toggleRemap()
+                        if (overlayShowing != target) viewModel.toggleOverlay()
+                    },
+                    optionsEntries = listOf(
+                        RemapOptionEntry("edit_overlay", "Edit overlay", Icons.Filled.Layers) {
+                            // Live overlay editing happens over the game — slide the handheld
+                            // away (backgrounding Mappo via the frameVisible effect) so the
+                            // editor chrome sits over the app underneath.
+                            viewModel.startLiveOverlayEdit()
+                            frameVisible = false
+                        },
+                        RemapOptionEntry("auto_switch", "Auto switch", Icons.Filled.SwapHoriz) {
+                            navController.navigate(MappoRoute.AUTO_SWITCH)
+                        },
+                        RemapOptionEntry("blocklist", "Blocklist", Icons.Filled.Block) {
+                            navController.navigate(MappoRoute.BLOCKLIST)
+                        },
+                        RemapOptionEntry("theme_studio", "Theme studio", Icons.Filled.Palette) {
+                            navController.navigate(MappoRoute.THEME_STUDIO)
+                        },
+                        RemapOptionEntry("frame_style", "Frame style", Icons.Filled.Smartphone) {
+                            navController.navigate(MappoRoute.FRAME_STYLE)
+                        },
+                        RemapOptionEntry("shizuku_setup", "Shizuku setup", Icons.Filled.SecurityUpdateGood) {
+                            navController.navigate(MappoRoute.SHIZUKU_SETUP)
+                        },
+                        RemapOptionEntry(
+                            "steam",
+                            if (steamAccountName != null) "Steam account" else "Connect to Steam",
+                            Icons.Filled.Person,
+                        ) { navController.navigate(MappoRoute.STEAM_SETUP) },
+                        RemapOptionEntry("compact_gallery", "Compact component gallery", Icons.Filled.Dashboard) {
+                            navController.navigate(MappoRoute.COMPACT_GALLERY)
+                        },
+                        RemapOptionEntry("color_picker", "Color picker (preview)", Icons.Filled.Colorize) {
+                            navController.navigate(MappoRoute.COLOR_PICKER_DEMO)
+                        },
+                        // Brick 1 dev affordance (OVERLAY_TOOLBAR_PLAN.md): mount the old
+                        // toolbar as a system overlay to verify passthrough.
+                        RemapOptionEntry("toolbar_overlay_dev", "Toolbar overlay (dev)", Icons.Filled.Dashboard) {
+                            viewModel.toggleToolbarOverlayDev()
+                        },
+                    ),
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->
@@ -694,7 +501,9 @@ fun MainScreen(
                     shizukuState = shizukuState,
                     onAcknowledgeShizukuRequired = viewModel::acknowledgeShizukuRequired,
                     onOpenShizukuSetup = { navController.navigate(MappoRoute.SHIZUKU_SETUP) },
-                    onBack = { navController.popBackStack() },
+                    // This screen IS the home now — back dismisses the frame, which
+                    // backgrounds the task via the frameVisible effect above.
+                    onBack = { frameVisible = false },
                     onOpenInputEditor = { inputSource, groupInputKey, label ->
                         // Brick 5.5.c: in overlay mode, eagerly materialize the layer
                         // override before navigating so the editor opens against a
@@ -1118,11 +927,81 @@ fun MainScreen(
         val frameStyle by viewModel.frameStyle.collectAsStateWithLifecycle()
         HandheldFrame(
             shown = frameVisible,
-            dismissEnabled = isMainRoute,
+            dismissEnabled = isHomeRoute,
             onDismissRequest = { frameVisible = false },
             style = frameStyle,
             screenContent = screenContent,
         )
+
+        // Auto-switch prompt banner + toast host — the old home Scaffold's snackbarHost slot,
+        // rehomed to the window's bottom edge when the d-pad flower home was retired. Only a
+        // defensive fallback: with the overlay permission granted these render on the primary
+        // screen instead (see the autoSwitchEvents collector above).
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+        ) {
+            val prompt = pendingPrompt
+            if (prompt != null) {
+                // Non-blocking inline banner (Card) instead of a Snackbar — the 3-action
+                // prompt violates Snackbar's single-action contract, and a banner-shaped card
+                // communicates "decision required" without pretending to be a passive toast.
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = stringResource(R.string.auto_switch_prompt_title, prompt.appLabel),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    viewModel.ignorePackageForever(prompt.pkg)
+                                    pendingPrompt = null
+                                },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
+                            ) { Text(stringResource(R.string.auto_switch_prompt_never)) }
+                            TextButton(
+                                onClick = { pendingPrompt = null },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            ) { Text(stringResource(R.string.auto_switch_prompt_no)) }
+                            TextButton(
+                                onClick = {
+                                    viewModel.acceptCreateProfilePrompt(prompt.pkg, prompt.appLabel)
+                                    pendingPrompt = null
+                                }
+                            ) { Text(stringResource(R.string.auto_switch_prompt_yes)) }
+                        }
+                    }
+                }
+            } else {
+                SnackbarHost(snackbarHostState) { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        actionColor = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
 
     TabActionDialogHost(
         state = tabActionDialog,
@@ -1152,54 +1031,9 @@ fun MainScreen(
     } // end Box
 }
 
-/**
- * Suppresses the system edge-back gesture across the full activity window while
- * [active] is true (the keyboard view on the Main route, drawer closed). Prevents
- * accidental back navigation when the user is swiping near the screen edge during
- * virtual-keyboard / trackpad use. Cleared on every other destination + while the
- * drawer is open so back-gesture navigation works normally there.
- *
- * **Why this used to be `ApplyMainScreenWindowBehavior`.** Pre–single-screen-refactor,
- * this composable also toggled `FLAG_NOT_FOCUSABLE` on the activity window — the
- * Thor "game on top screen, Mappo's activity keyboard on bottom" path used it so
- * unmapped gamepad input would flow past Mappo to the game. After the refactor the
- * keyboard lives in a system overlay (`KeyboardOverlayPresenter` / QS tile), so the
- * activity is a configuration UI. The flag stopped earning its keep and started
- * causing ANRs: with `FLAG_REQUEST_FILTER_KEY_EVENTS` on the accessibility service,
- * any key event (F12, media keys, back, IME shortcuts) that didn't match the remap
- * config had no focusable window to land on and 5-second-timeouts into an ANR. The
- * flag is gone now; Thor users who want the old "game on the other screen" routing
- * use Thor's Focus Lock OS feature instead. See the single-screen refactor plan for
- * the full history.
- */
-@Composable
-private fun SuppressEdgeBackGesture(active: Boolean) {
-    val view = LocalView.current
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        // The exclusion rect needs to follow the view's current bounds (which can change with
-        // configuration / display swaps), so we both apply on state changes AND re-apply on
-        // every layout pass while suppression is active.
-        val activeState = rememberUpdatedState(active)
-        DisposableEffect(view) {
-            val listener = ViewTreeObserver.OnGlobalLayoutListener {
-                view.systemGestureExclusionRects = if (activeState.value) {
-                    listOf(Rect(0, 0, view.width, view.height))
-                } else {
-                    emptyList()
-                }
-            }
-            view.viewTreeObserver.addOnGlobalLayoutListener(listener)
-            onDispose { view.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
-        }
-        LaunchedEffect(active) {
-            view.systemGestureExclusionRects = if (active) {
-                listOf(Rect(0, 0, view.width, view.height))
-            } else {
-                emptyList()
-            }
-        }
-    }
-}
+// SuppressEdgeBackGesture was deleted 2026-08-07 along with the in-activity keyboard home:
+// it existed for the keyboard view on the retired MAIN route (see git history for the
+// FLAG_NOT_FOCUSABLE/ANR saga it documented).
 
 // Visibility widened to `internal` so `KeyboardHost` (single-screen refactor Brick 3)
 // can call this from a sibling file. The composable still belongs conceptually to

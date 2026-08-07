@@ -92,8 +92,8 @@ import com.mappo.ui.control.mappoMiniTextStyle
  * group's home position and the box animates back on close (or when another group is picked). The
  * top-center **Map** button is the future home of the input-mapping wizard (UI-only for now).
  *
- * Box styling mirrors the home d-pad flower's petal cards (accent-tinted rounded box + border)
- * so the two "launcher" surfaces read as one family.
+ * Box styling: accent-tinted rounded boxes + bevel border (the treatment born on the retired
+ * d-pad flower home's petal cards, now owned by the remap chrome).
  */
 @Composable
 internal fun RemapSimpleView(
@@ -619,7 +619,7 @@ private fun GroupSummaryRows(
 }
 
 /**
- * One tappable group box (petal-card styling, see HomeFlower.PetalCard). While the group is
+ * One tappable group box (the accent-tinted petal-card treatment). While the group is
  * expanded into the editor, [placeholder] renders a same-size invisible stand-in instead — the
  * spot the editor animates back to.
  */
@@ -758,8 +758,10 @@ private val BlockBottomGap = 14.dp
  *  tight as the badge allows so the group boxes get the widest possible footprint. */
 private val BadgeGutter = 18.dp
 
-private val GroupCorner = 8.dp
-private const val ExpandMillis = 300
-private const val CollapseMillis = 240
-/** Inset between the expanded editor and the simple view's edges. */
-private val EditorMargin = 10.dp
+// Shared with the profile/options full-screen panels (RemapScreenPanels.kt) — the two morph
+// surfaces deliberately speak identical corner/margin/timing values so they read as one family.
+internal val GroupCorner = 8.dp
+internal const val ExpandMillis = 300
+internal const val CollapseMillis = 240
+/** Inset between the expanded editor (or full-screen panel) and its host's edges. */
+internal val EditorMargin = 10.dp

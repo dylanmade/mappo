@@ -2,8 +2,11 @@ package com.mappo.ui.screen.remap
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -23,10 +26,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.mappo.R
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.ui.component.ReorderableTabBar
 import com.mappo.ui.component.TabBarItem
+import com.mappo.ui.control.MappoPillButton
 import kotlinx.collections.immutable.toImmutableList
 
 /**
@@ -45,13 +53,16 @@ internal class RemapScopeTabActions(
 )
 
 /**
- * The rebuilt Remap Controls top bar: one tab per action set, each set's layers following it
- * as subordinate tabs (outlined Layers glyph). Tab behavior (tap / long-press menu / chevron
- * scroll) comes from the shared [ReorderableTabBar] extracted from the virtual-keyboard tab
- * UI. Drag-to-reorder is wired off until a set-reordering repository op exists (the tab order
- * IS the boot-set order, so this is the planned home for that affordance). Back + add-set
- * buttons were removed 2026-07-12 pending a new home for that functionality —
- * [RemapScopeTabActions.onAddSet] is currently unreachable.
+ * The rebuilt Remap Controls top bar: profile pill (physical Select's glyph — the button that
+ * summons the profile view) in the top-left corner, options pill (Start's glyph) in the
+ * top-right, and between them one tab per action set, each set's layers following it as
+ * subordinate tabs (outlined Layers glyph). The tab cluster centers vertically AND
+ * horizontally, with the scroll chevrons flanking the GROUP of tabs (hugTabs) rather than
+ * pinning to the bar edges. Tab behavior (tap / long-press menu / chevron scroll) comes from
+ * the shared [ReorderableTabBar] extracted from the virtual-keyboard tab UI. Drag-to-reorder
+ * is wired off until a set-reordering repository op exists (the tab order IS the boot-set
+ * order, so this is the planned home for that affordance). [RemapScopeTabActions.onAddSet]
+ * is currently unreachable pending a new home.
  */
 @Composable
 internal fun RemapTopBar(
@@ -61,23 +72,53 @@ internal fun RemapTopBar(
     onSelectActionSet: (Long) -> Unit,
     onSelectLayer: (Long?) -> Unit,
     actions: RemapScopeTabActions,
+    profileLabel: String?,
+    onOpenProfile: () -> Unit,
+    onOpenOptions: () -> Unit,
+    onProfileButtonPositioned: (LayoutCoordinates) -> Unit,
+    onOptionsButtonPositioned: (LayoutCoordinates) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // surfaceContainer — app-bar plane, one step up from the screen surface.
     Column(modifier = modifier) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-            // Tabs hug the bar's bottom edge so the selection underline meets the divider.
-            Box(
-                modifier = Modifier.fillMaxWidth().height(TopBarHeight),
-                contentAlignment = Alignment.BottomStart,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(TopBarHeight)
+                    .padding(horizontal = BarEdgePadding),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ScopeTabs(
-                    config = config,
-                    viewingSetId = viewingSetId,
-                    viewingLayerId = viewingLayerId,
-                    onSelectActionSet = onSelectActionSet,
-                    onSelectLayer = onSelectLayer,
-                    actions = actions,
+                // Profile: the active profile's name behind the physical button that opens it.
+                // Width-capped — profile names are user-typed (NameableText doctrine; the
+                // pill's own single-line ellipsis does the truncation).
+                MappoPillButton(
+                    text = profileLabel ?: "Profile",
+                    onClick = onOpenProfile,
+                    leadingIcon = painterResource(R.drawable.xbox_button_view),
+                    modifier = Modifier
+                        .widthIn(max = CornerPillMaxWidth)
+                        .onGloballyPositioned(onProfileButtonPositioned),
+                )
+                // Tab cluster centers in the remaining span between the two corner pills.
+                Box(
+                    modifier = Modifier.weight(1f).padding(horizontal = BarEdgePadding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ScopeTabs(
+                        config = config,
+                        viewingSetId = viewingSetId,
+                        viewingLayerId = viewingLayerId,
+                        onSelectActionSet = onSelectActionSet,
+                        onSelectLayer = onSelectLayer,
+                        actions = actions,
+                    )
+                }
+                MappoPillButton(
+                    text = "Options",
+                    onClick = onOpenOptions,
+                    leadingIcon = painterResource(R.drawable.xbox_button_menu),
+                    modifier = Modifier.onGloballyPositioned(onOptionsButtonPositioned),
                 )
             }
         }
@@ -138,6 +179,7 @@ private fun ScopeTabs(
         tabs = tabs,
         selectedKey = selectedKey,
         contextMenuFor = menuFor,
+        hugTabs = true,
         onSelect = { key ->
             when {
                 key.startsWith(SET_PREFIX) -> {
@@ -207,7 +249,12 @@ private fun ScopeTabs(
     }
 }
 
-// Bar = tab height + a whisker of air above the tabs' rounded tops (the M3-size back/add
-// buttons that used to force extra headroom are gone).
+// Bar = tab height + a whisker of air above and below (tabs center vertically now).
 private val TopBarHeight = 36.dp
 private val ScopeTabHeight = 32.dp
+
+/** Horizontal inset at the bar's edges AND between each corner pill and the tab cluster. */
+private val BarEdgePadding = 6.dp
+
+/** Width cap for the profile pill — its label is a user-typed profile name. */
+private val CornerPillMaxWidth = 110.dp

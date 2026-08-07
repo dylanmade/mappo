@@ -3,10 +3,14 @@ package com.mappo.ui.control
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -19,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 
@@ -27,6 +33,10 @@ import androidx.compose.ui.text.style.TextOverflow
  * primary/commit action) keeps its emphasis through the stronger text color only. [elevated]
  * uses the topmost button plane for buttons sitting on a box/card background. Disabled =
  * dimmed + inert.
+ *
+ * [leadingIcon] renders a small glyph before the label. [leadingIconTint] defaults to
+ * Unspecified because the primary use is hardware button prompts (Kenney glyphs carry fixed
+ * colors that must not re-tint); pass a theme role for tintable concept icons.
  */
 @Composable
 fun MappoPillButton(
@@ -36,6 +46,8 @@ fun MappoPillButton(
     enabled: Boolean = true,
     filled: Boolean = false,
     elevated: Boolean = false,
+    leadingIcon: Painter? = null,
+    leadingIconTint: Color = Color.Unspecified,
 ) {
     val content = if (filled) MaterialTheme.colorScheme.onSurface
     else MaterialTheme.colorScheme.onSurfaceVariant
@@ -58,7 +70,22 @@ fun MappoPillButton(
                 } else Modifier.alpha(0.55f),
             ),
     ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = MappoPillContentPadding)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .height(MappoPillHeight)
+                .padding(horizontal = MappoPillContentPadding),
+        ) {
+            if (leadingIcon != null) {
+                Icon(
+                    leadingIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(MappoPillIconSize),
+                    tint = leadingIconTint,
+                )
+                Spacer(Modifier.width(MappoGlyphLabelGap))
+            }
             Text(
                 text = text,
                 style = mappoMiniTextStyle(),

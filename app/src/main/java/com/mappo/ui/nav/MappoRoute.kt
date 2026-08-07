@@ -12,8 +12,10 @@ import android.net.Uri
  * refactor if/when serialization arrives for another reason.
  */
 object MappoRoute {
-    const val MAIN = "main"
-    const val CHANGE_PROFILE = "change_profile"
+    // REMAP_CONTROLS is the START DESTINATION (2026-08-07): opening Mappo lands on the
+    // controls page. The old MAIN (d-pad flower home) and CHANGE_PROFILE (standalone profile
+    // screen) routes were retired — profile selection and the options list are full-screen
+    // panels inside the Remap Controls screen now (RemapScreenPanels.kt).
     const val REMAP_CONTROLS = "remap_controls"
     const val AUTO_SWITCH = "auto_switch"
     const val BLOCKLIST = "blocklist"

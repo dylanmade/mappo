@@ -1,7 +1,9 @@
 package com.mappo.ui.screen
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +31,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,6 +39,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
@@ -51,11 +60,16 @@ import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
+import com.mappo.ui.screen.remap.RemapOptionEntry
+import com.mappo.ui.screen.remap.RemapPanel
+import com.mappo.ui.screen.remap.RemapPanelOverlay
 import com.mappo.ui.screen.remap.RemapScopeTabActions
 import com.mappo.ui.screen.remap.RemapSections
 import com.mappo.ui.screen.remap.RemapSimpleView
 import com.mappo.ui.screen.remap.RemapTopBar
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
+
+private const val REMAP_SCREEN_TAG = "RemapControlsScreen"
 
 /** True if any binding in [group] has a Shizuku-requiring output (e.g. analog stick directions). */
 private fun shizukuOutputInGroup(group: com.mappo.data.model.steam.BindingGroupGraph): Boolean =
@@ -129,10 +143,27 @@ fun RemapControlsScreen(
     // data); default no-ops until those land — the menu items render but do nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
     onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
+    // ── Profile / options panels (the top-bar corner pills; physical Select / Start) ─────
+    profiles: kotlinx.collections.immutable.ImmutableList<com.mappo.data.model.Profile> =
+        kotlinx.collections.immutable.persistentListOf(),
+    activeProfileId: Long? = null,
+    onSelectProfile: (com.mappo.data.model.Profile) -> Unit = {},
+    powerOn: Boolean = false,
+    onPowerChange: (Boolean) -> Unit = {},
+    optionsEntries: List<RemapOptionEntry> = emptyList(),
 ) {
-    // Physical/gesture back navigates home. The expanded group editor installs its own
-    // (more-recent) BackHandler while open, so this only fires when nothing else is dismissable.
+    // Physical/gesture back navigates home. The expanded group editor and the profile/options
+    // panel overlay install their own (more-recent) BackHandlers while open, so this only
+    // fires when nothing else is dismissable.
     BackHandler { onBack() }
+
+    // Which full-screen panel (profile / options) is open. User intent — survives the
+    // navigation round-trips the options entries launch.
+    var openPanel by rememberSaveable { mutableStateOf<RemapPanel?>(null) }
+    // Captured bounds of the top-bar corner pills, in root-Box coordinates — the morph origins.
+    val panelButtonBounds = remember { mutableStateMapOf<RemapPanel, androidx.compose.ui.geometry.Rect>() }
+    var panelRootCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    var panelRootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     // Which management dialog is currently open. Plain `remember` — dialogs are short-lived;
     // rotation-survival isn't worth a custom Saver.
@@ -224,56 +255,121 @@ fun RemapControlsScreen(
         onConfigure = onOpenActivatorSettings,
     )
 
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            // The action-set manager: one tab per set (layers as subordinate tabs) on the
-            // shared ReorderableTabBar. Back/add-set buttons removed pending a new home.
-            RemapTopBar(
-                config = config,
-                viewingSetId = viewingSet?.actionSet?.id,
-                viewingLayerId = viewingLayerId,
-                onSelectActionSet = onSelectActionSet,
-                onSelectLayer = onSelectLayer,
-                actions = RemapScopeTabActions(
-                    onRenameSet = { dialog = ActionSetDialogState.Rename(it) },
-                    onDuplicateSet = { dialog = ActionSetDialogState.Duplicate(it) },
-                    onDeleteSet = { dialog = ActionSetDialogState.Delete(it) },
-                    onAddLayer = { layerDialog = LayerDialogState.Add(it) },
-                    onRenameLayer = { layerDialog = LayerDialogState.Rename(it) },
-                    onDuplicateLayer = { layerDialog = LayerDialogState.Duplicate(it) },
-                    onDeleteLayer = { layerDialog = LayerDialogState.Delete(it) },
-                    onAddSet = { dialog = ActionSetDialogState.Add },
-                ),
-            )
-        },
-    ) { innerPadding ->
-        // surface — the screen's content plane beneath the group boxes.
-        Surface(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                if (hasAnalogModeInConfig && !shizukuReady) {
-                    ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
+    // Root Box: the Scaffold plus the profile/options panel overlay, which must cover the
+    // top bar — hence hosted HERE rather than inside the Scaffold content. The Box also owns
+    // the physical-button summons (Select → profile, Start → options — the same buttons whose
+    // glyphs the corner pills wear; B closes an open panel).
+    Box(
+        modifier = modifier
+            .onGloballyPositioned { panelRootCoords = it; panelRootSize = it.size }
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown || e.nativeKeyEvent.repeatCount != 0) {
+                    return@onPreviewKeyEvent false
                 }
-                RemapSimpleView(
-                    viewingSet = viewingSet,
-                    viewingLayer = viewingLayer,
+                when (e.key) {
+                    Key.ButtonSelect -> {
+                        Log.d(REMAP_SCREEN_TAG, "key: Select -> toggle profile panel")
+                        openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
+                        true
+                    }
+                    Key.ButtonStart -> {
+                        Log.d(REMAP_SCREEN_TAG, "key: Start -> toggle options panel")
+                        openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                        true
+                    }
+                    Key.ButtonB -> {
+                        if (openPanel != null) {
+                            Log.d(REMAP_SCREEN_TAG, "key: B -> close panel")
+                            openPanel = null
+                            true
+                        } else false
+                    }
+                    else -> false
+                }
+            },
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                // The action-set manager: one tab per set (layers as subordinate tabs) on the
+                // shared ReorderableTabBar, flanked by the profile / options corner pills.
+                RemapTopBar(
                     config = config,
-                    onMap = { /* input-mapping wizard — UI-only CTA for now */ },
-                    editorCallbacks = editorCallbacks,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    bottomContent = {
-                        RemapBottomRow(
-                            viewingSet = viewingSet,
-                            viewingLayerSelected = viewingLayer != null,
-                            onSetGyroMode = gatedSetBindingGroupMode,
-                        )
+                    viewingSetId = viewingSet?.actionSet?.id,
+                    viewingLayerId = viewingLayerId,
+                    onSelectActionSet = onSelectActionSet,
+                    onSelectLayer = onSelectLayer,
+                    actions = RemapScopeTabActions(
+                        onRenameSet = { dialog = ActionSetDialogState.Rename(it) },
+                        onDuplicateSet = { dialog = ActionSetDialogState.Duplicate(it) },
+                        onDeleteSet = { dialog = ActionSetDialogState.Delete(it) },
+                        onAddLayer = { layerDialog = LayerDialogState.Add(it) },
+                        onRenameLayer = { layerDialog = LayerDialogState.Rename(it) },
+                        onDuplicateLayer = { layerDialog = LayerDialogState.Duplicate(it) },
+                        onDeleteLayer = { layerDialog = LayerDialogState.Delete(it) },
+                        onAddSet = { dialog = ActionSetDialogState.Add },
+                    ),
+                    profileLabel = profileName,
+                    onOpenProfile = {
+                        openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
+                    },
+                    onOpenOptions = {
+                        openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                    },
+                    onProfileButtonPositioned = { coords ->
+                        panelRootCoords?.let { root ->
+                            panelButtonBounds[RemapPanel.PROFILE] = root.localBoundingBoxOf(coords)
+                        }
+                    },
+                    onOptionsButtonPositioned = { coords ->
+                        panelRootCoords?.let { root ->
+                            panelButtonBounds[RemapPanel.OPTIONS] = root.localBoundingBoxOf(coords)
+                        }
                     },
                 )
+            },
+        ) { innerPadding ->
+            // surface — the screen's content plane beneath the group boxes.
+            Surface(
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (hasAnalogModeInConfig && !shizukuReady) {
+                        ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
+                    }
+                    RemapSimpleView(
+                        viewingSet = viewingSet,
+                        viewingLayer = viewingLayer,
+                        config = config,
+                        onMap = { /* input-mapping wizard — UI-only CTA for now */ },
+                        editorCallbacks = editorCallbacks,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        bottomContent = {
+                            RemapBottomRow(
+                                viewingSet = viewingSet,
+                                viewingLayerSelected = viewingLayer != null,
+                                onSetGyroMode = gatedSetBindingGroupMode,
+                            )
+                        },
+                    )
+                }
             }
         }
+
+        RemapPanelOverlay(
+            openPanel = openPanel,
+            onClose = { openPanel = null },
+            buttonBounds = { panelButtonBounds[it] },
+            rootSize = panelRootSize,
+            profiles = profiles,
+            activeProfileId = activeProfileId,
+            onSelectProfile = onSelectProfile,
+            powerOn = powerOn,
+            onPowerChange = onPowerChange,
+            optionsEntries = optionsEntries,
+            modifier = Modifier.matchParentSize(),
+        )
     }
 
     val pendingPick = pendingAnalogPick

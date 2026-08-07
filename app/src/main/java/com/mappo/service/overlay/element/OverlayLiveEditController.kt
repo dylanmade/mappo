@@ -37,6 +37,7 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,6 +64,9 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AlignHorizontalCenter
+import androidx.compose.material.icons.filled.BorderStyle
+import androidx.compose.material.icons.filled.FormatColorFill
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.AlignHorizontalLeft
 import androidx.compose.material.icons.filled.AlignHorizontalRight
 import androidx.compose.material.icons.filled.AlignVerticalBottom
@@ -112,6 +116,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -160,7 +165,37 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.compose.ui.res.painterResource
+import com.mappo.R
 import com.mappo.data.model.OverlayElement
+import com.mappo.data.model.OverlayGesture
+import com.mappo.data.model.RemapTarget
+import com.mappo.data.model.displayLabel
+import com.mappo.data.model.overlay.AppearanceLayer
+import com.mappo.data.model.overlay.CornerRadii
+import com.mappo.data.model.overlay.ElementAppearance
+import com.mappo.data.model.overlay.GradientStop
+import com.mappo.data.model.overlay.LayerKind
+import com.mappo.data.model.overlay.LayerPaint
+import com.mappo.data.model.overlay.StrokeAlign
+import com.mappo.data.model.overlay.StrokeGradientMode
+import com.mappo.data.model.overlay.StrokeStyle
+import com.mappo.data.model.overlay.decodeElementAppearance
+import com.mappo.data.model.overlay.defaultFillLayer
+import com.mappo.data.model.overlay.defaultStrokeLayer
+import com.mappo.data.model.overlay.encode
+import com.mappo.data.model.overlay.nextLayerId
+import com.mappo.data.model.targetFor
+import com.mappo.data.model.withTarget
+import com.mappo.ui.component.ColorPicker
+import com.mappo.ui.component.GradientEditor
+import com.mappo.ui.component.colorpicker.ColorPickerButton
+import com.mappo.ui.control.MappoPercentSlider
+import com.mappo.ui.control.MappoPillButton
+import com.mappo.ui.control.MappoSlider
+import com.mappo.ui.control.mappoMiniTextStyle
+import com.mappo.ui.screen.overlay.OverlayCommonCommands
+import com.mappo.ui.screen.overlay.legacyAppearance
 import com.mappo.data.settings.OverlaySettings
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.overlay.OverlayLifecycleOwner
@@ -1779,7 +1814,8 @@ class OverlayLiveEditController @Inject constructor(
         data class Value(val text: String) : MenuTrailing
     }
 
-    /** One menu entry: a divider, or an item (leaf action, submenu opener, or a split select+submenu row). */
+    /** One menu entry: a divider, an item (leaf action, submenu opener, or a split select+submenu
+     *  row), or a custom-composable row (embedded controls — sliders, pill pairs, pickers). */
     private sealed interface MenuEntry {
         data object Divider : MenuEntry
         data class Item(
@@ -1793,11 +1829,27 @@ class OverlayLiveEditController @Inject constructor(
             // When true a leaf action closes only THIS submenu level (keeps its parent open) — used
             // by in-menu pickers like Align-to. Default leaves close every open submenu.
             val closeToParentOnly: Boolean = false,
+            // When true a leaf action leaves every level open (in-place mutations like "+ Fill").
+            val keepOpen: Boolean = false,
             // Non-null → a cascading fly-out submenu (shows a right arrow). @Composable + lazy so a
             // submenu's contents (e.g. live switch state) recompose when built.
             val submenu: (@Composable () -> List<MenuEntry>)? = null,
+            // Width of the fly-out this row's [submenu] opens (dp). Null = [MENU_WIDTH_DP]. Wide
+            // levels host embedded controls (Assign rows, sliders, the gradient editor).
+            val submenuWidthDp: Int? = null,
             // Leaf action. With a [submenu] also present, the row is SPLIT: body = onClick, arrow = open.
             val onClick: (() -> Unit)? = null,
+        ) : MenuEntry
+
+        /**
+         * A row rendered by [content] itself (embedded Mappo controls rather than a standard
+         * label row). [content] receives an `openSubmenu(subKey, builder)` callback that opens
+         * a standard-width fly-out anchored at this row — how embedded pill buttons spawn
+         * their picker levels.
+         */
+        data class Custom(
+            val key: String,
+            val content: @Composable ((subKey: String, builder: @Composable () -> List<MenuEntry>) -> Unit) -> Unit,
         ) : MenuEntry
     }
 
@@ -1898,12 +1950,13 @@ class OverlayLiveEditController @Inject constructor(
         parentDepth: Int,
         rowTop: Int,
         sourceKey: String,
+        widthDp: Int,
         builder: @Composable () -> List<MenuEntry>,
     ) = runOnMain {
         // A fly-out opened from a row at [parentDepth] lives at stack index parentDepth.
         val openHere = menuStack.getOrNull(parentDepth)
         if (openHere != null && openHere.sourceKey == sourceKey) truncateMenusTo(parentDepth)
-        else openSubmenu(parentDepth, rowTop, sourceKey, builder)
+        else openSubmenu(parentDepth, rowTop, sourceKey, widthDp, builder)
     }
 
     /**
@@ -1915,17 +1968,22 @@ class OverlayLiveEditController @Inject constructor(
         parentDepth: Int,
         rowTopInParent: Int,
         sourceKey: String,
+        widthDp: Int,
         builder: @Composable () -> List<MenuEntry>,
     ) = runOnMain {
         truncateMenusTo(parentDepth)
         val (px, pw, py) = parentMenuGeometry(parentDepth) ?: return@runOnMain
         // Deeper levels open to the same side the cascade already chose (inherited via [menuCascadeSide]),
-        // so they don't fold back over their parents. Fly-out parents carry no shadow margin.
+        // so they don't fold back over their parents. The parent window carries a transparent
+        // [MENU_SHADOW_MARGIN] inset for its shadow, so its VISIBLE edges are inset by [margin];
+        // anchor to those so the child sits flush (not a shadow-margin gap away).
+        val margin = (MENU_SHADOW_MARGIN * context.resources.displayMetrics.density).roundToInt()
         pushMenuLevel(
             depth = parentDepth + 1,
             sourceKey = sourceKey,
-            sideParent = px to (px + pw),
+            sideParent = (px + margin) to (px + pw - margin),
             anchorTop = py + rowTopInParent,
+            widthDp = widthDp,
             builder = builder,
         )
     }
@@ -1938,6 +1996,7 @@ class OverlayLiveEditController @Inject constructor(
     private fun toggleRootSubmenu(
         sourceKey: String,
         itemBounds: android.graphics.Rect,
+        widthDp: Int,
         builder: @Composable () -> List<MenuEntry>,
     ) = runOnMain {
         val openHere = menuStack.getOrNull(0)
@@ -1957,15 +2016,15 @@ class OverlayLiveEditController @Inject constructor(
             pushMenuLevel(
                 depth = 1, sourceKey = sourceKey,
                 sideParent = (tp.x + margin) to (tp.x + tv.width - margin),
-                anchorTop = tp.y + itemBounds.top, builder = builder,
+                anchorTop = tp.y + itemBounds.top, widthDp = widthDp, builder = builder,
             )
         } else {
             // Horizontal menu: fly-out below (menu in top half) or above (bottom half), at the icon's
             // left edge. The cascade's left/right side is then decided by the NEXT (depth-2) level.
             val left = tp.x + itemBounds.left
             val inTopHalf = (tp.y + tv.height / 2) < (displaySizePx().y / 2)
-            if (inTopHalf) pushMenuLevel(depth = 1, sourceKey = sourceKey, fixedLeft = left, anchorTop = tp.y + tv.height - margin, builder = builder)
-            else pushMenuLevel(depth = 1, sourceKey = sourceKey, fixedLeft = left, anchorTop = tp.y + margin, growUp = true, builder = builder)
+            if (inTopHalf) pushMenuLevel(depth = 1, sourceKey = sourceKey, fixedLeft = left, anchorTop = tp.y + tv.height - margin, widthDp = widthDp, builder = builder)
+            else pushMenuLevel(depth = 1, sourceKey = sourceKey, fixedLeft = left, anchorTop = tp.y + margin, growUp = true, widthDp = widthDp, builder = builder)
         }
     }
 
@@ -2031,12 +2090,13 @@ class OverlayLiveEditController @Inject constructor(
         growUp: Boolean = false,
         fixedLeft: Int? = null,              // x is fixed (clamped) — used by the horizontal root fly-out
         sideParent: Pair<Int, Int>? = null,  // (visibleLeft, visibleRight): place left/right via [placeMenuX]
+        widthDp: Int = MENU_WIDTH_DP,
         builder: @Composable () -> List<MenuEntry>,
     ) {
         val owner = OverlayLifecycleOwner()
         val composeView = ComposeView(context).apply {
             defaultFocusHighlightEnabled = false
-            setContent { MappoTheme { ProvideMenuRipple { CascadeMenuLevel(depth, builder) } } }
+            setContent { MappoTheme { ProvideMenuRipple { CascadeMenuLevel(depth, builder, widthDp) } } }
         }
         // Host catches ACTION_OUTSIDE; only the TOP-most open fly-out acts on it (others get it too).
         // ViewTree owners live on the host so the child ComposeView resolves them up the tree.
@@ -2049,10 +2109,12 @@ class OverlayLiveEditController @Inject constructor(
             addView(composeView)
         }
         owner.resumeTo()
+        // FOCUSABLE (unlike the root panel): fly-outs embed MappoSlider value fields, whose
+        // typed input needs a window that can take key focus and raise the IME.
         val params = layoutParams(
             width = WindowManager.LayoutParams.WRAP_CONTENT,
             height = WindowManager.LayoutParams.WRAP_CONTENT,
-            focusable = false,
+            focusable = true,
             watchOutside = true,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -2067,16 +2129,14 @@ class OverlayLiveEditController @Inject constructor(
         runCatching { windowManager.addView(view, params) }
             .onFailure { Log.e(TAG, "addView(menu level $depth) failed", it); return }
         menuStack.add(MenuWindow(view, owner, params, depth, sourceKey))
-        view.post {
-            val unspec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            view.measure(unspec, unspec)
+        // The window includes a transparent MENU_SHADOW_MARGIN inset on every side (room for the
+        // shadow); place by the VISIBLE surface size, then offset the window by -margin so the
+        // visible edges land where intended (anchored flush to the parent).
+        val margin = (MENU_SHADOW_MARGIN * context.resources.displayMetrics.density).roundToInt()
+        fun place(w: Int, h: Int) {
             val b = editBoundsPx()
-            // The window includes a transparent MENU_SHADOW_MARGIN inset on every side (room for the
-            // shadow); place by the VISIBLE surface size, then offset the window by -margin so the
-            // visible edges land where intended (anchored flush to the parent).
-            val margin = (MENU_SHADOW_MARGIN * context.resources.displayMetrics.density).roundToInt()
-            val visW = view.measuredWidth - 2 * margin
-            val visH = view.measuredHeight - 2 * margin
+            val visW = w - 2 * margin
+            val visH = h - 2 * margin
             // growUp: [anchorTop] is the menu's TOP edge and the fly-out opens upward, so its BOTTOM
             // sits at anchorTop (used by the horizontal menu when it's in the screen's bottom half).
             val baseVisTop = if (growUp) anchorTop - visH else anchorTop
@@ -2089,6 +2149,19 @@ class OverlayLiveEditController @Inject constructor(
             params.y = visTop - margin
             params.alpha = 1f
             runCatching { windowManager.updateViewLayout(view, params) }
+        }
+        // RE-place whenever the level's content changes size after it's open (e.g. a paint-mode
+        // switch swapping a color row for the taller gradient editor) — the anchor-and-clamp only
+        // ran at open time, so growth could push the window past the screen/editable bounds.
+        view.addOnLayoutChangeListener { v, l, t, r, b, ol, ot, or_, ob ->
+            val changed = (r - l != or_ - ol) || (b - t != ob - ot)
+            // Skip the first layout (0 → measured): the view.post below does the initial placement.
+            if (changed && params.alpha == 1f) v.post { place(v.width, v.height) }
+        }
+        view.post {
+            val unspec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            view.measure(unspec, unspec)
+            place(view.measuredWidth, view.measuredHeight)
         }
     }
 
@@ -2118,7 +2191,11 @@ class OverlayLiveEditController @Inject constructor(
     }
 
     @Composable
-    private fun CascadeMenuLevel(depth: Int, builder: @Composable () -> List<MenuEntry>) {
+    private fun CascadeMenuLevel(
+        depth: Int,
+        builder: @Composable () -> List<MenuEntry>,
+        widthDp: Int = MENU_WIDTH_DP,
+    ) {
         // M3-expressive enter: a quick scale-up + fade (the window is positioned-while-hidden then
         // revealed; this Compose animation IS the open motion). Spring = snappy, no bounce.
         val appear = remember { Animatable(0f) }
@@ -2144,7 +2221,17 @@ class OverlayLiveEditController @Inject constructor(
                     shape = MaterialTheme.shapes.medium,
                     tonalElevation = 6.dp,
                 ) {
-                    MenuList(depth = depth, builder = builder, modifier = Modifier.heightIn(max = MENU_MAX_HEIGHT_DP.dp))
+                    // Fly-outs may scroll up to the editable-area height (the whole screen, or the
+                    // 1:1 square) — they're anchored to their parent, so unlike the draggable root
+                    // panel a scrolling surface carries no drag expectation.
+                    val maxH = with(LocalDensity.current) { editBoundsPx().height().toDp() } -
+                        (2 * MENU_SHADOW_MARGIN).dp
+                    MenuList(
+                        depth = depth,
+                        builder = builder,
+                        widthDp = widthDp,
+                        modifier = Modifier.heightIn(max = maxH),
+                    )
                 }
             }
         }
@@ -2156,10 +2243,11 @@ class OverlayLiveEditController @Inject constructor(
         depth: Int,
         builder: @Composable () -> List<MenuEntry>,
         modifier: Modifier = Modifier,
+        widthDp: Int = MENU_WIDTH_DP,
     ) {
         Column(
             modifier = modifier
-                .width(MENU_WIDTH_DP.dp)
+                .width(widthDp.dp)
                 .verticalScroll(rememberScrollState())
                 // Same top/bottom breathing room the vertical core menu has.
                 .padding(vertical = 6.dp),
@@ -2168,7 +2256,25 @@ class OverlayLiveEditController @Inject constructor(
                 when (entry) {
                     is MenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
                     is MenuEntry.Item -> MenuRow(entry, depth)
+                    is MenuEntry.Custom -> MenuCustomRow(entry, depth)
                 }
+            }
+        }
+    }
+
+    /** Host for a [MenuEntry.Custom] row: tracks its window-local top so embedded controls can
+     *  anchor picker fly-outs to it, exactly like a standard row's submenu. */
+    @Composable
+    private fun MenuCustomRow(entry: MenuEntry.Custom, depth: Int) {
+        var rowTop by remember { mutableStateOf(0) }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { rowTop = it.positionInWindow().y.roundToInt() }
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+        ) {
+            entry.content { subKey, builder ->
+                toggleSubmenu(depth, rowTop, subKey, MENU_WIDTH_DP, builder)
             }
         }
     }
@@ -2186,8 +2292,8 @@ class OverlayLiveEditController @Inject constructor(
         val rowClick: (() -> Unit)? = when {
             !item.enabled -> null
             trailing is MenuTrailing.Check -> ({ trailing.onToggle(!trailing.checked) })
-            item.onClick != null -> ({ item.onClick!!.invoke(); leafClose() })
-            hasSub -> ({ toggleSubmenu(depth, rowTop, item.label, item.submenu!!) })
+            item.onClick != null -> ({ item.onClick!!.invoke(); if (!item.keepOpen) leafClose() })
+            hasSub -> ({ toggleSubmenu(depth, rowTop, item.label, item.submenuWidthDp ?: MENU_WIDTH_DP, item.submenu!!) })
             else -> null
         }
         val contentColor = when {
@@ -2247,7 +2353,9 @@ class OverlayLiveEditController @Inject constructor(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .clip(CircleShape)
-                            .clickable(enabled = item.enabled) { toggleSubmenu(depth, rowTop, item.label, item.submenu!!) }
+                            .clickable(enabled = item.enabled) {
+                                toggleSubmenu(depth, rowTop, item.label, item.submenuWidthDp ?: MENU_WIDTH_DP, item.submenu!!)
+                            }
                             .padding(2.dp)
                             .size(18.dp),
                     )
@@ -2298,12 +2406,26 @@ class OverlayLiveEditController @Inject constructor(
                     },
                 ),
             )
+            // Assign (commands) + Customize (appearance) replaced the old "Edit" drawer entry
+            // (2026-07-20): all per-button controls live in the cascading menu now.
+            val soleId = sel.singleOrNull()
+            val assignSub: (@Composable () -> List<MenuEntry>)? = soleId?.let { id -> { AssignEntries(id) } }
+            val customizeSub: (@Composable () -> List<MenuEntry>)? = soleId?.let { id -> { CustomizeEntries(id) } }
             add(
                 MenuEntry.Item(
-                    "Edit",
+                    "Assign",
                     leadingIcon = Icons.Default.Edit,
                     enabled = singleSel,
-                    onClick = { sel.singleOrNull()?.let { showConfig(it) } },
+                    submenuWidthDp = WIDE_MENU_WIDTH_DP,
+                    submenu = assignSub,
+                ),
+            )
+            add(
+                MenuEntry.Item(
+                    "Customize",
+                    leadingIcon = Icons.Default.Palette,
+                    enabled = singleSel,
+                    submenu = customizeSub,
                 ),
             )
             add(MenuEntry.Item("Copy", leadingIcon = Icons.Default.ContentCopy, enabled = hasSel, onClick = { onCopy(styleOnly = false) }))
@@ -2534,6 +2656,498 @@ class OverlayLiveEditController @Inject constructor(
             ),
             MenuEntry.Item("Rotate menu", leadingIcon = Icons.Default.ScreenRotation, onClick = { rotateMenu() }),
         )
+    }
+
+    // ── Assign / Customize: per-button commands + appearance, all in the menu ─────
+    //
+    // These replaced the config drawer's controls (2026-07-20): the cascading menu already
+    // has robust hierarchy + screen-space behavior, and its fly-outs scroll (see
+    // [CascadeMenuLevel]). Everything embedded here uses the com.mappo.ui.control family —
+    // these levels are far tighter than the drawer was.
+
+    /** The selected element, live — builders recompose as edits commit. */
+    @Composable
+    private fun liveElement(elementId: Long): OverlayElement? {
+        val els by overlayEditor.elements.collectAsStateWithLifecycle()
+        return els.firstOrNull { it.id == elementId }
+    }
+
+    private fun gestureLabel(g: OverlayGesture): String = when (g) {
+        OverlayGesture.TAP -> "Tap"
+        OverlayGesture.DOUBLE_TAP -> "Double-tap"
+        OverlayGesture.HOLD -> "Hold"
+    }
+
+    private fun outputLabel(t: RemapTarget): String =
+        if (t is RemapTarget.Unbound) "None" else t.displayLabel()
+
+    /**
+     * Assign: one row per commanded gesture — [press-type pill] ▸ [output pill], the remap
+     * screen's input→output row shape — plus "Add command" for gestures not yet bound.
+     * [draft] keeps freshly-added (still-unbound) rows visible while this level is open.
+     */
+    @Composable
+    private fun AssignEntries(elementId: Long): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val draft = remember(elementId) { mutableStateListOf<OverlayGesture>() }
+        val rows = OverlayGesture.entries.filter { g ->
+            el.targetFor(g) !is RemapTarget.Unbound || g in draft
+        }
+        val addable = OverlayGesture.entries.filter { it !in rows }
+        return buildList {
+            rows.forEach { g ->
+                add(MenuEntry.Custom("assign-$g") { openSub -> AssignmentRow(el, g, draft, openSub) })
+            }
+            if (rows.isNotEmpty()) add(MenuEntry.Divider)
+            add(
+                MenuEntry.Item(
+                    "Add command",
+                    leadingIcon = Icons.Default.Add,
+                    enabled = addable.isNotEmpty(),
+                    submenu = {
+                        addable.map { g ->
+                            MenuEntry.Item(
+                                gestureLabel(g),
+                                closeToParentOnly = true,
+                                onClick = { draft.add(g) },
+                            )
+                        }
+                    },
+                ),
+            )
+        }
+    }
+
+    /** [press-type pill] ▸ [output pill]; each pill opens its picker as the next menu level. */
+    @Composable
+    private fun AssignmentRow(
+        el: OverlayElement,
+        gesture: OverlayGesture,
+        draft: MutableList<OverlayGesture>,
+        openSub: (String, @Composable () -> List<MenuEntry>) -> Unit,
+    ) {
+        val target = el.targetFor(gesture)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            MappoPillButton(
+                text = gestureLabel(gesture),
+                onClick = { openSub("gesture-$gesture") { GesturePickEntries(el.id, gesture, draft) } },
+            )
+            // The remap editor's input→output flow marker.
+            Icon(
+                painterResource(R.drawable.lucide_play_filled),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp).size(10.dp),
+            )
+            MappoPillButton(
+                text = outputLabel(target),
+                onClick = { openSub("output-$gesture") { OutputPickEntries(el.id, gesture, draft) } },
+                filled = target !is RemapTarget.Unbound,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+
+    /** Move this row's command to a different press type (occupied gestures are disabled). */
+    @Composable
+    private fun GesturePickEntries(
+        elementId: Long,
+        from: OverlayGesture,
+        draft: MutableList<OverlayGesture>,
+    ): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val target = el.targetFor(from)
+        return OverlayGesture.entries.map { g ->
+            val occupied = g != from &&
+                (el.targetFor(g) !is RemapTarget.Unbound || g in draft)
+            MenuEntry.Item(
+                gestureLabel(g),
+                selected = g == from,
+                enabled = !occupied,
+                closeToParentOnly = true,
+                onClick = {
+                    if (g != from) {
+                        draft.remove(from)
+                        if (target is RemapTarget.Unbound) draft.add(g)
+                        else overlayEditor.update(el.withTarget(from, RemapTarget.Unbound).withTarget(g, target))
+                    }
+                },
+            )
+        }
+    }
+
+    /** Output picker: None + the common-command palette (full picker lands with the binding migration). */
+    @Composable
+    private fun OutputPickEntries(
+        elementId: Long,
+        gesture: OverlayGesture,
+        draft: MutableList<OverlayGesture>,
+    ): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val current = el.targetFor(gesture)
+        return buildList {
+            add(
+                MenuEntry.Item(
+                    "None",
+                    selected = current is RemapTarget.Unbound,
+                    closeToParentOnly = true,
+                    onClick = {
+                        // Keep the row visible as a draft so "None" doesn't make it vanish.
+                        if (gesture !in draft) draft.add(gesture)
+                        overlayEditor.update(el.withTarget(gesture, RemapTarget.Unbound))
+                    },
+                ),
+            )
+            OverlayCommonCommands.forEach { code ->
+                val t = RemapTarget.fromCode(code)
+                add(
+                    MenuEntry.Item(
+                        code,
+                        selected = current == t,
+                        closeToParentOnly = true,
+                        onClick = {
+                            draft.remove(gesture) // bound now — the row persists on its own
+                            overlayEditor.update(el.withTarget(gesture, t))
+                        },
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Customize: Global (element-wide appearance) on top, then the layer stack (top layer first). */
+    @Composable
+    private fun CustomizeEntries(elementId: Long): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val defaultFill = MaterialTheme.colorScheme.secondaryContainer
+        val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
+        fun commit(a: ElementAppearance) = overlayEditor.update(el.copy(appearanceJson = a.encode()))
+        return buildList {
+            add(
+                MenuEntry.Item(
+                    "Global",
+                    leadingIcon = Icons.Default.Tune,
+                    submenuWidthDp = WIDE_MENU_WIDTH_DP,
+                    submenu = { GlobalAppearanceEntries(elementId) },
+                ),
+            )
+            add(MenuEntry.Divider)
+            appearance.layers.asReversed().forEach { layer ->
+                add(
+                    MenuEntry.Item(
+                        layerLabel(appearance.layers, layer),
+                        leadingIcon = if (layer.kind == LayerKind.FILL) Icons.Default.FormatColorFill else Icons.Default.BorderStyle,
+                        submenuWidthDp = WIDE_MENU_WIDTH_DP,
+                        submenu = { LayerEntries(elementId, layer.id) },
+                    ),
+                )
+            }
+            add(MenuEntry.Divider)
+            add(
+                MenuEntry.Item(
+                    "Add fill", leadingIcon = Icons.Default.Add, keepOpen = true,
+                    onClick = {
+                        commit(appearance.copy(layers = appearance.layers + defaultFillLayer(nextLayerId(appearance.layers), defaultFill)))
+                    },
+                ),
+            )
+            add(
+                MenuEntry.Item(
+                    "Add stroke", leadingIcon = Icons.Default.Add, keepOpen = true,
+                    onClick = {
+                        // White: the most common authoring move is a highlight (see defaultStrokeLayer).
+                        commit(appearance.copy(layers = appearance.layers + defaultStrokeLayer(nextLayerId(appearance.layers), Color.White)))
+                    },
+                ),
+            )
+        }
+    }
+
+    /** "Fill" / "Stroke", numbered within kind when there's more than one (bottom-up order). */
+    private fun layerLabel(layers: List<AppearanceLayer>, layer: AppearanceLayer): String {
+        val sameKind = layers.filter { it.kind == layer.kind }
+        val kind = if (layer.kind == LayerKind.FILL) "Fill" else "Stroke"
+        return if (sameKind.size > 1) "$kind ${sameKind.indexOfFirst { it.id == layer.id } + 1}" else kind
+    }
+
+    /** Global appearance: element opacity, corner radii, text color. */
+    @Composable
+    private fun GlobalAppearanceEntries(elementId: Long): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val defaultFill = MaterialTheme.colorScheme.secondaryContainer
+        val defaultText = MaterialTheme.colorScheme.onSecondaryContainer
+        val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
+        fun commit(a: ElementAppearance) = overlayEditor.update(el.copy(appearanceJson = a.encode()))
+        var perCorner by remember(elementId) { mutableStateOf(false) }
+        return buildList {
+            add(
+                MenuEntry.Custom("g-opacity") { _ ->
+                    MappoPercentSlider("Opacity", el.opacity, valueRange = 0.2f..1f, onChange = {
+                        overlayEditor.update(el.copy(opacity = it))
+                    })
+                },
+            )
+            add(
+                MenuEntry.Custom("g-corner") { _ ->
+                    MappoPercentSlider("Corner radius", appearance.corners.average, onChange = {
+                        commit(appearance.copy(corners = CornerRadii.uniform(it)))
+                    })
+                },
+            )
+            add(MenuEntry.Item("Per-corner radii", trailing = MenuTrailing.Check(perCorner) { perCorner = it }))
+            if (perCorner) {
+                val c = appearance.corners
+                add(MenuEntry.Custom("g-tl") { _ -> MappoPercentSlider("Top left", c.topLeft, onChange = { commit(appearance.copy(corners = c.copy(topLeft = it))) }) })
+                add(MenuEntry.Custom("g-tr") { _ -> MappoPercentSlider("Top right", c.topRight, onChange = { commit(appearance.copy(corners = c.copy(topRight = it))) }) })
+                add(MenuEntry.Custom("g-bl") { _ -> MappoPercentSlider("Bottom left", c.bottomLeft, onChange = { commit(appearance.copy(corners = c.copy(bottomLeft = it))) }) })
+                add(MenuEntry.Custom("g-br") { _ -> MappoPercentSlider("Bottom right", c.bottomRight, onChange = { commit(appearance.copy(corners = c.copy(bottomRight = it))) }) })
+            }
+            add(MenuEntry.Divider)
+            add(MenuEntry.Custom("g-text-color") { _ -> MenuTextColorRow(el, defaultText) })
+        }
+    }
+
+    @Composable
+    private fun MenuTextColorRow(el: OverlayElement, defaultText: Color) {
+        var picking by remember(el.id) { mutableStateOf(false) }
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Text color",
+                    style = mappoMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                if (el.contentColorArgb != null) {
+                    MappoPillButton("Reset", onClick = { overlayEditor.update(el.copy(contentColorArgb = null)) })
+                    Spacer(Modifier.width(8.dp))
+                }
+                ColorPickerButton(
+                    color = el.contentColorArgb?.let { Color(it) } ?: defaultText,
+                    onClick = { picking = !picking },
+                    size = 24.dp,
+                )
+            }
+            if (picking) {
+                // INLINE picker — dialog composables can't attach in overlay windows.
+                ColorPicker(
+                    color = el.contentColorArgb?.let { Color(it) } ?: defaultText,
+                    onChange = { c -> overlayEditor.update(el.copy(contentColorArgb = c.copy(alpha = 1f).toArgb())) },
+                    onClearOverride = { overlayEditor.update(el.copy(contentColorArgb = null)) },
+                    pickerKey = "menu-text-${el.id}",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+
+    /** One layer's full control set: paint, opacity, stroke geometry, ordering, delete. */
+    @Composable
+    private fun LayerEntries(elementId: Long, layerId: Long): List<MenuEntry> {
+        val el = liveElement(elementId) ?: return emptyList()
+        val defaultFill = MaterialTheme.colorScheme.secondaryContainer
+        val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
+        val layer = appearance.layers.firstOrNull { it.id == layerId } ?: return emptyList()
+        val index = appearance.layers.indexOfFirst { it.id == layerId }
+        fun commit(a: ElementAppearance) = overlayEditor.update(el.copy(appearanceJson = a.encode()))
+        fun updateLayer(updated: AppearanceLayer) =
+            commit(appearance.copy(layers = appearance.layers.map { if (it.id == layerId) updated else it }))
+        fun swapWith(other: Int) = commit(
+            appearance.copy(
+                layers = appearance.layers.toMutableList().also { l ->
+                    val tmp = l[index]; l[index] = l[other]; l[other] = tmp
+                },
+            ),
+        )
+        val isGradient = layer.paint is LayerPaint.Gradient
+
+        return buildList {
+            add(
+                MenuEntry.Item(
+                    "Paint",
+                    trailing = MenuTrailing.Value(if (isGradient) "Gradient" else "Solid"),
+                    submenu = {
+                        listOf(
+                            MenuEntry.Item("Solid", selected = !isGradient, closeToParentOnly = true, onClick = {
+                                (layer.paint as? LayerPaint.Gradient)?.let { g ->
+                                    updateLayer(layer.copy(paint = LayerPaint.Solid(g.stops.firstOrNull()?.argb ?: Color.White.toArgb())))
+                                }
+                            }),
+                            MenuEntry.Item("Gradient", selected = isGradient, closeToParentOnly = true, onClick = {
+                                (layer.paint as? LayerPaint.Solid)?.let { s ->
+                                    // Seed: same color fading out — visibly a gradient immediately.
+                                    updateLayer(
+                                        layer.copy(
+                                            paint = LayerPaint.Gradient(
+                                                stops = listOf(
+                                                    GradientStop(position = 0f, argb = s.argb, opacity = 1f),
+                                                    GradientStop(position = 1f, argb = s.argb, opacity = 0f),
+                                                ),
+                                            ),
+                                        ),
+                                    )
+                                }
+                            }),
+                        )
+                    },
+                ),
+            )
+            when (val paint = layer.paint) {
+                is LayerPaint.Solid -> add(MenuEntry.Custom("layer-color") { _ -> MenuLayerColorRow(layer, paint, ::updateLayer) })
+                is LayerPaint.Gradient -> add(
+                    MenuEntry.Custom("layer-gradient") { _ ->
+                        GradientEditor(
+                            gradient = paint,
+                            onChange = { updateLayer(layer.copy(paint = it)) },
+                            editorKey = layer.id,
+                            // An across-stroke gradient's direction IS the stroke — no angle to set.
+                            showAngle = !(layer.kind == LayerKind.STROKE && layer.strokeGradientMode == StrokeGradientMode.ACROSS),
+                        )
+                    },
+                )
+            }
+            add(
+                MenuEntry.Custom("layer-opacity") { _ ->
+                    MappoPercentSlider("Layer opacity", layer.opacity, onChange = { updateLayer(layer.copy(opacity = it)) })
+                },
+            )
+            if (layer.kind == LayerKind.STROKE) {
+                add(
+                    MenuEntry.Custom("layer-width") { _ ->
+                        MappoSlider(
+                            label = "Width",
+                            value = layer.strokeWidthDp,
+                            onChange = { updateLayer(layer.copy(strokeWidthDp = it)) },
+                            valueRange = 0.5f..24f,
+                            step = 0.5f,
+                            unitLabel = "dp",
+                        )
+                    },
+                )
+                add(
+                    MenuEntry.Item(
+                        "Alignment",
+                        trailing = MenuTrailing.Value(
+                            when (layer.strokeAlign) {
+                                StrokeAlign.INSIDE -> "Inside"
+                                StrokeAlign.CENTER -> "Center"
+                                StrokeAlign.OUTSIDE -> "Outside"
+                            },
+                        ),
+                        submenu = {
+                            listOf(
+                                StrokeAlign.INSIDE to "Inside",
+                                StrokeAlign.CENTER to "Center",
+                                StrokeAlign.OUTSIDE to "Outside",
+                            ).map { (v, label) ->
+                                MenuEntry.Item(label, selected = layer.strokeAlign == v, closeToParentOnly = true, onClick = {
+                                    updateLayer(layer.copy(strokeAlign = v))
+                                })
+                            }
+                        },
+                    ),
+                )
+                add(
+                    MenuEntry.Item(
+                        "Style",
+                        trailing = MenuTrailing.Value(
+                            when (layer.strokeStyle) {
+                                StrokeStyle.SOLID -> "Solid"
+                                StrokeStyle.DASHED -> "Dashed"
+                                StrokeStyle.DOTTED -> "Dotted"
+                            },
+                        ),
+                        submenu = {
+                            listOf(
+                                StrokeStyle.SOLID to "Solid",
+                                StrokeStyle.DASHED to "Dashed",
+                                StrokeStyle.DOTTED to "Dotted",
+                            ).map { (v, label) ->
+                                MenuEntry.Item(label, selected = layer.strokeStyle == v, closeToParentOnly = true, onClick = {
+                                    updateLayer(layer.copy(strokeStyle = v))
+                                })
+                            }
+                        },
+                    ),
+                )
+                if (isGradient) {
+                    add(
+                        MenuEntry.Item(
+                            "Gradient",
+                            trailing = MenuTrailing.Value(
+                                if (layer.strokeGradientMode == StrokeGradientMode.ACROSS) "Across stroke" else "Linear",
+                            ),
+                            submenu = {
+                                listOf(
+                                    StrokeGradientMode.LINEAR to "Linear",
+                                    StrokeGradientMode.ACROSS to "Across stroke",
+                                ).map { (v, label) ->
+                                    MenuEntry.Item(label, selected = layer.strokeGradientMode == v, closeToParentOnly = true, onClick = {
+                                        updateLayer(layer.copy(strokeGradientMode = v))
+                                    })
+                                }
+                            },
+                        ),
+                    )
+                }
+                add(
+                    MenuEntry.Custom("layer-dx") { _ ->
+                        MappoSlider(
+                            label = "Offset X",
+                            value = layer.offsetXDp,
+                            onChange = { updateLayer(layer.copy(offsetXDp = it)) },
+                            valueRange = -24f..24f,
+                            step = 0.5f,
+                            unitLabel = "dp",
+                        )
+                    },
+                )
+                add(
+                    MenuEntry.Custom("layer-dy") { _ ->
+                        MappoSlider(
+                            label = "Offset Y",
+                            value = layer.offsetYDp,
+                            onChange = { updateLayer(layer.copy(offsetYDp = it)) },
+                            valueRange = -24f..24f,
+                            step = 0.5f,
+                            unitLabel = "dp",
+                        )
+                    },
+                )
+            }
+            add(MenuEntry.Divider)
+            add(MenuEntry.Item("Move up", enabled = index < appearance.layers.lastIndex, keepOpen = true, onClick = { swapWith(index + 1) }))
+            add(MenuEntry.Item("Move down", enabled = index > 0, keepOpen = true, onClick = { swapWith(index - 1) }))
+            add(MenuEntry.Item("Delete layer", leadingIcon = Icons.Default.Delete, closeToParentOnly = true, onClick = {
+                commit(appearance.copy(layers = appearance.layers.filter { it.id != layerId }))
+            }))
+        }
+    }
+
+    @Composable
+    private fun MenuLayerColorRow(layer: AppearanceLayer, paint: LayerPaint.Solid, onChange: (AppearanceLayer) -> Unit) {
+        var picking by remember(layer.id) { mutableStateOf(false) }
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Color",
+                    style = mappoMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                ColorPickerButton(color = Color(paint.argb), onClick = { picking = !picking }, size = 24.dp)
+            }
+            if (picking) {
+                // INLINE picker — dialog composables can't attach in overlay windows.
+                ColorPicker(
+                    color = Color(paint.argb),
+                    onChange = { c -> onChange(layer.copy(paint = LayerPaint.Solid(c.copy(alpha = 1f).toArgb()))) },
+                    onClearOverride = null,
+                    pickerKey = "menu-layer-${layer.id}",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 
     // Real copy/paste of button data + style is deferred to the virtual-button model rework; for
@@ -2772,6 +3386,7 @@ class OverlayLiveEditController @Inject constructor(
                 when (entry) {
                     is MenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
                     is MenuEntry.Item -> RoutedRow(entry, register = register)
+                    is MenuEntry.Custom -> {} // custom rows are fly-out-only (root rows are routed)
                 }
             }
         }
@@ -2788,6 +3403,7 @@ class OverlayLiveEditController @Inject constructor(
                 when (entry) {
                     is MenuEntry.Divider -> VerticalDivider(Modifier.height(26.dp).padding(horizontal = 2.dp))
                     is MenuEntry.Item -> RoutedIcon(entry, register = register)
+                    is MenuEntry.Custom -> {} // custom rows are fly-out-only (root rows are routed)
                 }
             }
         }
@@ -2821,7 +3437,7 @@ class OverlayLiveEditController @Inject constructor(
     private fun rootItemTap(item: MenuEntry.Item, bounds: android.graphics.Rect) {
         if (!item.enabled) return
         val sub = item.submenu
-        if (sub != null) toggleRootSubmenu(item.label, bounds, sub)
+        if (sub != null) toggleRootSubmenu(item.label, bounds, item.submenuWidthDp ?: MENU_WIDTH_DP, sub)
         else { item.onClick?.invoke(); dismissSubmenus() }
     }
 
@@ -3249,6 +3865,8 @@ class OverlayLiveEditController @Inject constructor(
         private const val HANDLE_DOT_DP = 14
         // Editor menu sizing: narrow fixed width, capped height (scrolls past it).
         private const val MENU_WIDTH_DP = 156
+        // Fly-out levels hosting embedded controls (Assign rows, sliders, the gradient editor).
+        private const val WIDE_MENU_WIDTH_DP = 240
         private const val MENU_MAX_HEIGHT_DP = 460
         // Target editor-grid cell size; the actual cell rounds to tile the screen exactly (see [gridCellPx]).
         private const val GRID_TARGET_CELL_DP = 56
