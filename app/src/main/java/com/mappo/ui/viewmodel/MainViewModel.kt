@@ -345,6 +345,19 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { profileRepository.addProfile(name) }
     }
 
+    /**
+     * The new-profile form's commit: create the profile, then bind its auto-switch apps in
+     * the same coroutine so the fresh id never leaks a half-configured profile to the UI.
+     */
+    fun createProfile(name: String, packages: Set<String>) {
+        viewModelScope.launch {
+            val newId = profileRepository.addProfile(name)
+            if (packages.isNotEmpty()) {
+                appProfileBindingRepository.bindMany(newId, packages)
+            }
+        }
+    }
+
     fun duplicateProfile(source: Profile) {
         viewModelScope.launch {
             profileRepository.duplicateProfile(source, "Copy of ${source.name}")

@@ -49,10 +49,14 @@ import com.mappo.ui.mappoKeyboardOptions
 
 /**
  * Modal bottom sheet listing every launchable app on the device, filtered by a
- * text query, with multi-select checkboxes. Confirm binds every selected
- * package to [targetProfile] via [onConfirm]; existing bindings on those
- * packages are silently re-pointed (the ListItem supporting text warns the
- * user).
+ * text query, with multi-select checkboxes. Confirm hands every selected
+ * package to [onConfirm] for binding to the target profile; existing bindings
+ * on those packages are silently re-pointed (the ListItem supporting text
+ * warns the user).
+ *
+ * The target is described by name + id rather than a [Profile] so the sheet
+ * can also aim at a profile that doesn't exist yet (the new-profile form):
+ * pass [targetProfileId] = null and the caller binds after creating.
  *
  * Lifecycle: parent toggles [visible]; the sheet calls [onDismiss] when the
  * user swipes down or taps outside. Parent owns the "load installed apps"
@@ -62,7 +66,8 @@ import com.mappo.ui.mappoKeyboardOptions
 @Composable
 fun AppPickerSheet(
     visible: Boolean,
-    targetProfile: Profile,
+    targetProfileName: String,
+    targetProfileId: Long?,
     installedApps: List<InstalledApp>,
     existingBindings: Map<String, Long>,
     profilesById: Map<Long, Profile>,
@@ -112,7 +117,7 @@ fun AppPickerSheet(
             Text(
                 text = stringResource(
                     R.string.auto_switch_picker_subtitle,
-                    targetProfile.name,
+                    targetProfileName,
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -145,7 +150,7 @@ fun AppPickerSheet(
                         selected = selected.value,
                         existingBindings = existingBindings,
                         profilesById = profilesById,
-                        targetProfileId = targetProfile.id,
+                        targetProfileId = targetProfileId,
                         onToggle = { pkg ->
                             selected.value = if (pkg in selected.value) {
                                 selected.value - pkg
@@ -217,7 +222,7 @@ private fun AppList(
     selected: Set<String>,
     existingBindings: Map<String, Long>,
     profilesById: Map<Long, Profile>,
-    targetProfileId: Long,
+    targetProfileId: Long?,
     onToggle: (String) -> Unit,
 ) {
     LazyColumn(
@@ -229,7 +234,10 @@ private fun AppList(
             val isSelected = app.packageName in selected
             val existingProfileId = existingBindings[app.packageName]
             val supporting: String? = when {
-                existingProfileId == targetProfileId -> stringResource(R.string.auto_switch_picker_already_bound)
+                // Explicit null guard: an unbound app under a not-yet-created target (null id)
+                // must not read as "already bound".
+                existingProfileId != null && existingProfileId == targetProfileId ->
+                    stringResource(R.string.auto_switch_picker_already_bound)
                 existingProfileId != null -> {
                     val name = profilesById[existingProfileId]?.name
                         ?: stringResource(R.string.auto_switch_unknown_profile)

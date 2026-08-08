@@ -1,4 +1,4 @@
-package com.mappo.ui.control
+package com.mappo.ui.minput
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
@@ -49,7 +49,7 @@ import androidx.compose.ui.unit.dp
  * @param fixedWidth pins the pill to a static footprint instead of flexing to the label.
  */
 @Composable
-fun <T> MappoPillDropdown(
+fun <T> MinputPillDropdown(
     current: T,
     options: List<T>,
     optionLabel: (T) -> String,
@@ -64,23 +64,23 @@ fun <T> MappoPillDropdown(
     onClickLabel: String? = null,
 ) {
     var open by remember { mutableStateOf(false) }
-    val container = if (elevated) MappoElevatedContainer else mappoBoxContainer()
+    val container = if (elevated) MinputElevatedContainer else minputBoxContainer()
     val interaction = remember { MutableInteractionSource() }
     // Fixed-width pills center their content, which exposes the icon's live-area padding as a
-    // visibly wider left flank — bias the block toward the icon ([MappoPillIconSideBias]).
-    val iconBias = if (fixedWidth != null && pillIcon != null) MappoPillIconSideBias else 0.dp
+    // visibly wider left flank — bias the block toward the icon ([MinputPillIconSideBias]).
+    val iconBias = if (fixedWidth != null && pillIcon != null) MinputPillIconSideBias else 0.dp
     Box {
         // Shared box treatment — pill-style dropdown button, no trailing arrow.
         Surface(
             shape = RoundedCornerShape(50),
             color = container,
-            border = mappoBevelBorder(container, MappoPillHeight / 2),
+            border = minputBevelBorder(container, MinputPillHeight / 2),
             modifier = modifier
-                .mappoInteractiveMotion(interaction)
-                .heightIn(min = MappoPillHeight)
+                .minputInteractiveMotion(interaction)
+                .heightIn(min = MinputPillHeight)
                 .then(
                     if (fixedWidth != null) Modifier.width(fixedWidth)
-                    else Modifier.widthIn(min = MappoPillMinWidth),
+                    else Modifier.widthIn(min = MinputPillMinWidth),
                 )
                 .then(
                     if (enabled) {
@@ -96,25 +96,25 @@ fun <T> MappoPillDropdown(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.padding(
-                    start = MappoPillContentPadding - iconBias / 2,
-                    end = MappoPillContentPadding + iconBias / 2,
+                    start = MinputPillContentPadding - iconBias / 2,
+                    end = MinputPillContentPadding + iconBias / 2,
                 ),
             ) {
                 if (pillIcon != null) {
                     Icon(
                         pillIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(MappoPillIconSize),
+                        modifier = Modifier.size(MinputPillIconSize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.width(MappoGlyphLabelGap))
+                    Spacer(Modifier.width(MinputGlyphLabelGap))
                 }
                 Text(
                     text = optionLabel(current).let { if (overline) it.uppercase() else it },
-                    style = if (overline) mappoOverlineTextStyle() else mappoMiniTextStyle(),
+                    style = if (overline) minputOverlineTextStyle() else minputMiniTextStyle(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = MappoPillLabelMaxWidth),
+                    modifier = Modifier.widthIn(max = MinputPillLabelMaxWidth),
                 )
             }
         }

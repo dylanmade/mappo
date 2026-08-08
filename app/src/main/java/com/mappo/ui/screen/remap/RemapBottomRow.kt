@@ -43,16 +43,16 @@ import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.InputSource
 import com.mappo.R
 import com.mappo.service.input.modes.SourceModeCatalog
-import com.mappo.ui.control.MappoGlyphLabelGap
-import com.mappo.ui.control.MappoPillContentPadding
-import com.mappo.ui.control.MappoPillHeight
-import com.mappo.ui.control.MappoPillIconSideBias
-import com.mappo.ui.control.MappoPillIconSize
-import com.mappo.ui.control.MappoPillMinWidth
-import com.mappo.ui.control.mappoBevelBorder
-import com.mappo.ui.control.mappoBoxContainer
-import com.mappo.ui.control.mappoInteractiveMotion
-import com.mappo.ui.control.mappoMiniTextStyle
+import com.mappo.ui.minput.MinputGlyphLabelGap
+import com.mappo.ui.minput.MinputPillContentPadding
+import com.mappo.ui.minput.MinputPillHeight
+import com.mappo.ui.minput.MinputPillIconSideBias
+import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputPillMinWidth
+import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.minputInteractiveMotion
+import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
  * The control strip beneath the simple remap view's band: three set-scoped pickers, each a
@@ -88,7 +88,7 @@ internal fun RemapBottomRow(
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val pillWidth = ((maxWidth - StripReservedWidth) / 3)
             .coerceAtMost(RemapStripPillWidth)
-            .coerceAtLeast(MappoPillMinWidth)
+            .coerceAtLeast(MinputPillMinWidth)
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.Center,
@@ -138,7 +138,7 @@ internal fun RemapBottomRow(
             } else {
                 Text(
                     text = "—",
-                    style = mappoMiniTextStyle(),
+                    style = minputMiniTextStyle(),
                     color = MaterialTheme.colorScheme.outline,
                 )
             }
@@ -152,7 +152,7 @@ internal fun RemapBottomRow(
 private fun StripCaption(text: String) {
     Text(
         text = text,
-        style = mappoMiniTextStyle(),
+        style = minputMiniTextStyle(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -174,15 +174,15 @@ private fun PlaceholderStripPill(
     Box {
         // Shared box treatment — pill-style dropdown button, no trailing arrow. Uniform
         // width across the strip's pills (computed by the caller).
-        val container = mappoBoxContainer()
+        val container = minputBoxContainer()
         val interaction = remember { MutableInteractionSource() }
         Surface(
             shape = RoundedCornerShape(50),
             color = container,
-            border = mappoBevelBorder(container, MappoPillHeight / 2),
+            border = minputBevelBorder(container, MinputPillHeight / 2),
             modifier = Modifier
-                .mappoInteractiveMotion(interaction)
-                .heightIn(min = MappoPillHeight)
+                .minputInteractiveMotion(interaction)
+                .heightIn(min = MinputPillHeight)
                 .width(width)
                 .clip(RoundedCornerShape(50))
                 .clickable(
@@ -195,20 +195,20 @@ private fun PlaceholderStripPill(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
                 // Icon-side bias: the centered block otherwise reads shifted right by the
-                // leading icon's live-area padding — see [MappoPillIconSideBias].
+                // leading icon's live-area padding — see [MinputPillIconSideBias].
                 modifier = Modifier.padding(
-                    start = MappoPillContentPadding - MappoPillIconSideBias / 2,
-                    end = MappoPillContentPadding + MappoPillIconSideBias / 2,
+                    start = MinputPillContentPadding - MinputPillIconSideBias / 2,
+                    end = MinputPillContentPadding + MinputPillIconSideBias / 2,
                 ),
             ) {
                 Icon(
                     icon,
                     contentDescription = null,
-                    modifier = Modifier.size(MappoPillIconSize),
+                    modifier = Modifier.size(MinputPillIconSize),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.width(MappoGlyphLabelGap))
-                Text(text = selected, style = mappoMiniTextStyle())
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Text(text = selected, style = minputMiniTextStyle())
             }
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

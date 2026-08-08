@@ -34,7 +34,7 @@ import com.mappo.R
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.ui.component.ReorderableTabBar
 import com.mappo.ui.component.TabBarItem
-import com.mappo.ui.control.MappoPillButton
+import com.mappo.ui.minput.MinputPillButton
 import kotlinx.collections.immutable.toImmutableList
 
 /**
@@ -92,7 +92,7 @@ internal fun RemapTopBar(
                 // Profile: the active profile's name behind the physical button that opens it.
                 // Width-capped — profile names are user-typed (NameableText doctrine; the
                 // pill's own single-line ellipsis does the truncation).
-                MappoPillButton(
+                MinputPillButton(
                     text = profileLabel ?: "Profile",
                     onClick = onOpenProfile,
                     leadingIcon = painterResource(R.drawable.xbox_button_view),
@@ -114,7 +114,7 @@ internal fun RemapTopBar(
                         actions = actions,
                     )
                 }
-                MappoPillButton(
+                MinputPillButton(
                     text = "Options",
                     onClick = onOpenOptions,
                     leadingIcon = painterResource(R.drawable.xbox_button_menu),

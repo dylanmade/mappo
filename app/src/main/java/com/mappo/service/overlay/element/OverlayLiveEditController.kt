@@ -190,10 +190,10 @@ import com.mappo.data.model.withTarget
 import com.mappo.ui.component.ColorPicker
 import com.mappo.ui.component.GradientEditor
 import com.mappo.ui.component.colorpicker.ColorPickerButton
-import com.mappo.ui.control.MappoPercentSlider
-import com.mappo.ui.control.MappoPillButton
-import com.mappo.ui.control.MappoSlider
-import com.mappo.ui.control.mappoMiniTextStyle
+import com.mappo.ui.minput.MinputPercentSlider
+import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputSlider
+import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.screen.overlay.OverlayCommonCommands
 import com.mappo.ui.screen.overlay.legacyAppearance
 import com.mappo.data.settings.OverlaySettings
@@ -2109,7 +2109,7 @@ class OverlayLiveEditController @Inject constructor(
             addView(composeView)
         }
         owner.resumeTo()
-        // FOCUSABLE (unlike the root panel): fly-outs embed MappoSlider value fields, whose
+        // FOCUSABLE (unlike the root panel): fly-outs embed MinputSlider value fields, whose
         // typed input needs a window that can take key focus and raise the IME.
         val params = layoutParams(
             width = WindowManager.LayoutParams.WRAP_CONTENT,
@@ -2662,7 +2662,7 @@ class OverlayLiveEditController @Inject constructor(
     //
     // These replaced the config drawer's controls (2026-07-20): the cascading menu already
     // has robust hierarchy + screen-space behavior, and its fly-outs scroll (see
-    // [CascadeMenuLevel]). Everything embedded here uses the com.mappo.ui.control family —
+    // [CascadeMenuLevel]). Everything embedded here uses the com.mappo.ui.minput family —
     // these levels are far tighter than the drawer was.
 
     /** The selected element, live — builders recompose as edits commit. */
@@ -2728,7 +2728,7 @@ class OverlayLiveEditController @Inject constructor(
     ) {
         val target = el.targetFor(gesture)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            MappoPillButton(
+            MinputPillButton(
                 text = gestureLabel(gesture),
                 onClick = { openSub("gesture-$gesture") { GesturePickEntries(el.id, gesture, draft) } },
             )
@@ -2739,7 +2739,7 @@ class OverlayLiveEditController @Inject constructor(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp).size(10.dp),
             )
-            MappoPillButton(
+            MinputPillButton(
                 text = outputLabel(target),
                 onClick = { openSub("output-$gesture") { OutputPickEntries(el.id, gesture, draft) } },
                 filled = target !is RemapTarget.Unbound,
@@ -2882,14 +2882,14 @@ class OverlayLiveEditController @Inject constructor(
         return buildList {
             add(
                 MenuEntry.Custom("g-opacity") { _ ->
-                    MappoPercentSlider("Opacity", el.opacity, valueRange = 0.2f..1f, onChange = {
+                    MinputPercentSlider("Opacity", el.opacity, valueRange = 0.2f..1f, onChange = {
                         overlayEditor.update(el.copy(opacity = it))
                     })
                 },
             )
             add(
                 MenuEntry.Custom("g-corner") { _ ->
-                    MappoPercentSlider("Corner radius", appearance.corners.average, onChange = {
+                    MinputPercentSlider("Corner radius", appearance.corners.average, onChange = {
                         commit(appearance.copy(corners = CornerRadii.uniform(it)))
                     })
                 },
@@ -2897,10 +2897,10 @@ class OverlayLiveEditController @Inject constructor(
             add(MenuEntry.Item("Per-corner radii", trailing = MenuTrailing.Check(perCorner) { perCorner = it }))
             if (perCorner) {
                 val c = appearance.corners
-                add(MenuEntry.Custom("g-tl") { _ -> MappoPercentSlider("Top left", c.topLeft, onChange = { commit(appearance.copy(corners = c.copy(topLeft = it))) }) })
-                add(MenuEntry.Custom("g-tr") { _ -> MappoPercentSlider("Top right", c.topRight, onChange = { commit(appearance.copy(corners = c.copy(topRight = it))) }) })
-                add(MenuEntry.Custom("g-bl") { _ -> MappoPercentSlider("Bottom left", c.bottomLeft, onChange = { commit(appearance.copy(corners = c.copy(bottomLeft = it))) }) })
-                add(MenuEntry.Custom("g-br") { _ -> MappoPercentSlider("Bottom right", c.bottomRight, onChange = { commit(appearance.copy(corners = c.copy(bottomRight = it))) }) })
+                add(MenuEntry.Custom("g-tl") { _ -> MinputPercentSlider("Top left", c.topLeft, onChange = { commit(appearance.copy(corners = c.copy(topLeft = it))) }) })
+                add(MenuEntry.Custom("g-tr") { _ -> MinputPercentSlider("Top right", c.topRight, onChange = { commit(appearance.copy(corners = c.copy(topRight = it))) }) })
+                add(MenuEntry.Custom("g-bl") { _ -> MinputPercentSlider("Bottom left", c.bottomLeft, onChange = { commit(appearance.copy(corners = c.copy(bottomLeft = it))) }) })
+                add(MenuEntry.Custom("g-br") { _ -> MinputPercentSlider("Bottom right", c.bottomRight, onChange = { commit(appearance.copy(corners = c.copy(bottomRight = it))) }) })
             }
             add(MenuEntry.Divider)
             add(MenuEntry.Custom("g-text-color") { _ -> MenuTextColorRow(el, defaultText) })
@@ -2914,12 +2914,12 @@ class OverlayLiveEditController @Inject constructor(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     "Text color",
-                    style = mappoMiniTextStyle(),
+                    style = minputMiniTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 if (el.contentColorArgb != null) {
-                    MappoPillButton("Reset", onClick = { overlayEditor.update(el.copy(contentColorArgb = null)) })
+                    MinputPillButton("Reset", onClick = { overlayEditor.update(el.copy(contentColorArgb = null)) })
                     Spacer(Modifier.width(8.dp))
                 }
                 ColorPickerButton(
@@ -3008,13 +3008,13 @@ class OverlayLiveEditController @Inject constructor(
             }
             add(
                 MenuEntry.Custom("layer-opacity") { _ ->
-                    MappoPercentSlider("Layer opacity", layer.opacity, onChange = { updateLayer(layer.copy(opacity = it)) })
+                    MinputPercentSlider("Layer opacity", layer.opacity, onChange = { updateLayer(layer.copy(opacity = it)) })
                 },
             )
             if (layer.kind == LayerKind.STROKE) {
                 add(
                     MenuEntry.Custom("layer-width") { _ ->
-                        MappoSlider(
+                        MinputSlider(
                             label = "Width",
                             value = layer.strokeWidthDp,
                             onChange = { updateLayer(layer.copy(strokeWidthDp = it)) },
@@ -3092,7 +3092,7 @@ class OverlayLiveEditController @Inject constructor(
                 }
                 add(
                     MenuEntry.Custom("layer-dx") { _ ->
-                        MappoSlider(
+                        MinputSlider(
                             label = "Offset X",
                             value = layer.offsetXDp,
                             onChange = { updateLayer(layer.copy(offsetXDp = it)) },
@@ -3104,7 +3104,7 @@ class OverlayLiveEditController @Inject constructor(
                 )
                 add(
                     MenuEntry.Custom("layer-dy") { _ ->
-                        MappoSlider(
+                        MinputSlider(
                             label = "Offset Y",
                             value = layer.offsetYDp,
                             onChange = { updateLayer(layer.copy(offsetYDp = it)) },
@@ -3131,7 +3131,7 @@ class OverlayLiveEditController @Inject constructor(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     "Color",
-                    style = mappoMiniTextStyle(),
+                    style = minputMiniTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )

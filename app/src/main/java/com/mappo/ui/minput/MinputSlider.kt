@@ -1,4 +1,4 @@
-package com.mappo.ui.control
+package com.mappo.ui.minput
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -37,7 +37,7 @@ import kotlin.math.roundToInt
 
 /**
  * Mappo's slider control: a header row (label left, editable current-value field right)
- * over the slider itself, flanked by -/+ [MappoIconButton]s that step the value one [step]
+ * over the slider itself, flanked by -/+ [MinputIconButton]s that step the value one [step]
  * per tap. The value field accepts typed values (committed on Done / focus loss, clamped
  * to [valueRange]).
  *
@@ -51,7 +51,7 @@ import kotlin.math.roundToInt
  * @param unitLabel optional short unit caption after the value field ("%", "dp", "°").
  */
 @Composable
-fun MappoSlider(
+fun MinputSlider(
     label: String,
     value: Float,
     onChange: (Float) -> Unit,
@@ -75,7 +75,7 @@ fun MappoSlider(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = label,
-                style = mappoMiniTextStyle(),
+                style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
@@ -91,14 +91,14 @@ fun MappoSlider(
                 Spacer(Modifier.width(4.dp))
                 Text(
                     text = unitLabel,
-                    style = mappoMiniTextStyle(),
+                    style = minputMiniTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         // ── Track row: -/+ unit steppers flanking the slider ──
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            MappoIconButton(
+            MinputIconButton(
                 icon = Icons.Filled.Remove,
                 contentDescription = "Decrease $label",
                 onClick = { commitValue(value - step) },
@@ -112,7 +112,7 @@ fun MappoSlider(
                 onValueChangeFinished = onChangeFinished,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
             )
-            MappoIconButton(
+            MinputIconButton(
                 icon = Icons.Filled.Add,
                 contentDescription = "Increase $label",
                 onClick = { commitValue(value + step) },
@@ -164,11 +164,11 @@ private fun SliderValueField(
 }
 
 /**
- * [MappoSlider] over a 0..1 fraction displayed as whole percent ("35" + "%"), stepping 1%
+ * [MinputSlider] over a 0..1 fraction displayed as whole percent ("35" + "%"), stepping 1%
  * per -/+ tap. The convenience form for the app's many fraction-backed settings.
  */
 @Composable
-fun MappoPercentSlider(
+fun MinputPercentSlider(
     label: String,
     value: Float,
     onChange: (Float) -> Unit,
@@ -177,7 +177,7 @@ fun MappoPercentSlider(
     enabled: Boolean = true,
     onChangeFinished: (() -> Unit)? = null,
 ) {
-    MappoSlider(
+    MinputSlider(
         label = label,
         value = value,
         onChange = onChange,

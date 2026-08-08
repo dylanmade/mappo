@@ -1,4 +1,4 @@
-package com.mappo.ui.control
+package com.mappo.ui.minput
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
@@ -39,7 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
  * colors that must not re-tint); pass a theme role for tintable concept icons.
  */
 @Composable
-fun MappoPillButton(
+fun MinputPillButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -51,15 +51,15 @@ fun MappoPillButton(
 ) {
     val content = if (filled) MaterialTheme.colorScheme.onSurface
     else MaterialTheme.colorScheme.onSurfaceVariant
-    val container = if (elevated) MappoElevatedContainer else mappoBoxContainer()
+    val container = if (elevated) MinputElevatedContainer else minputBoxContainer()
     val interaction = remember { MutableInteractionSource() }
     Surface(
         shape = RoundedCornerShape(50),
         color = container,
-        border = mappoBevelBorder(container, MappoPillHeight / 2),
+        border = minputBevelBorder(container, MinputPillHeight / 2),
         modifier = modifier
-            .mappoInteractiveMotion(interaction)
-            .height(MappoPillHeight)
+            .minputInteractiveMotion(interaction)
+            .height(MinputPillHeight)
             .then(
                 if (enabled) {
                     Modifier.clip(RoundedCornerShape(50)).clickable(
@@ -74,21 +74,21 @@ fun MappoPillButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier
-                .height(MappoPillHeight)
-                .padding(horizontal = MappoPillContentPadding),
+                .height(MinputPillHeight)
+                .padding(horizontal = MinputPillContentPadding),
         ) {
             if (leadingIcon != null) {
                 Icon(
                     leadingIcon,
                     contentDescription = null,
-                    modifier = Modifier.size(MappoPillIconSize),
+                    modifier = Modifier.size(MinputPillIconSize),
                     tint = leadingIconTint,
                 )
-                Spacer(Modifier.width(MappoGlyphLabelGap))
+                Spacer(Modifier.width(MinputGlyphLabelGap))
             }
             Text(
                 text = text,
-                style = mappoMiniTextStyle(),
+                style = minputMiniTextStyle(),
                 color = content,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -99,7 +99,7 @@ fun MappoPillButton(
 
 /** Mappo's hand-rolled miniature icon button (cogs etc.) — ripple-clipped circle, no 48dp halo. */
 @Composable
-fun MappoIconButton(
+fun MinputIconButton(
     icon: ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
@@ -109,8 +109,8 @@ fun MappoIconButton(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .mappoInteractiveMotion(interaction)
-            .size(MappoIconButtonSize)
+            .minputInteractiveMotion(interaction)
+            .size(MinputIconButtonSize)
             .clip(CircleShape)
             .then(
                 if (enabled) {
@@ -126,7 +126,7 @@ fun MappoIconButton(
         Icon(
             icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(MappoIconButtonIconSize),
+            modifier = Modifier.size(MinputIconButtonIconSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

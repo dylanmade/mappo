@@ -82,20 +82,20 @@ import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.activatorRenderOrder
 import com.mappo.ui.screen.displayLabel as activatorDisplayLabel
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
-import com.mappo.ui.control.MappoBoxStroke
-import com.mappo.ui.control.MappoElevatedContainer
-import com.mappo.ui.control.MappoGlyphLabelGap
-import com.mappo.ui.control.MappoIconButton
-import com.mappo.ui.control.MappoIconButtonSize
-import com.mappo.ui.control.MappoPillButton
-import com.mappo.ui.control.MappoPillContentPadding
-import com.mappo.ui.control.MappoPillHeight
-import com.mappo.ui.control.MappoPillIconSize
-import com.mappo.ui.control.mappoBevelBorder
-import com.mappo.ui.control.mappoInputFieldContainer
-import com.mappo.ui.control.mappoInteractiveMotion
-import com.mappo.ui.control.mappoMiniTextStyle
-import com.mappo.ui.control.mappoOverlineTextStyle
+import com.mappo.ui.minput.MinputBoxStroke
+import com.mappo.ui.minput.MinputElevatedContainer
+import com.mappo.ui.minput.MinputGlyphLabelGap
+import com.mappo.ui.minput.MinputIconButton
+import com.mappo.ui.minput.MinputIconButtonSize
+import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputPillContentPadding
+import com.mappo.ui.minput.MinputPillHeight
+import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputInputFieldContainer
+import com.mappo.ui.minput.minputInteractiveMotion
+import com.mappo.ui.minput.minputMiniTextStyle
+import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
  * The expanded ("advanced") in-place editor a group box grows into. Sticky header — group
@@ -205,13 +205,13 @@ internal fun RemapGroupEditor(
             Icon(
                 InputGlyphs.sourcePainter(primarySource),
                 contentDescription = null,
-                modifier = Modifier.size(MappoPillIconSize),
+                modifier = Modifier.size(MinputPillIconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.width(MappoGlyphLabelGap))
+            Spacer(Modifier.width(MinputGlyphLabelGap))
             Text(
                 text = group.headerLabel().uppercase(),
-                style = mappoOverlineTextStyle(),
+                style = minputOverlineTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.width(8.dp))
@@ -231,12 +231,12 @@ internal fun RemapGroupEditor(
             } else {
                 Text(
                     text = "DEFAULT",
-                    style = mappoOverlineTextStyle(),
+                    style = minputOverlineTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.weight(1f))
-            MappoIconButton(
+            MinputIconButton(
                 icon = Icons.Filled.Settings,
                 contentDescription = "Configure $modeName",
                 onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
@@ -276,7 +276,7 @@ internal fun RemapGroupEditor(
                 }
             }
             // No spacer: cog·kebab·close sit adjacent at one rhythm.
-            MappoIconButton(
+            MinputIconButton(
                 icon = Icons.Filled.Close,
                 contentDescription = "Close",
                 onClick = onClose,
@@ -499,7 +499,7 @@ private fun EditorCommandRow(
             )
             // A hair of extra breathing room beyond the row's 6dp rhythm, both sides.
             EditorFlowArrow(Modifier.padding(horizontal = 2.dp))
-            MappoPillButton(
+            MinputPillButton(
                 text = outputLabel,
                 onClick = onTapOutput,
                 filled = true,
@@ -520,7 +520,7 @@ private fun EditorCommandRow(
             // Trailing icon buttons sit ADJACENT (no gap), matching the header's cog+kebab —
             // the nested Row opts them out of the row's 6dp rhythm.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MappoIconButton(
+                MinputIconButton(
                     icon = Icons.Filled.Settings,
                     contentDescription = "Configure input",
                     onClick = onConfigure ?: {},
@@ -542,7 +542,7 @@ private fun RowKebabMenu(
     kebabModifier: Modifier = Modifier,
 ) {
     when (menu) {
-        null -> Spacer(Modifier.size(MappoIconButtonSize)) // kebab footprint, keeps rows aligned
+        null -> Spacer(Modifier.size(MinputIconButtonSize)) // kebab footprint, keeps rows aligned
         is EditorRowMenu.ClearOverride -> Box {
             var open by remember { mutableStateOf(false) }
             RowKebab(
@@ -622,11 +622,11 @@ private fun InputPillButton(
     val interaction = remember { MutableInteractionSource() }
     Surface(
         shape = RoundedCornerShape(50),
-        color = MappoElevatedContainer,
-        border = mappoBevelBorder(MappoElevatedContainer, MappoPillHeight / 2),
+        color = MinputElevatedContainer,
+        border = minputBevelBorder(MinputElevatedContainer, MinputPillHeight / 2),
         modifier = modifier
-            .mappoInteractiveMotion(interaction)
-            .heightIn(min = MappoPillHeight)
+            .minputInteractiveMotion(interaction)
+            .heightIn(min = MinputPillHeight)
             .then(
                 if (enabled) {
                     Modifier.clip(RoundedCornerShape(50)).clickable(
@@ -640,14 +640,14 @@ private fun InputPillButton(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = MappoPillContentPadding),
+            modifier = Modifier.padding(horizontal = MinputPillContentPadding),
         ) {
             Text(
                 text = pressType.shortLabel(),
-                style = mappoMiniTextStyle(),
+                style = minputMiniTextStyle(),
                 maxLines = 1,
             )
-            Spacer(Modifier.width(MappoGlyphLabelGap))
+            Spacer(Modifier.width(MinputGlyphLabelGap))
             if (spec != null) {
                 InputGlyphs.SubInputGlyph(spec.source, spec.subInputKey, size = EditorGlyphSize)
             } else {
@@ -683,8 +683,8 @@ private fun EditorDashedActionButton(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .mappoInteractiveMotion(interaction)
-            .heightIn(min = MappoPillHeight)
+            .minputInteractiveMotion(interaction)
+            .heightIn(min = MinputPillHeight)
             // Before the clip so the stroke's outer half doesn't shear off. Dashes run
             // longer than the placeholder default — at pill scale the 3dp dashes read as
             // stipple.
@@ -692,8 +692,8 @@ private fun EditorDashedActionButton(
                 if (dashedOutline) {
                     Modifier.dashedPlaceholderOutline(
                         color = MaterialTheme.colorScheme.outline,
-                        cornerRadius = MappoPillHeight / 2,
-                        strokeWidth = MappoBoxStroke,
+                        cornerRadius = MinputPillHeight / 2,
+                        strokeWidth = MinputBoxStroke,
                         dashLength = 6.dp,
                         gapLength = 3.dp,
                     )
@@ -709,19 +709,19 @@ private fun EditorDashedActionButton(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = MappoPillContentPadding),
+            modifier = Modifier.padding(horizontal = MinputPillContentPadding),
         ) {
             Icon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(MappoPillIconSize),
+                modifier = Modifier.size(MinputPillIconSize),
                 tint = MaterialTheme.colorScheme.primary,
             )
             // A hair tighter than the shared glyph-label gap.
             Spacer(Modifier.width(3.dp))
             Text(
                 text = text,
-                style = mappoMiniTextStyle(),
+                style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
             )
@@ -764,10 +764,10 @@ private fun LabelPillField(
     val interaction = remember { MutableInteractionSource() }
     Surface(
         shape = RoundedCornerShape(50),
-        color = mappoInputFieldContainer(),
+        color = minputInputFieldContainer(),
         modifier = modifier
-            .mappoInteractiveMotion(interaction)
-            .height(MappoPillHeight)
+            .minputInteractiveMotion(interaction)
+            .height(MinputPillHeight)
             .then(
                 if (enabled) {
                     Modifier.clip(RoundedCornerShape(50)).clickable(
@@ -779,12 +779,12 @@ private fun LabelPillField(
             ),
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = MappoPillContentPadding),
+            modifier = Modifier.padding(horizontal = MinputPillContentPadding),
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
                 text = value.ifEmpty { "Label" },
-                style = mappoMiniTextStyle(),
+                style = minputMiniTextStyle(),
                 color = if (value.isEmpty()) {
                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 } else {
@@ -875,7 +875,7 @@ internal fun RowKebab(
     contentDescription: String = "Options",
     modifier: Modifier = Modifier,
 ) {
-    MappoIconButton(
+    MinputIconButton(
         icon = Icons.Filled.MoreVert,
         contentDescription = contentDescription,
         onClick = onClick,

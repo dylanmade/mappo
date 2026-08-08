@@ -60,6 +60,7 @@ import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
+import com.mappo.ui.screen.remap.ProfilePanelModal
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.RemapPanel
 import com.mappo.ui.screen.remap.RemapPanelOverlay
@@ -151,6 +152,11 @@ fun RemapControlsScreen(
     powerOn: Boolean = false,
     onPowerChange: (Boolean) -> Unit = {},
     optionsEntries: List<RemapOptionEntry> = emptyList(),
+    // ── Profile-panel modals: the new-profile form (name + auto-switch app bindings) ──
+    installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
+    appBindings: Map<String, Long> = emptyMap(),
+    onLoadInstalledApps: () -> Unit = {},
+    onCreateProfile: (name: String, packages: Set<String>) -> Unit = { _, _ -> },
 ) {
     // Physical/gesture back navigates home. The expanded group editor and the profile/options
     // panel overlay install their own (more-recent) BackHandlers while open, so this only
@@ -160,6 +166,10 @@ fun RemapControlsScreen(
     // Which full-screen panel (profile / options) is open. User intent — survives the
     // navigation round-trips the options entries launch.
     var openPanel by rememberSaveable { mutableStateOf<RemapPanel?>(null) }
+    // Which profile-panel modal (Add / all-profile options) is up. Plain `remember` like the
+    // dialog states below — modals are short-lived and never outlive their panel; every
+    // openPanel mutation clears it so a modal can't orphan over a closed/switched panel.
+    var openProfileModal by remember { mutableStateOf<ProfilePanelModal?>(null) }
     // Captured bounds of the top-bar corner pills, in root-Box coordinates — the morph origins.
     val panelButtonBounds = remember { mutableStateMapOf<RemapPanel, androidx.compose.ui.geometry.Rect>() }
     var panelRootCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
@@ -268,17 +278,33 @@ fun RemapControlsScreen(
                 }
                 when (e.key) {
                     Key.ButtonSelect -> {
-                        Log.d(REMAP_SCREEN_TAG, "key: Select -> toggle profile panel")
-                        openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
+                        if (openProfileModal != null) {
+                            // A modal is the topmost dismissable — Select backs out of it
+                            // rather than tearing down the panel underneath it.
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close profile modal")
+                            openProfileModal = null
+                        } else {
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> toggle profile panel")
+                            openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
+                        }
                         true
                     }
                     Key.ButtonStart -> {
-                        Log.d(REMAP_SCREEN_TAG, "key: Start -> toggle options panel")
-                        openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                        if (openProfileModal != null) {
+                            Log.d(REMAP_SCREEN_TAG, "key: Start -> close profile modal")
+                            openProfileModal = null
+                        } else {
+                            Log.d(REMAP_SCREEN_TAG, "key: Start -> toggle options panel")
+                            openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                        }
                         true
                     }
                     Key.ButtonB -> {
-                        if (openPanel != null) {
+                        if (openProfileModal != null) {
+                            Log.d(REMAP_SCREEN_TAG, "key: B -> close profile modal")
+                            openProfileModal = null
+                            true
+                        } else if (openPanel != null) {
                             Log.d(REMAP_SCREEN_TAG, "key: B -> close panel")
                             openPanel = null
                             true
@@ -311,9 +337,11 @@ fun RemapControlsScreen(
                     ),
                     profileLabel = profileName,
                     onOpenProfile = {
+                        openProfileModal = null
                         openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
                     },
                     onOpenOptions = {
+                        openProfileModal = null
                         openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
                     },
                     onProfileButtonPositioned = { coords ->
@@ -359,7 +387,7 @@ fun RemapControlsScreen(
 
         RemapPanelOverlay(
             openPanel = openPanel,
-            onClose = { openPanel = null },
+            onClose = { openProfileModal = null; openPanel = null },
             buttonBounds = { panelButtonBounds[it] },
             rootSize = panelRootSize,
             profiles = profiles,
@@ -368,6 +396,13 @@ fun RemapControlsScreen(
             powerOn = powerOn,
             onPowerChange = onPowerChange,
             optionsEntries = optionsEntries,
+            openModal = openProfileModal,
+            onOpenModal = { openProfileModal = it },
+            onCloseModal = { openProfileModal = null },
+            installedApps = installedApps,
+            appBindings = appBindings,
+            onLoadInstalledApps = onLoadInstalledApps,
+            onCreateProfile = onCreateProfile,
             modifier = Modifier.matchParentSize(),
         )
     }

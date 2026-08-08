@@ -7,13 +7,13 @@ import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayNameFor
-import com.mappo.ui.control.MappoPillDropdown
+import com.mappo.ui.minput.MinputPillDropdown
 import com.mappo.ui.glyph.InputGlyphs
 
 /**
  * Remap-specific pill chrome. The general control family (beveled pill buttons, icon
  * buttons, the generic pill dropdown, motion, and every shared metric) lives in
- * `com.mappo.ui.control` — this file holds only what's inherently about the remap domain.
+ * `com.mappo.ui.minput` — this file holds only what's inherently about the remap domain.
  */
 
 /** FIXED width of the Gyro/Overlay strip pills — a static, unified footprint (both pickers
@@ -45,7 +45,7 @@ internal fun ModePillDropdown(
     // element's identity, not the mode's.
     val pillIcon = leadingIcon
         ?: if (currentMode != BindingMode.NONE) InputGlyphs.modePainter(currentMode) else null
-    MappoPillDropdown(
+    MinputPillDropdown(
         current = currentMode,
         options = validModes,
         optionLabel = { it.displayNameFor(source) },

@@ -236,6 +236,9 @@ fun MainScreen(
     val viewingLayerId by viewModel.viewingLayerId.collectAsStateWithLifecycle()
     val remapEnabled by viewModel.remapEnabled.collectAsStateWithLifecycle()
     val overlayShowing by viewModel.overlayShowing.collectAsStateWithLifecycle()
+    // Feeds the profile panel's new-profile form (name + auto-switch app associations).
+    val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
+    val appProfileBindings by viewModel.appProfileBindings.collectAsStateWithLifecycle()
     val shizukuRequiredAcked by viewModel.shizukuRequiredAcknowledged.collectAsStateWithLifecycle()
     val shizukuReady by viewModel.shizukuReady.collectAsStateWithLifecycle()
     val shizukuState by viewModel.shizukuState.collectAsStateWithLifecycle()
@@ -363,6 +366,13 @@ fun MainScreen(
                     profiles = profiles,
                     activeProfileId = activeProfile?.id,
                     onSelectProfile = { profile -> viewModel.selectProfile(profile) },
+                    // New-profile form (the panel's Add modal): picker data + one-shot create.
+                    installedApps = installedApps,
+                    appBindings = remember(appProfileBindings) {
+                        appProfileBindings.associate { it.packageName to it.profileId }
+                    },
+                    onLoadInstalledApps = viewModel::loadInstalledApps,
+                    onCreateProfile = viewModel::createProfile,
                     // ── Options panel: master power + the destinations that lived in the old
                     // home screen's options fly-out ──
                     // Master power (the old toolbar's master switch) drives remap AND the

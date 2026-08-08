@@ -1,4 +1,4 @@
-package com.mappo.ui.control
+package com.mappo.ui.minput
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -15,11 +15,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 
-/** The motion vocabulary [mappoInteractiveMotion] speaks. Both variants are RELATIVE on
+/** The motion vocabulary [minputInteractiveMotion] speaks. Both variants are RELATIVE on
  *  press — the same travel from wherever the element currently rests, never an absolute
  *  target (absolute targets made focus presses feel far more intense than unfocused ones,
  *  a lesson learned once per variant). */
-enum class MappoMotion {
+enum class MinputMotion {
     /** Focus/hover raises the element [MappoFocusLift]; press displaces it [MappoPressTravel]
      *  down from its current position (release springs it back). The elevation metaphor —
      *  the library default since 2026-07-14. */
@@ -32,16 +32,16 @@ enum class MappoMotion {
 }
 
 /**
- * Interaction motion for Mappo's interactive controls — [MappoMotion.Lift] (default) or
- * [MappoMotion.Scale]. Pass the SAME [interactionSource] to the element's `clickable` so
+ * Interaction motion for Mappo's interactive controls — [MinputMotion.Lift] (default) or
+ * [MinputMotion.Scale]. Pass the SAME [interactionSource] to the element's `clickable` so
  * key-clicks and touch presses both register. Draw-phase only ([graphicsLayer]), so layout
  * bounds (and any morph-origin rects measured from them) never move. Chain it BEFORE the
  * element's border/background so the whole control moves as one.
  */
 @Composable
-fun Modifier.mappoInteractiveMotion(
+fun Modifier.minputInteractiveMotion(
     interactionSource: InteractionSource,
-    motion: MappoMotion = MappoMotion.Lift,
+    motion: MinputMotion = MinputMotion.Lift,
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -49,7 +49,7 @@ fun Modifier.mappoInteractiveMotion(
     val durationMillis = if (pressed) 90 else 150
     val tracked = this.onFocusChanged { focused = it.isFocused }
     return when (motion) {
-        MappoMotion.Lift -> {
+        MinputMotion.Lift -> {
             val base = if (focused) -MappoFocusLift else 0.dp
             val offset by animateDpAsState(
                 targetValue = if (pressed) base + MappoPressTravel else base,
@@ -58,7 +58,7 @@ fun Modifier.mappoInteractiveMotion(
             )
             tracked.graphicsLayer { translationY = offset.toPx() }
         }
-        MappoMotion.Scale -> {
+        MinputMotion.Scale -> {
             val base = if (focused) MappoFocusedScale else 1f
             val scale by animateFloatAsState(
                 targetValue = if (pressed) base * MappoPressedFraction else base,
@@ -73,16 +73,16 @@ fun Modifier.mappoInteractiveMotion(
     }
 }
 
-/** How far focus/hover raises an element ([MappoMotion.Lift]). */
+/** How far focus/hover raises an element ([MinputMotion.Lift]). */
 private val MappoFocusLift = 1.25.dp
 
 /** How far a press displaces an element DOWN from wherever it currently rests (focused:
  *  lift → back to base; unfocused: base → below it) — always the same travel. */
 private val MappoPressTravel = 2.dp
 
-/** Focus/hover grow for [MappoMotion.Scale]. */
+/** Focus/hover grow for [MinputMotion.Scale]. */
 private const val MappoFocusedScale = 1.05f
 
-/** Press dip for [MappoMotion.Scale] — a fraction of the CURRENT resting size
+/** Press dip for [MinputMotion.Scale] — a fraction of the CURRENT resting size
  *  (focused+pressed = 1.05×0.93), never an absolute scale. */
 private const val MappoPressedFraction = 0.93f

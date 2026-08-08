@@ -1,4 +1,4 @@
-package com.mappo.ui.control
+package com.mappo.ui.minput
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.MaterialTheme
@@ -18,25 +18,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Mappo's custom control library (`com.mappo.ui.control`): the compact hand-rolled chrome
- * born on the Remap Controls screen, generalized for app-wide use — beveled pill buttons,
- * mini icon buttons, pill dropdowns, the stepper slider, and the shared metrics/colors/
- * motion they speak. DELIBERATE M3 DEVIATION: sub-touch-target scale, accepted for
- * information-dense surfaces (remap screen, overlay edit drawer).
+ * Minput ("mini input") — Mappo's component library (`com.mappo.ui.minput`), formalized
+ * 2026-08-07 from the control chrome born on the Remap Controls screen: beveled pill
+ * buttons, mini icon buttons, pill dropdowns, text-field wells, the stepper slider, the
+ * morph modal, and the shared metrics/colors/motion they speak.
  *
- * Doctrine: reach for these FIRST when building Mappo UI; fall back to stock M3 (or
- * `com.mappo.ui.compact`) only where this library has no fitting component. All metrics
- * live here — never re-derive a private size constant per call site.
+ * Philosophy (full doctrine in the `minput` skill):
+ * - Styling over reinvented functionality — wrap M3/foundation equivalents for behavior.
+ * - Three-plane surface system: background → surface 1 ([minputBoxContainer]) →
+ *   surface 2 ([MinputElevatedContainer]); controls wear the styling of the plane ABOVE
+ *   the one they sit on.
+ * - Coloration derives from theme tokens, overrideable per-view; child surfaces inherit
+ *   their parent surface's coloration.
+ * - In Mappo: minput first; a missing primitive is surfaced to Dylan before falling back
+ *   to stock M3.
+ *
+ * All metrics live here — never re-derive a private size constant per call site.
  */
 
 /** Compressed body text for mini rows, pills, and control labels. */
 @Composable
-fun mappoMiniTextStyle(): TextStyle =
+fun minputMiniTextStyle(): TextStyle =
     MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 14.sp)
 
 /** Overline treatment (uppercase callers + tracked-out small caps look) for headers. */
 @Composable
-fun mappoOverlineTextStyle(): TextStyle =
+fun minputOverlineTextStyle(): TextStyle =
     MaterialTheme.typography.labelSmall.copy(
         fontSize = 10.sp,
         lineHeight = 12.sp,
@@ -49,26 +56,26 @@ fun mappoOverlineTextStyle(): TextStyle =
  * treatment — pills deliberately match their boxes' attributes.
  */
 @Composable
-fun mappoBoxContainer(): Color =
+fun minputBoxContainer(): Color =
     MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainerLow)
 
 /**
  * The topmost button plane: controls sitting ON an elevated box/card background use this
- * fill instead of [mappoBoxContainer], which would vanish against its own plane.
+ * fill instead of [minputBoxContainer], which would vanish against its own plane.
  */
-val MappoElevatedContainer = Color(0xFF434A5B)
+val MinputElevatedContainer = Color(0xFF434A5B)
 
 /**
  * Fill for text-input fields sitting on a box/card plane: a slightly darker "well" than the
  * card it sits on. Deliberately FLAT — no bevel border — because an input is not a button.
  */
 @Composable
-fun mappoInputFieldContainer(): Color =
-    lerp(mappoBoxContainer(), Color.Black, 0.22f)
+fun minputInputFieldContainer(): Color =
+    lerp(minputBoxContainer(), Color.Black, 0.22f)
 
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
-val MappoBoxStroke = 0.75.dp
+val MinputBoxStroke = 0.75.dp
 
 /** How far the bevel's highlights deviate from the base fill — "ever so slightly". */
 private const val BevelTopHighlightStrength = 0.10f
@@ -88,10 +95,10 @@ private const val BevelFadeOfRadius = 0.9f
  * (which overshot the corners on anything taller than a pill).
  */
 @Composable
-fun mappoBevelBorder(base: Color, cornerRadius: Dp): BorderStroke {
+fun minputBevelBorder(base: Color, cornerRadius: Dp): BorderStroke {
     val fadePx = with(LocalDensity.current) { (cornerRadius * BevelFadeOfRadius).toPx() }
     return BorderStroke(
-        MappoBoxStroke,
+        MinputBoxStroke,
         BevelBrush(
             topHighlight = lerp(base, Color.White, BevelTopHighlightStrength),
             bottomHighlight = lerp(base, Color.White, BevelBottomHighlightStrength),
@@ -129,22 +136,22 @@ private class BevelBrush(
 }
 
 /** Height of the pill controls (buttons, dropdowns). */
-val MappoPillHeight = 24.dp
+val MinputPillHeight = 24.dp
 
 /** Width floor for pill dropdowns so short values ("None") don't collapse into a tiny chip. */
-val MappoPillMinWidth = 62.dp
+val MinputPillMinWidth = 62.dp
 
 /** Icon edge inside the pills. */
-val MappoPillIconSize = 13.dp
+val MinputPillIconSize = 13.dp
 
 /** Horizontal content inset shared by every pill control (buttons, dropdowns, label fields). */
-val MappoPillContentPadding = 10.dp
+val MinputPillContentPadding = 10.dp
 
 /** Gap between a leading glyph and its label (pills, headers, captions). */
-val MappoGlyphLabelGap = 5.dp
+val MinputGlyphLabelGap = 5.dp
 
 /** Width cap for a pill dropdown's label before it ellipsizes. */
-val MappoPillLabelMaxWidth = 156.dp
+val MinputPillLabelMaxWidth = 156.dp
 
 /** Optical-centering bias for FIXED-WIDTH, center-arranged pills with a leading icon: total
  *  extra END padding vs START, shifting the icon+label block bias/2 toward the icon. Cancels
@@ -154,10 +161,10 @@ val MappoPillLabelMaxWidth = 156.dp
  *  flanks are pure padding with no centering slack to compare. M3 precedent for biasing
  *  padding toward the icon side: ButtonDefaults.ButtonWithIconContentPadding (16dp icon side
  *  vs 24dp text side). NOT glyph scaling — layout-only, tune freely. */
-val MappoPillIconSideBias = 2.dp
+val MinputPillIconSideBias = 2.dp
 
-/** Outer tap-target edge of [MappoIconButton] (also its footprint spacer in editor rows). */
-val MappoIconButtonSize = 24.dp
+/** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows). */
+val MinputIconButtonSize = 24.dp
 
-/** Icon edge inside [MappoIconButton]. */
-val MappoIconButtonIconSize = 16.dp
+/** Icon edge inside [MinputIconButton]. */
+val MinputIconButtonIconSize = 16.dp

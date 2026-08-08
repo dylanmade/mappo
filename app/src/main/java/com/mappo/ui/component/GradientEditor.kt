@@ -42,9 +42,9 @@ import com.mappo.data.model.overlay.color
 import com.mappo.data.model.overlay.resolvedStops
 import com.mappo.data.model.overlay.sampleResolvedStops
 import com.mappo.ui.component.colorpicker.ColorPickerButton
-import com.mappo.ui.control.MappoPercentSlider
-import com.mappo.ui.control.MappoPillButton
-import com.mappo.ui.control.MappoSlider
+import com.mappo.ui.minput.MinputPercentSlider
+import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputSlider
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -167,28 +167,28 @@ fun GradientEditor(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    MappoPillButton(
+                    MinputPillButton(
                         text = "Remove",
                         onClick = {
                             val g = current
-                            if (g.stops.size <= 2) return@MappoPillButton
+                            if (g.stops.size <= 2) return@MinputPillButton
                             selection = GradientSelection.Stop((sel.index - 1).coerceAtLeast(0))
                             commit(g.copy(stops = g.stops.filterIndexed { i, _ -> i != sel.index }))
                         },
                         enabled = stops.size > 2,
                     )
                 }
-                MappoPercentSlider("Location", stop.position, onChange = { v ->
+                MinputPercentSlider("Location", stop.position, onChange = { v ->
                     val g = current
-                    val s = g.stops.getOrNull(sel.index) ?: return@MappoPercentSlider
+                    val s = g.stops.getOrNull(sel.index) ?: return@MinputPercentSlider
                     val lo = (g.stops.getOrNull(sel.index - 1)?.position ?: 0f) + STOP_MIN_GAP
                     val hi = (g.stops.getOrNull(sel.index + 1)?.position ?: 1f) - STOP_MIN_GAP
-                    if (lo > hi) return@MappoPercentSlider
+                    if (lo > hi) return@MinputPercentSlider
                     commit(g.copy(stops = g.stops.toMutableList().also { it[sel.index] = s.copy(position = v.coerceIn(lo, hi)) }))
                 })
-                MappoPercentSlider("Opacity", stop.opacity, onChange = { v ->
+                MinputPercentSlider("Opacity", stop.opacity, onChange = { v ->
                     val g = current
-                    val s = g.stops.getOrNull(sel.index) ?: return@MappoPercentSlider
+                    val s = g.stops.getOrNull(sel.index) ?: return@MinputPercentSlider
                     commit(g.copy(stops = g.stops.toMutableList().also { it[sel.index] = s.copy(opacity = v) }))
                 })
                 if (picking) {
@@ -209,13 +209,13 @@ fun GradientEditor(
             }
             is GradientSelection.Midpoint -> {
                 val s0 = stopAt(sel.index) ?: return@Column
-                MappoPercentSlider(
+                MinputPercentSlider(
                     "Midpoint",
                     s0.midpoint,
                     valueRange = MIDPOINT_MIN..MIDPOINT_MAX,
                     onChange = { v ->
                         val g = current
-                        val s = g.stops.getOrNull(sel.index) ?: return@MappoPercentSlider
+                        val s = g.stops.getOrNull(sel.index) ?: return@MinputPercentSlider
                         commit(g.copy(stops = g.stops.toMutableList().also { it[sel.index] = s.copy(midpoint = v) }))
                     },
                 )
@@ -223,7 +223,7 @@ fun GradientEditor(
         }
 
         if (showAngle) {
-            MappoSlider(
+            MinputSlider(
                 label = "Angle",
                 value = gradient.angleDeg.coerceIn(0f, 360f),
                 onChange = { commit(current.copy(angleDeg = it)) },

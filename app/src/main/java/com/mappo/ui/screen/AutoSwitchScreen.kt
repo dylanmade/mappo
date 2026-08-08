@@ -178,7 +178,8 @@ fun AutoSwitchScreen(
 
         AppPickerSheet(
             visible = true,
-            targetProfile = target,
+            targetProfileName = target.name,
+            targetProfileId = target.id,
             installedApps = installedApps,
             existingBindings = bindingsByPackage,
             profilesById = profilesById,
