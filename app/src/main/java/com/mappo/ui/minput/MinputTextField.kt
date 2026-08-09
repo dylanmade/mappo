@@ -183,7 +183,7 @@ private fun MinputTextFieldEditDialog(
     }
     LaunchedEffect(Unit) { runCatching { wellFocus.requestFocus() } }
 
-    MinputDialog(onDismissRequest = onClose, anchorBottom = true) {
+    MinputDialog(onDismissRequest = onClose) {
         Text(
             text = title.uppercase(),
             style = minputOverlineTextStyle(),
