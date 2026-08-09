@@ -123,7 +123,6 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
     var sliderValue by remember { mutableFloatStateOf(0.4f) }
     var menuOpen by remember { mutableStateOf(false) }
     var stdRowField by remember { mutableStateOf("") }
-    var compactRowField by remember { mutableStateOf("") }
     var tapEditValue by remember { mutableStateOf("") }
     var editDraft by remember { mutableStateOf("") }
     var showEditDialog by remember { mutableStateOf(false) }
@@ -132,33 +131,22 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // CompactTextField retired 2026-08-09 (minput is the app's input treatment; stock M3
+        // is the interim fallback here) — the field demos below are the standard components.
         GallerySection("Text fields") {
-            CompactTextField(
+            OutlinedTextField(
                 value = text1,
                 onValueChange = { text1 = it },
-                placeholder = "Outlined, placeholder hint",
+                placeholder = { Text("Outlined, placeholder hint") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            CompactTextField(
+            OutlinedTextField(
                 value = text2,
                 onValueChange = { text2 = it },
-                label = "Static label",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            CompactTextField(
-                value = "",
-                onValueChange = {},
-                outlined = false,
-                placeholder = "Filled variant",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            CompactTextField(
-                value = "",
-                onValueChange = {},
-                size = CompactFieldSize.Slim,
-                placeholder = "Slim size (opt-in via size = Slim)",
+                label = { Text("Floating label") },
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -252,21 +240,6 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                         },
                     )
                     HorizontalDivider()
-                    // Trailing = CompactTextField, slim size (~40dp) — opted in per call.
-                    CompactListItem(
-                        headline = "Row with slim text field",
-                        supporting = "CompactTextField(size = Slim) as the trailing element",
-                        trailing = {
-                            CompactTextField(
-                                value = compactRowField,
-                                onValueChange = { compactRowField = it },
-                                size = CompactFieldSize.Slim,
-                                placeholder = "Value",
-                                modifier = Modifier.width(140.dp),
-                            )
-                        },
-                    )
-                    HorizontalDivider()
                     // Alternative to an inline editable field: show the value, tap to edit it in
                     // a dialog. Often reads cleaner than cramming an editable field into a row.
                     CompactListItem(
@@ -325,10 +298,11 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
             onDismissRequest = { showEditDialog = false },
             title = { Text("Edit value") },
             text = {
-                CompactTextField(
+                OutlinedTextField(
                     value = editDraft,
                     onValueChange = { editDraft = it },
-                    placeholder = "Value",
+                    placeholder = { Text("Value") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
             },

@@ -24,8 +24,14 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
  * App-wide IME spawn policy: **gamepad/keyboard-driven focus must never spawn the soft
  * keyboard.** A touch tap still opens it immediately; a field focused via D-pad opens it with
  * the activator button (gamepad A / Enter / D-pad center). Apply [mappoKeyboardOptions] AND
- * [Modifier.imeActivation] together on every text field (CompactTextField wires both in; raw
- * OutlinedTextField call sites still need the sweep).
+ * [Modifier.imeActivation] together on every inline text field.
+ *
+ * NOTE the primary defense is structural, not these helpers: app surfaces use the tap-to-edit
+ * `MinputTextField` (a pill that opens an edit modal), so no inline field sits in the gamepad
+ * navigation path at all. The value-based `BasicTextField` overload documents that it IGNORES
+ * [KeyboardOptions.showKeyboardOnFocus], so [mappoKeyboardOptions] is inert on the inline
+ * wells that remain — those live only inside editing modals, where the keyboard appearing on
+ * focus is acceptable.
  */
 @Composable
 fun mappoKeyboardOptions(base: KeyboardOptions = KeyboardOptions.Default): KeyboardOptions {

@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -45,7 +44,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,7 +59,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.steam.ActionLayerGraph
@@ -76,7 +73,6 @@ import com.mappo.data.model.steam.displayLabel
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.InputSource
 import com.mappo.service.input.modes.SourceModeCatalog
-import com.mappo.ui.compact.CompactTextField
 import com.mappo.ui.component.dashedPlaceholderOutline
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.activatorRenderOrder
@@ -87,12 +83,14 @@ import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputIconButtonSize
+import com.mappo.ui.minput.MinputPanelDividerInset
+import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillHeight
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputInputFieldContainer
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
@@ -289,7 +287,7 @@ internal fun RemapGroupEditor(
                     ),
             )
         }
-        HorizontalDivider(Modifier.padding(horizontal = 8.dp))
+        HorizontalDivider(Modifier.padding(horizontal = MinputPanelDividerInset))
 
         // ── Command rows ──────────────────────────────────────────────────
         LazyColumn(
@@ -508,10 +506,12 @@ private fun EditorCommandRow(
                     .widthIn(min = EditorFlexPillMinWidth, max = flexMax)
                     .then(upTo { it.modePill }),
             )
-            LabelPillField(
+            MinputTextField(
                 value = label,
+                onValueChange = { onCommitLabel?.invoke(it) },
                 enabled = editable && onCommitLabel != null,
-                onCommit = { onCommitLabel?.invoke(it) },
+                placeholder = "Label",
+                editTitle = "Input label",
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = EditorOutputLabelExtraGap)
@@ -744,81 +744,9 @@ private fun GlyphMenuTitle(prefix: String, spec: SimpleRowSpec?) {
     }
 }
 
-/**
- * Tap-to-edit label pill. Inline IME editing here proved unusable — the keyboard overlays the
- * bottom-half editor rows (per the app-wide "IME never moves layout" policy), hiding the field
- * being typed into. Instead the pill shows the label and opens a small edit dialog (the
- * rename-action-set pattern, the user's preferred tap-to-edit treatment); the dialog floats
- * clear of the keyboard.
- */
-@Composable
-private fun LabelPillField(
-    value: String,
-    enabled: Boolean,
-    onCommit: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var editing by remember { mutableStateOf(false) }
-    // Input-field well: darker than the editor card it sits on, and FLAT (no bevel) — it's a
-    // field, not a button.
-    val interaction = remember { MutableInteractionSource() }
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = minputInputFieldContainer(),
-        modifier = modifier
-            .minputInteractiveMotion(interaction)
-            .height(MinputPillHeight)
-            .then(
-                if (enabled) {
-                    Modifier.clip(RoundedCornerShape(50)).clickable(
-                        interactionSource = interaction,
-                        indication = LocalIndication.current,
-                        onClickLabel = "Edit label",
-                    ) { editing = true }
-                } else Modifier.alpha(0.6f),
-            ),
-    ) {
-        Box(
-            modifier = Modifier.padding(horizontal = MinputPillContentPadding),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(
-                text = value.ifEmpty { "Label" },
-                style = minputMiniTextStyle(),
-                color = if (value.isEmpty()) {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-
-    if (editing) {
-        var text by remember { mutableStateOf(value) }
-        AlertDialog(
-            onDismissRequest = { editing = false },
-            title = { Text("Input label") },
-            text = {
-                // CompactTextField carries the app-wide IME policy; no auto-focus (IME doctrine).
-                CompactTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    placeholder = "Label",
-                    singleLine = true,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { onCommit(text); editing = false }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editing = false }) { Text("Cancel") }
-            },
-        )
-    }
-}
+// The row's label field is the library's tap-to-edit MinputTextField — the treatment born
+// here as LabelPillField and promoted into minput 2026-08-09 (display pill; activation
+// opens a MinputModal edit dialog that floats clear of the keyboard).
 
 // ── Shared press-type vocabulary (moved from the retired detail-pane editor) ─────────────────
 
@@ -923,8 +851,9 @@ internal fun RichMenuItem(
 
 // Heights carry the rows' vertical breathing room (content is 24dp pills); rows grew again
 // (34 → 38) 2026-07-13 — still read cramped, and the dashed footer needed the extra air.
-// The header keeps a 4dp lead over the rows.
-private val EditorHeaderHeight = 42.dp
+// The header keeps a 4dp lead over the rows. Header height is the family standard shared
+// with the panel surfaces (MinputPanelHeaderHeight).
+private val EditorHeaderHeight = MinputPanelHeaderHeight
 private val EditorRowHeight = 38.dp
 
 /** GOVERNING VARIABLE for the input/output buttons' width floor (they flex from here up to a

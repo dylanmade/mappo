@@ -193,3 +193,23 @@ val MinputIconButtonSize = 24.dp
 
 /** Icon edge inside [MinputIconButton]. */
 val MinputIconButtonIconSize = 16.dp
+
+// ── Panel anatomy: header + divider + content ────────────────────────────────────────────
+// The shared skeleton of the full-screen panel surfaces (the remap profile/options panels,
+// the group editor): a fixed-height header row, a horizontal divider, then content. Every
+// surface with this anatomy pulls these values so the family stays in lockstep.
+
+/** Header-row height of a panel surface (title + utilities). */
+val MinputPanelHeaderHeight = 42.dp
+
+/** Horizontal inset of the header/content divider. */
+val MinputPanelDividerInset = 8.dp
+
+/** Vertical gap between the divider and the first content row below it. */
+val MinputPanelDividerContentGap = 10.dp
+
+/** Start inset for a NON-interactive header title (leading icon + overline). The header's
+ *  trailing [MinputIconButton]s read this much inward of their edge (their glyph sits
+ *  (button − glyph)/2 inside an invisible circular tap target), so a bare title at the same
+ *  padding looks flush-left by comparison — this nudge optically matches the two sides. */
+val MinputPanelTitleInset = (MinputIconButtonSize - MinputIconButtonIconSize) / 2

@@ -64,9 +64,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.OutlinedTextField
 import com.mappo.ui.compact.CompactDensity
-import com.mappo.ui.compact.CompactFieldSize
-import com.mappo.ui.compact.CompactTextField
+import com.mappo.ui.imeActivation
+import com.mappo.ui.mappoKeyboardOptions
 import kotlin.math.roundToInt
 
 /** The numeric/preset control sets shown to the right of the always-present wheel. */
@@ -460,17 +461,16 @@ private fun HexField(selected: Color, onColor: (Color) -> Unit, modifier: Modifi
             Box(Modifier.matchParentSize().background(selected))
         }
         Spacer(Modifier.width(16.dp))
-        CompactTextField(
+        // Standard M3 field — this view predates minput; it gets rebuilt on the library in
+        // the app-wide minput sweep (CompactTextField retired 2026-08-09).
+        OutlinedTextField(
             value = hexText,
             onValueChange = { typed ->
                 hexText = typed
                 parseHexColor(typed)?.let(onColor)
             },
-            size = CompactFieldSize.Slim,
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-            // Trim the inset on the copy-icon side so it doesn't sit so far from the border.
-            contentPadding = PaddingValues(start = 16.dp, top = 7.dp, end = 9.dp, bottom = 8.dp),
+            keyboardOptions = mappoKeyboardOptions(KeyboardOptions(keyboardType = KeyboardType.Ascii)),
             trailingIcon = {
                 Box(
                     modifier = Modifier
@@ -488,7 +488,7 @@ private fun HexField(selected: Color, onColor: (Color) -> Unit, modifier: Modifi
                     )
                 }
             },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).imeActivation(),
         )
     }
 }

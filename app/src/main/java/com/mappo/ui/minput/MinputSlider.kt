@@ -3,7 +3,6 @@ package com.mappo.ui.minput
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,11 +27,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.mappo.ui.compact.CompactFieldSize
 import com.mappo.ui.compact.CompactSlider
-import com.mappo.ui.compact.CompactTextField
-import com.mappo.ui.imeActivation
-import com.mappo.ui.mappoKeyboardOptions
 import kotlin.math.roundToInt
 
 /**
@@ -149,17 +144,16 @@ private fun SliderValueField(
         if (!focused && wasFocused) commitDraft()
         wasFocused = focused
     }
-    CompactTextField(
+    // The library's internal inline well (IME policy helpers wired in); the interaction
+    // source is shared so the focused/draft handoff above actually tracks the field.
+    MinputTextWell(
         value = if (focused) draft else valueText(value),
         onValueChange = { draft = it },
         enabled = enabled,
-        size = CompactFieldSize.Slim,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-        keyboardOptions = mappoKeyboardOptions(
-            KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-        ),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { commitDraft() }),
-        modifier = Modifier.width(width).imeActivation(),
+        interactionSource = interaction,
+        modifier = Modifier.width(width),
     )
 }
 

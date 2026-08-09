@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,6 +36,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +62,10 @@ import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
 import com.mappo.ui.minput.MinputModal
+import com.mappo.ui.minput.MinputPanelDividerContentGap
+import com.mappo.ui.minput.MinputPanelDividerInset
+import com.mappo.ui.minput.MinputPanelHeaderHeight
+import com.mappo.ui.minput.MinputPanelTitleInset
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillIconSize
@@ -84,13 +90,23 @@ internal enum class ProfilePanelModal { ADD, OPTIONS }
 
 /**
  * Sort tabs for the profiles panel list. RECENT approximates "recently used" with creation
- * recency (no last-used tracking yet); FAVORITES stays empty until Profile grows a
- * favorite flag.
+ * recency (no last-used tracking yet); GAME_APP orders by the profile's associated app
+ * (auto-switch bindings), app-less profiles last.
  */
 private enum class ProfileSort(val label: String) {
     RECENT("Recent"),
-    FAVORITES("Favorites"),
     NAME("Name"),
+    GAME_APP("Game / app"),
+}
+
+/**
+ * The profile panel's top-level views: the user's own profiles vs. browsing/importing
+ * community-uploaded ones (servers / Steam). COMMUNITY is a placeholder surface for now —
+ * the UX is being pinned down before any browsing/importing lands.
+ */
+private enum class ProfileTab(val label: String) {
+    MINE("My profiles"),
+    COMMUNITY("Community"),
 }
 
 /**
@@ -168,6 +184,9 @@ internal fun RemapPanelOverlay(
                 onSelectProfile = onSelectProfile,
                 onClose = onClose,
                 onOpenModal = onOpenModal,
+                installedApps = installedApps,
+                appBindings = appBindings,
+                onLoadInstalledApps = onLoadInstalledApps,
                 closeFocusRequester = profileCloseFocus,
             )
         }
@@ -227,8 +246,10 @@ internal fun RemapPanelOverlay(
 
 /**
  * Profile selection, v1: a basic list of the current profiles in the group-editor's
- * dimensionality. Selecting a profile activates it and closes the panel. (Add / duplicate /
- * delete and richer layout return in a later pass — this view is deliberately minimal.)
+ * dimensionality. Selecting a profile activates it and closes the panel. The header's
+ * center tabs split the panel into "My profiles" (the list) and "Community" (a placeholder
+ * for browsing/importing shared profiles). (Duplicate / delete and richer layout return in
+ * a later pass — this view is deliberately minimal.)
  */
 @Composable
 private fun ProfilePanelContent(
@@ -237,12 +258,21 @@ private fun ProfilePanelContent(
     onSelectProfile: (Profile) -> Unit,
     onClose: () -> Unit,
     onOpenModal: (ProfilePanelModal) -> Unit,
+    installedApps: List<InstalledApp>,
+    appBindings: Map<String, Long>,
+    onLoadInstalledApps: () -> Unit,
     closeFocusRequester: FocusRequester? = null,
 ) {
-    // Live name filter + sort tab for the list below. Both live here so they reset whenever
-    // the panel closes (the panel content leaves composition) — each summon starts fresh.
+    // View tab + live name filter + sort tab. All live here so they reset whenever the
+    // panel closes (the panel content leaves composition) — each summon starts fresh.
+    var tab by remember { mutableStateOf(ProfileTab.MINE) }
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(ProfileSort.RECENT) }
+    // Game/app sort labels profiles by their bound apps' display names — make sure the
+    // installed-app labels are loaded once that sort is picked.
+    LaunchedEffect(sort) {
+        if (sort == ProfileSort.GAME_APP) onLoadInstalledApps()
+    }
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
             glyphRes = R.drawable.xbox_button_view,
@@ -250,16 +280,19 @@ private fun ProfilePanelContent(
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
             center = {
-                MinputTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = "Search profiles",
-                    leadingIcon = Icons.Filled.Search,
-                    clearable = true,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = PanelContentPadding),
-                )
+                // My profiles ↔ Community view switch, centered between title and utilities.
+                Box(
+                    modifier = Modifier.weight(1f).padding(horizontal = PanelContentPadding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MinputGroupButton(
+                        options = ProfileTab.entries,
+                        selected = tab,
+                        onSelect = { tab = it },
+                        optionLabel = { it.label },
+                        modifier = Modifier.widthIn(max = ProfileTabsMaxWidth).fillMaxWidth(),
+                    )
+                }
             },
             actions = {
                 // Add · Options sit adjacent to Close at one rhythm — the group editor's
@@ -276,18 +309,51 @@ private fun ProfilePanelContent(
                 )
             },
         )
-        // Header/content separation — the group editor's divider treatment.
-        HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
-        // The sort "tab view" — first live instance of the MinputGroupButton primitive.
-        MinputGroupButton(
-            options = ProfileSort.entries,
-            selected = sort,
-            onSelect = { sort = it },
-            optionLabel = { it.label },
+        PanelDivider()
+        if (tab == ProfileTab.COMMUNITY) {
+            // Placeholder surface — browsing/importing community + Steam-sourced profiles
+            // lands here later; the tab exists to pin down the UX.
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(PanelContentPadding),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "Browse and import community profiles here — coming soon",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            return@Column
+        }
+        // Search + sort share one row: filter field left, sort tabs right.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PanelContentPadding, vertical = 6.dp),
-        )
+                .padding(
+                    start = PanelContentPadding,
+                    end = PanelContentPadding,
+                    top = MinputPanelDividerContentGap,
+                    bottom = 6.dp,
+                ),
+        ) {
+            MinputTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Search profiles",
+                leadingIcon = Icons.Filled.Search,
+                clearable = true,
+                modifier = Modifier.weight(1f),
+            )
+            MinputGroupButton(
+                options = ProfileSort.entries,
+                selected = sort,
+                onSelect = { sort = it },
+                optionLabel = { it.label },
+                modifier = Modifier.weight(1.4f),
+            )
+        }
         val trimmed = query.trim()
         val filtered = if (trimmed.isEmpty()) {
             profiles
@@ -297,9 +363,21 @@ private fun ProfilePanelContent(
         val displayed = when (sort) {
             // No last-used tracking yet — "Recent" approximates with creation recency.
             ProfileSort.RECENT -> filtered.sortedByDescending { it.id }
-            // No favorite flag on Profile yet — deliberately empty until one exists.
-            ProfileSort.FAVORITES -> emptyList()
             ProfileSort.NAME -> filtered.sortedBy { it.name.lowercase() }
+            // Order by the profile's associated app (auto-switch bindings): app-bound
+            // profiles first, alphabetical by app label (package name until labels load),
+            // then app-less profiles by name.
+            ProfileSort.GAME_APP -> {
+                val packagesByProfile = appBindings.entries.groupBy({ it.value }, { it.key })
+                val labelByPackage = installedApps.associateBy({ it.packageName }, { it.label })
+                fun appKey(profile: Profile): String? = packagesByProfile[profile.id]
+                    ?.minOfOrNull { pkg -> (labelByPackage[pkg] ?: pkg).lowercase() }
+                filtered.sortedWith(
+                    compareBy<Profile> { appKey(it) == null }
+                        .thenBy { appKey(it) ?: "" }
+                        .thenBy { it.name.lowercase() },
+                )
+            }
         }
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -312,11 +390,7 @@ private fun ProfilePanelContent(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = if (sort == ProfileSort.FAVORITES) {
-                                "No favorite profiles yet"
-                            } else {
-                                "No profiles match"
-                            },
+                            text = "No profiles match",
                             style = minputMiniTextStyle(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -372,11 +446,17 @@ private fun OptionsPanelContent(
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
         )
-        // Same header/content divider as the profiles panel + group editor — one family.
-        HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
+        PanelDivider()
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(horizontal = PanelContentPadding, vertical = 2.dp),
+            contentPadding = PaddingValues(
+                start = PanelContentPadding,
+                end = PanelContentPadding,
+                // First content sits the standard gap below the divider — matches the
+                // profiles panel's search/sort row.
+                top = MinputPanelDividerContentGap,
+                bottom = 2.dp,
+            ),
         ) {
             item(key = "power") {
                 PowerRow(powerOn = powerOn, onPowerChange = onPowerChange)
@@ -424,9 +504,12 @@ private fun PanelHeader(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .height(PanelHeaderHeight)
+            .height(MinputPanelHeaderHeight)
             .padding(horizontal = PanelContentPadding),
     ) {
+        // Non-interactive title block: nudged inward to optically match the trailing icon
+        // buttons, whose glyphs sit inside an invisible circular tap target.
+        Spacer(Modifier.width(MinputPanelTitleInset))
         if (glyphRes != null) {
             Icon(
                 painterResource(glyphRes),
@@ -463,6 +546,15 @@ private fun PanelHeader(
             } else Modifier,
         )
     }
+}
+
+/**
+ * The header/content divider shared by every panel surface — the group editor's treatment,
+ * at the family's standard inset.
+ */
+@Composable
+private fun PanelDivider() {
+    HorizontalDivider(Modifier.padding(horizontal = MinputPanelDividerInset))
 }
 
 /**
@@ -673,11 +765,12 @@ private fun ProfileOptionsModalContent(
     }
 }
 
-/** Header height — matches the group editor's sticky header. */
-private val PanelHeaderHeight = 42.dp
-
-/** Horizontal content inset of the panel's header + list. */
+/** Horizontal content inset of the panel's header + list (also the divider inset). */
 private val PanelContentPadding = 8.dp
+
+/** Width cap for the header's My profiles ↔ Community tabs, so the pair stays a compact
+ *  centered switch instead of swallowing the whole flexible middle. */
+private val ProfileTabsMaxWidth = 210.dp
 
 /** Compact list-row height (between the editor's 38dp rows and the 32dp tabs). */
 private val PanelRowHeight = 32.dp
