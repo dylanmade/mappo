@@ -7,10 +7,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -29,7 +27,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,42 +40,33 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import com.mappo.ui.imeActivation
 import com.mappo.ui.mappoKeyboardOptions
-import kotlinx.coroutines.delay
 
 /**
  * The minput input field: a **tap-to-edit pill** — the group editor's label-field pattern,
  * which is the library's standard for text input. The pill itself is display-only (the
  * input-well fill, [minputInputFieldContainer], FLAT — an input is a well, not a button);
- * activating it (touch tap, or gamepad A while focused) opens a [MinputModal] edit dialog
+ * activating it (touch tap, or gamepad A while focused) opens a [MinputDialog] editor
  * where the actual typing happens. Text is committed through [onValueChange] on Save (and
  * by the clear ×); Cancel / scrim / back / gamepad B discard the draft.
  *
  * Why not an inline text field: an inline field captures d-pad focus (arrows move the
  * cursor, not the focus) and stalls gamepad navigation, and the overlaying keyboard can
  * cover the very field being typed into. As a pill the field is an ordinary focus stop the
- * d-pad flows past, and the edit dialog floats clear of the keyboard — behavior hammered
- * out on the group editor's label field and promoted here.
+ * d-pad flows past, and the editor — a platform dialog window — floats clear of the
+ * keyboard by stock behavior. All hammered out on the group editor's label field and
+ * promoted here.
  *
- * @param placeholder shown dimmed in the empty pill, and as the hint inside the edit modal.
+ * @param placeholder shown dimmed in the empty pill, and as the hint inside the editor.
  * @param leadingIcon optional glyph at the pill's start (e.g. Search).
  * @param clearable shows a clear (×) affordance while the field holds text; tapping it
- *   empties the field via [onValueChange] without opening the edit modal.
- * @param editTitle overline title of the edit modal; defaults to [placeholder].
+ *   empties the field via [onValueChange] without opening the editor.
+ * @param editTitle overline title of the editor; defaults to [placeholder].
  */
 @Composable
 fun MinputTextField(
@@ -161,7 +149,7 @@ fun MinputTextField(
     }
 
     if (editing) {
-        MinputTextFieldEditModal(
+        MinputTextFieldEditDialog(
             title = editTitle ?: placeholder ?: "Edit",
             initial = value,
             placeholder = placeholder,
@@ -172,113 +160,60 @@ fun MinputTextField(
 }
 
 /**
- * The field's edit dialog: a [MinputModal] card (title, text well, Cancel/Save) hosted in
- * its own platform [Dialog] window so the primitive can float it full-screen from any
- * composition depth — the same window mechanism AlertDialog uses, but with minput chrome.
- * The window itself is a transparent host: its platform dim and animation are disabled so
- * the modal's own scrim and fade+settle are the only chrome and motion. Being a separate
- * window also keeps the host surface's focus traps out of play and lets the dialog float
- * above the soft keyboard (the label-field behavior).
+ * The field's editor: a [MinputDialog] (overline title, text well, Cancel/Save). A dialog
+ * WINDOW on purpose — centering, dim, back / outside-tap dismissal, and floating above the
+ * soft keyboard are all stock platform behavior, exactly like the label field's original
+ * AlertDialog. The well is seated as the dialog opens so the keyboard spawns with it:
+ * opening the editor IS the typing intent (the sanctioned exception to never-auto-focus —
+ * this surface exists only to type).
  */
 @Composable
-private fun MinputTextFieldEditModal(
+private fun MinputTextFieldEditDialog(
     title: String,
     initial: String,
     placeholder: String?,
     onCommit: (String) -> Unit,
     onClose: () -> Unit,
 ) {
-    // MinputModal snaps (no enter animation) when first composed already-open, so the
-    // window opens closed and flips open one frame in; closing waits out the exit fade
-    // before the window is torn down.
-    var open by remember { mutableStateOf(false) }
-    var closing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(initial) }
-    val cancelFocus = remember { FocusRequester() }
-    fun dismiss() {
-        if (!closing) {
-            closing = true
-            open = false
-        }
-    }
+    val wellFocus = remember { FocusRequester() }
     fun save() {
         onCommit(draft.trim())
-        dismiss()
+        onClose()
     }
-    LaunchedEffect(Unit) { open = true }
-    LaunchedEffect(closing) {
-        if (closing) {
-            delay(MinputModalExitMillis + 20L)
-            onClose()
-        }
-    }
+    LaunchedEffect(Unit) { runCatching { wellFocus.requestFocus() } }
 
-    Dialog(
-        onDismissRequest = ::dismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-        SideEffect {
-            dialogWindow?.setDimAmount(0f)
-            dialogWindow?.setWindowAnimations(0)
-        }
-        Box(
-            Modifier
-                .fillMaxSize()
-                // Physical B cancels, matching the panels' close affordance — the dialog
-                // window owns key input while up, so the screen's handlers can't see it.
-                .onPreviewKeyEvent { event ->
-                    if (event.key == Key.ButtonB) {
-                        if (event.type == KeyEventType.KeyDown) dismiss()
-                        true
-                    } else {
-                        false
-                    }
-                },
+    MinputDialog(onDismissRequest = onClose) {
+        Text(
+            text = title.uppercase(),
+            style = minputOverlineTextStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(EditDialogTitleGap))
+        MinputTextWell(
+            value = draft,
+            onValueChange = { draft = it },
+            placeholder = placeholder,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { save() }),
+            focusRequester = wellFocus,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(EditDialogFooterGap))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
         ) {
-            MinputModal(
-                open = open,
-                onDismiss = ::dismiss,
-                height = EditModalHeight,
-                focusSeat = cancelFocus,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Column(Modifier.fillMaxSize().padding(EditModalPadding)) {
-                    Text(
-                        text = title.uppercase(),
-                        style = minputOverlineTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    // Never auto-focused (IME doctrine) — the seat is on Cancel; reaching
-                    // the well and activating it opens the keyboard.
-                    MinputTextWell(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        placeholder = placeholder,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { save() }),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
-                    ) {
-                        MinputPillButton(
-                            text = "Cancel",
-                            onClick = ::dismiss,
-                            modifier = Modifier.focusRequester(cancelFocus),
-                        )
-                        MinputPillButton(
-                            text = "Save",
-                            onClick = ::save,
-                            filled = true,
-                            elevated = true,
-                        )
-                    }
-                }
-            }
+            MinputPillButton(
+                text = "Cancel",
+                onClick = onClose,
+            )
+            MinputPillButton(
+                text = "Save",
+                onClick = ::save,
+                filled = true,
+                elevated = true,
+            )
         }
     }
 }
@@ -288,7 +223,7 @@ private fun MinputTextFieldEditModal(
  * live [BasicTextField]. Not a public primitive — inline fields capture d-pad focus and
  * break gamepad navigation, so app surfaces use the tap-to-edit [MinputTextField]. This
  * exists for minput-internal editing contexts where inline typing is the point and the
- * keyboard can't cover the field: the edit modal above, [MinputSlider]'s value field.
+ * keyboard can't cover the field: the edit dialog above, [MinputSlider]'s value field.
  */
 @Composable
 internal fun MinputTextWell(
@@ -300,6 +235,7 @@ internal fun MinputTextWell(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    focusRequester: FocusRequester? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val focused by interactionSource.collectIsFocusedAsState()
@@ -325,7 +261,11 @@ internal fun MinputTextWell(
             // App-wide IME policy helpers; note the value-based BasicTextField ignores
             // showKeyboardOnFocus, so gamepad focus CAN spawn the keyboard here — accepted,
             // because this well only appears where typing is the surface's whole point.
-            modifier = Modifier.imeActivation(),
+            // (The edit dialog leans on exactly that: seating [focusRequester] is what
+            // spawns the keyboard.)
+            modifier = Modifier
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .imeActivation(),
             enabled = enabled,
             textStyle = textStyle,
             cursorBrush = SolidColor(colors.primary),
@@ -355,8 +295,8 @@ internal fun MinputTextWell(
     }
 }
 
-/** Height of the field's edit-modal card: title + well + footer buttons. */
-private val EditModalHeight = 112.dp
+/** Gap between the editor's overline title and the text well. */
+private val EditDialogTitleGap = 8.dp
 
-/** Content inset of the edit-modal card. */
-private val EditModalPadding = 8.dp
+/** Gap between the text well and the editor's footer buttons. */
+private val EditDialogFooterGap = 10.dp
