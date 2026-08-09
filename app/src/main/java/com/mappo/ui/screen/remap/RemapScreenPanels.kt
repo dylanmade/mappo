@@ -1,12 +1,7 @@
 package com.mappo.ui.screen.remap
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,32 +35,21 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.Profile
@@ -74,18 +58,15 @@ import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputMorphModal
+import com.mappo.ui.minput.MinputGroupButton
+import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
-import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.AppPickerSheet
-import com.mappo.ui.screen.softDropShadow
-import kotlin.math.roundToInt
 import kotlinx.collections.immutable.ImmutableList
 
 /**
@@ -96,10 +77,21 @@ internal enum class RemapPanel { PROFILE, OPTIONS }
 
 /**
  * The two modals summoned from the profile panel's header utility buttons: ADD is the
- * new-profile form; OPTIONS holds settings that apply across all profiles. Both morph
- * open from their summoning icon button via [MinputMorphModal].
+ * new-profile form; OPTIONS holds settings that apply across all profiles. Both are
+ * centered [MinputModal] cards stacked above the profile panel.
  */
 internal enum class ProfilePanelModal { ADD, OPTIONS }
+
+/**
+ * Sort tabs for the profiles panel list. RECENT approximates "recently used" with creation
+ * recency (no last-used tracking yet); FAVORITES stays empty until Profile grows a
+ * favorite flag.
+ */
+private enum class ProfileSort(val label: String) {
+    RECENT("Recent"),
+    FAVORITES("Favorites"),
+    NAME("Name"),
+}
 
 /**
  * One tappable row of the options panel — the destinations that used to live in the old home
@@ -113,10 +105,13 @@ data class RemapOptionEntry(
 )
 
 /**
- * Full-screen morphing overlay for the profile / options panels. Same treatment as the
- * group editor's in-place morph ([RemapSimpleView]): the summoning pill's captured bounds
- * rect-lerp to the whole screen minus [EditorMargin] — but hosted at the SCREEN root, so
- * unlike the group editor this covers the top tab bar too. Content fades in with the morph.
+ * The profile / options panels: full-bleed [MinputModal]s over the whole screen (top bar
+ * included) — separate raised interfaces above the controls view, inset by [EditorMargin]
+ * so the screen edges peek through. Converted from the morph treatment 2026-08-08: the
+ * pill-to-panel rect-lerp read awkwardly (tiny cornered summons becoming large centered
+ * surfaces), so panels and their modals now share the modal's standard fade + settle. The
+ * group editor keeps the morph — it genuinely lives inside the screen and collapses back
+ * into its home box.
  *
  * The caller (RemapControlsScreen) hosts this as the last child of its root Box with
  * `Modifier.matchParentSize()` and owns [openPanel] (user intent, rememberSaveable there).
@@ -125,8 +120,6 @@ data class RemapOptionEntry(
 internal fun RemapPanelOverlay(
     openPanel: RemapPanel?,
     onClose: () -> Unit,
-    buttonBounds: (RemapPanel) -> Rect?,
-    rootSize: IntSize,
     profiles: ImmutableList<Profile>,
     activeProfileId: Long?,
     onSelectProfile: (Profile) -> Unit,
@@ -143,111 +136,68 @@ internal fun RemapPanelOverlay(
     onCreateProfile: (name: String, packages: Set<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // User intent (openPanel) vs. what's on screen mid-animation (visiblePanel) — the same
-    // state pair as the group editor morph. Switching panels collapses the current one back
-    // into its pill before expanding the other.
-    var visiblePanel by remember { mutableStateOf(openPanel) }
-    val progress = remember { Animatable(if (openPanel != null) 1f else 0f) }
-    LaunchedEffect(openPanel) {
-        val target = openPanel
-        if (target == visiblePanel) {
-            if (target != null && progress.value < 1f) {
-                progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
-            }
-            return@LaunchedEffect
-        }
-        if (visiblePanel != null) {
-            progress.animateTo(0f, tween(CollapseMillis, easing = FastOutSlowInEasing))
-            visiblePanel = null
-        }
-        if (target != null) {
-            visiblePanel = target
-            progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
-        }
-    }
+    // One focus seat per surface — each modal owns its own seat/trap/recovery through
+    // MinputModal's focus contract; the requesters attach to each surface's Close button
+    // via [PanelHeader]. Separate requesters per panel: during a Select↔Start switch both
+    // contents briefly compose (one fading out), and a requester attached to two nodes
+    // makes requestFocus throw.
+    val profileCloseFocus = remember { FocusRequester() }
+    val optionsCloseFocus = remember { FocusRequester() }
+    val addModalCloseFocus = remember { FocusRequester() }
+    val profileOptionsCloseFocus = remember { FocusRequester() }
+    val modalUp = openModal != null
 
-    // Composed after the screen's (and the group editor's) BackHandlers, so this wins while a
-    // panel is up — back closes the panel, not the screen. (The modals' own BackHandlers
-    // compose later still, so they win over this while a modal is up.)
-    BackHandler(enabled = openPanel != null) { onClose() }
-
-    // The overlay box's own coordinates + the raw coordinates of the modal-summoning header
-    // buttons. Conversion to overlay space happens lazily at read time so callback ordering
-    // between parent and child onGloballyPositioned passes can't hand the morph stale rects.
-    var overlayCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val modalButtonCoords = remember { mutableStateMapOf<ProfilePanelModal, LayoutCoordinates>() }
-    val modalOrigin: (ProfilePanelModal) -> Rect? = { m ->
-        val root = overlayCoords?.takeIf { it.isAttached }
-        val btn = modalButtonCoords[m]?.takeIf { it.isAttached }
-        if (root != null && btn != null) root.localBoundingBoxOf(btn) else null
-    }
-
-    val vp = visiblePanel
-    val origin = vp?.let { buttonBounds(it) }
-    if (vp == null || origin == null || rootSize == IntSize.Zero) return
-
-    val marginPx = with(LocalDensity.current) { EditorMargin.toPx() }
-    val target = Rect(
-        offset = Offset(marginPx, marginPx),
-        size = Size(rootSize.width - marginPx * 2, rootSize.height - marginPx * 2),
-    )
-    val shape = RoundedCornerShape(GroupCorner)
-    val container = minputBoxContainer()
-    Box(modifier.onGloballyPositioned { overlayCoords = it }) {
-        Box(
-            modifier = Modifier
-                // Per-frame rect is read in the LAYOUT phase; fades in the DRAW phase — the
-                // no-recompose-per-frame lesson from the group-editor morph.
-                .layout { measurable, constraints ->
-                    val rect = lerp(origin, target, progress.value)
-                    val placeable = measurable.measure(
-                        Constraints.fixed(
-                            rect.width.roundToInt().coerceAtLeast(1),
-                            rect.height.roundToInt().coerceAtLeast(1),
-                        ),
-                    )
-                    layout(constraints.maxWidth, constraints.maxHeight) {
-                        placeable.place(rect.left.roundToInt(), rect.top.roundToInt())
-                    }
-                }
-                .softDropShadow(cornerRadius = GroupCorner)
-                .clip(shape)
-                .background(container)
-                .border(minputBevelBorder(container, GroupCorner), shape)
-                .testTag("remap-panel:" + vp.name),
+    Box(modifier) {
+        // The two panels: full-bleed modals inset by EditorMargin (the group editor's
+        // framing, so the remap surfaces still read as one family). [openPanel] keeps them
+        // mutually exclusive — switching reads as a quick crossfade. While one of the
+        // profile panel's own modals is up, the panel is obscured: it refuses focus entry
+        // and the surface above owns the seat.
+        MinputModal(
+            open = openPanel == RemapPanel.PROFILE,
+            onDismiss = onClose,
+            margin = EditorMargin,
+            focusSeat = profileCloseFocus,
+            obscured = modalUp,
+            testTag = "remap-panel:PROFILE",
+            modifier = Modifier.matchParentSize(),
         ) {
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = progress.value }) {
-                when (vp) {
-                    RemapPanel.PROFILE -> ProfilePanelContent(
-                        profiles = profiles,
-                        activeProfileId = activeProfileId,
-                        onSelectProfile = onSelectProfile,
-                        onClose = onClose,
-                        onOpenModal = onOpenModal,
-                        onModalButtonPositioned = { modal, coords ->
-                            modalButtonCoords[modal] = coords
-                        },
-                    )
-                    RemapPanel.OPTIONS -> OptionsPanelContent(
-                        powerOn = powerOn,
-                        onPowerChange = onPowerChange,
-                        entries = optionsEntries,
-                        onClose = onClose,
-                    )
-                }
-            }
+            ProfilePanelContent(
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                onSelectProfile = onSelectProfile,
+                onClose = onClose,
+                onOpenModal = onOpenModal,
+                closeFocusRequester = profileCloseFocus,
+            )
+        }
+        MinputModal(
+            open = openPanel == RemapPanel.OPTIONS,
+            onDismiss = onClose,
+            margin = EditorMargin,
+            focusSeat = optionsCloseFocus,
+            obscured = modalUp,
+            testTag = "remap-panel:OPTIONS",
+            modifier = Modifier.matchParentSize(),
+        ) {
+            OptionsPanelContent(
+                powerOn = powerOn,
+                onPowerChange = onPowerChange,
+                entries = optionsEntries,
+                onClose = onClose,
+                closeFocusRequester = optionsCloseFocus,
+            )
         }
 
-        // The profile panel's modals morph from their header icon buttons and scrim over the
-        // whole overlay. One instance per modal; [openModal] keeps them mutually exclusive.
-        MinputMorphModal(
+        // The profile panel's modals stack ABOVE the panels: composed after them, so their
+        // BackHandlers win while open; [openModal] keeps them mutually exclusive.
+        MinputModal(
             open = openModal == ProfilePanelModal.ADD,
             onDismiss = onCloseModal,
-            originBounds = { modalOrigin(ProfilePanelModal.ADD) },
-            rootSize = rootSize,
             height = AddProfileModalHeight,
-            modifier = Modifier.matchParentSize(),
+            focusSeat = addModalCloseFocus,
             testTag = "profile-modal:ADD",
+            modifier = Modifier.matchParentSize(),
         ) {
             AddProfileModalContent(
                 profiles = profiles,
@@ -256,18 +206,21 @@ internal fun RemapPanelOverlay(
                 onLoadInstalledApps = onLoadInstalledApps,
                 onCreateProfile = onCreateProfile,
                 onClose = onCloseModal,
+                closeFocusRequester = addModalCloseFocus,
             )
         }
-        MinputMorphModal(
+        MinputModal(
             open = openModal == ProfilePanelModal.OPTIONS,
             onDismiss = onCloseModal,
-            originBounds = { modalOrigin(ProfilePanelModal.OPTIONS) },
-            rootSize = rootSize,
             height = ProfileOptionsModalHeight,
-            modifier = Modifier.matchParentSize(),
+            focusSeat = profileOptionsCloseFocus,
             testTag = "profile-modal:OPTIONS",
+            modifier = Modifier.matchParentSize(),
         ) {
-            ProfileOptionsModalContent(onClose = onCloseModal)
+            ProfileOptionsModalContent(
+                onClose = onCloseModal,
+                closeFocusRequester = profileOptionsCloseFocus,
+            )
         }
     }
 }
@@ -284,16 +237,18 @@ private fun ProfilePanelContent(
     onSelectProfile: (Profile) -> Unit,
     onClose: () -> Unit,
     onOpenModal: (ProfilePanelModal) -> Unit,
-    onModalButtonPositioned: (ProfilePanelModal, LayoutCoordinates) -> Unit,
+    closeFocusRequester: FocusRequester? = null,
 ) {
-    // Live name filter for the list below. Lives here so it resets whenever the panel
-    // closes (the panel content leaves composition) — each summon starts unfiltered.
+    // Live name filter + sort tab for the list below. Both live here so they reset whenever
+    // the panel closes (the panel content leaves composition) — each summon starts fresh.
     var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(ProfileSort.RECENT) }
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
             glyphRes = R.drawable.xbox_button_view,
             title = "Profiles",
             onClose = onClose,
+            closeFocusRequester = closeFocusRequester,
             center = {
                 MinputTextField(
                     value = query,
@@ -313,47 +268,62 @@ private fun ProfilePanelContent(
                     icon = Icons.Filled.Add,
                     contentDescription = "New profile",
                     onClick = { onOpenModal(ProfilePanelModal.ADD) },
-                    modifier = Modifier.onGloballyPositioned {
-                        onModalButtonPositioned(ProfilePanelModal.ADD, it)
-                    },
                 )
                 MinputIconButton(
                     icon = Icons.Filled.Tune,
                     contentDescription = "Profile options",
                     onClick = { onOpenModal(ProfilePanelModal.OPTIONS) },
-                    modifier = Modifier.onGloballyPositioned {
-                        onModalButtonPositioned(ProfilePanelModal.OPTIONS, it)
-                    },
                 )
             },
         )
         // Header/content separation — the group editor's divider treatment.
         HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
+        // The sort "tab view" — first live instance of the MinputGroupButton primitive.
+        MinputGroupButton(
+            options = ProfileSort.entries,
+            selected = sort,
+            onSelect = { sort = it },
+            optionLabel = { it.label },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PanelContentPadding, vertical = 6.dp),
+        )
         val trimmed = query.trim()
         val filtered = if (trimmed.isEmpty()) {
             profiles
         } else {
             profiles.filter { it.name.contains(trimmed, ignoreCase = true) }
         }
+        val displayed = when (sort) {
+            // No last-used tracking yet — "Recent" approximates with creation recency.
+            ProfileSort.RECENT -> filtered.sortedByDescending { it.id }
+            // No favorite flag on Profile yet — deliberately empty until one exists.
+            ProfileSort.FAVORITES -> emptyList()
+            ProfileSort.NAME -> filtered.sortedBy { it.name.lowercase() }
+        }
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
             contentPadding = PaddingValues(horizontal = PanelContentPadding, vertical = 2.dp),
         ) {
-            if (filtered.isEmpty()) {
-                item(key = "no_matches") {
+            if (displayed.isEmpty()) {
+                item(key = "empty") {
                     Box(
                         modifier = Modifier.fillMaxWidth().height(PanelRowHeight),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "No profiles match",
+                            text = if (sort == ProfileSort.FAVORITES) {
+                                "No favorite profiles yet"
+                            } else {
+                                "No profiles match"
+                            },
                             style = minputMiniTextStyle(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
-            items(filtered, key = { it.id }) { profile ->
+            items(displayed, key = { it.id }) { profile ->
                 PanelRow(
                     onClick = { onClose(); onSelectProfile(profile) },
                     active = profile.id == activeProfileId,
@@ -393,9 +363,15 @@ private fun OptionsPanelContent(
     onPowerChange: (Boolean) -> Unit,
     entries: List<RemapOptionEntry>,
     onClose: () -> Unit,
+    closeFocusRequester: FocusRequester? = null,
 ) {
     Column(Modifier.fillMaxSize()) {
-        PanelHeader(glyphRes = R.drawable.xbox_button_menu, title = "Options", onClose = onClose)
+        PanelHeader(
+            glyphRes = R.drawable.xbox_button_menu,
+            title = "Options",
+            onClose = onClose,
+            closeFocusRequester = closeFocusRequester,
+        )
         // Same header/content divider as the profiles panel + group editor — one family.
         HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
         LazyColumn(
@@ -442,6 +418,7 @@ private fun PanelHeader(
     icon: ImageVector? = null,
     center: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable () -> Unit = {},
+    closeFocusRequester: FocusRequester? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -479,6 +456,11 @@ private fun PanelHeader(
             icon = Icons.Filled.Close,
             contentDescription = "Close",
             onClick = onClose,
+            // Controller-focus seat for the surface (the group-editor pattern: focus lands
+            // on a real button, never a container).
+            modifier = if (closeFocusRequester != null) {
+                Modifier.focusRequester(closeFocusRequester)
+            } else Modifier,
         )
     }
 }
@@ -576,13 +558,20 @@ private fun AddProfileModalContent(
     onLoadInstalledApps: () -> Unit,
     onCreateProfile: (name: String, packages: Set<String>) -> Unit,
     onClose: () -> Unit,
+    // Attached to the Close button; the hosting MinputModal owns the seat/recovery.
+    closeFocusRequester: FocusRequester? = null,
 ) {
     var name by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pickerOpen by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
-        PanelHeader(title = "New profile", icon = Icons.Filled.Add, onClose = onClose)
+        PanelHeader(
+            title = "New profile",
+            icon = Icons.Filled.Add,
+            onClose = onClose,
+            closeFocusRequester = closeFocusRequester,
+        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -659,9 +648,18 @@ private fun AddProfileModalContent(
  * summon exist so content can land here without another chrome pass.
  */
 @Composable
-private fun ProfileOptionsModalContent(onClose: () -> Unit) {
+private fun ProfileOptionsModalContent(
+    onClose: () -> Unit,
+    // Attached to the Close button; the hosting MinputModal owns the seat/recovery.
+    closeFocusRequester: FocusRequester? = null,
+) {
     Column(Modifier.fillMaxSize()) {
-        PanelHeader(title = "Profile options", icon = Icons.Filled.Tune, onClose = onClose)
+        PanelHeader(
+            title = "Profile options",
+            icon = Icons.Filled.Tune,
+            onClose = onClose,
+            closeFocusRequester = closeFocusRequester,
+        )
         Box(
             modifier = Modifier.fillMaxWidth().weight(1f).padding(PanelContentPadding),
             contentAlignment = Alignment.Center,

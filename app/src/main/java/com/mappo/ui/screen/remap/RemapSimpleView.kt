@@ -122,7 +122,13 @@ internal fun RemapSimpleView(
     // from it, so controller focus could never step inside).
     val editorFocus = remember { FocusRequester() }
     // Which group box should reclaim controller focus once the editor collapses back into it.
-    var returnFocusGroup by remember { mutableStateOf<RemapSimpleGroup?>(null) }
+    // Starts non-null on a fresh entry (no editor restoring): seating focus on the top-left
+    // group box makes the screen controller-ready immediately — the Select/Start panel
+    // summons are preview key handlers that only fire while focus sits in this subtree, and
+    // an unseated screen's first d-pad press used to default-hunt into the frame chrome.
+    var returnFocusGroup by remember {
+        mutableStateOf(if (expandedGroup == null) RemapSimpleGroup.LEFT_SHOULDER else null)
+    }
     val inputModeManager = LocalInputModeManager.current
 
     // Basic-view flavor of the tap-focus-recovery below: a tap anywhere clears Compose focus
@@ -758,10 +764,10 @@ private val BlockBottomGap = 14.dp
  *  tight as the badge allows so the group boxes get the widest possible footprint. */
 private val BadgeGutter = 18.dp
 
-// Shared with the profile/options full-screen panels (RemapScreenPanels.kt) — the morph
-// surfaces deliberately speak identical corner/margin/timing values so they read as one
-// family. Canonical values live with the library's MinputMorphModal; these are the remap
-// package's aliases.
+// The group editor's morph values — canonical in the library (MinputDefaults.kt); these
+// are the remap package's aliases. The profile/options panels no longer morph (they're
+// MinputModals now, fade + settle) but still share GroupCorner/EditorMargin framing so
+// the remap surfaces read as one family.
 internal val GroupCorner = com.mappo.ui.minput.MinputMorphCorner
 internal const val ExpandMillis = com.mappo.ui.minput.MinputMorphExpandMillis
 internal const val CollapseMillis = com.mappo.ui.minput.MinputMorphCollapseMillis

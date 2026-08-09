@@ -26,8 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
@@ -75,9 +75,11 @@ internal fun RemapTopBar(
     profileLabel: String?,
     onOpenProfile: () -> Unit,
     onOpenOptions: () -> Unit,
-    onProfileButtonPositioned: (LayoutCoordinates) -> Unit,
-    onOptionsButtonPositioned: (LayoutCoordinates) -> Unit,
     modifier: Modifier = Modifier,
+    // Focus-return targets: when a corner pill's panel closes, controller focus hands back
+    // to the pill that summoned it (the editor's return-to-home-box pattern).
+    profileFocusRequester: FocusRequester? = null,
+    optionsFocusRequester: FocusRequester? = null,
 ) {
     // surfaceContainer — app-bar plane, one step up from the screen surface.
     Column(modifier = modifier) {
@@ -98,7 +100,11 @@ internal fun RemapTopBar(
                     leadingIcon = painterResource(R.drawable.xbox_button_view),
                     modifier = Modifier
                         .widthIn(max = CornerPillMaxWidth)
-                        .onGloballyPositioned(onProfileButtonPositioned),
+                        .then(
+                            if (profileFocusRequester != null) {
+                                Modifier.focusRequester(profileFocusRequester)
+                            } else Modifier,
+                        ),
                 )
                 // Tab cluster centers in the remaining span between the two corner pills.
                 Box(
@@ -118,7 +124,12 @@ internal fun RemapTopBar(
                     text = "Options",
                     onClick = onOpenOptions,
                     leadingIcon = painterResource(R.drawable.xbox_button_menu),
-                    modifier = Modifier.onGloballyPositioned(onOptionsButtonPositioned),
+                    modifier = Modifier
+                        .then(
+                            if (optionsFocusRequester != null) {
+                                Modifier.focusRequester(optionsFocusRequester)
+                            } else Modifier,
+                        ),
                 )
             }
         }

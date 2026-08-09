@@ -3,6 +3,7 @@ package com.mappo.ui.screen
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,20 +32,20 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
@@ -170,11 +171,6 @@ fun RemapControlsScreen(
     // dialog states below — modals are short-lived and never outlive their panel; every
     // openPanel mutation clears it so a modal can't orphan over a closed/switched panel.
     var openProfileModal by remember { mutableStateOf<ProfilePanelModal?>(null) }
-    // Captured bounds of the top-bar corner pills, in root-Box coordinates — the morph origins.
-    val panelButtonBounds = remember { mutableStateMapOf<RemapPanel, androidx.compose.ui.geometry.Rect>() }
-    var panelRootCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-    var panelRootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-
     // Which management dialog is currently open. Plain `remember` — dialogs are short-lived;
     // rotation-survival isn't worth a custom Saver.
     var dialog by remember { mutableStateOf<ActionSetDialogState>(ActionSetDialogState.None) }
@@ -265,13 +261,37 @@ fun RemapControlsScreen(
         onConfigure = onOpenActivatorSettings,
     )
 
+    // Controller-focus plumbing. Focus is ALWAYS seated on a real button, never a container
+    // (a focused container that spatially contains everything is a directional-search dead
+    // end — and worse, d-pad moves from it search OUTWARD, past the screen into the frame
+    // chrome; a focusable root Box shipped exactly that bug). The initial seat lands on the
+    // top-left group box inside RemapSimpleView; these requesters hand focus back to the
+    // summoning corner pill when its panel closes (the editor's return-to-home-box pattern).
+    val profilePillFocus = remember { FocusRequester() }
+    val optionsPillFocus = remember { FocusRequester() }
+    var lastOpenPanel by remember { mutableStateOf(openPanel) }
+    LaunchedEffect(openPanel) {
+        val closed = lastOpenPanel
+        lastOpenPanel = openPanel
+        if (openPanel == null && closed != null) {
+            runCatching {
+                when (closed) {
+                    RemapPanel.PROFILE -> profilePillFocus.requestFocus()
+                    RemapPanel.OPTIONS -> optionsPillFocus.requestFocus()
+                }
+            }
+        }
+    }
+
     // Root Box: the Scaffold plus the profile/options panel overlay, which must cover the
     // top bar — hence hosted HERE rather than inside the Scaffold content. The Box also owns
     // the physical-button summons (Select → profile, Start → options — the same buttons whose
     // glyphs the corner pills wear; B closes an open panel).
     Box(
         modifier = modifier
-            .onGloballyPositioned { panelRootCoords = it; panelRootSize = it.size }
+            // Preview handlers fire along the focus path, so this is live whenever focus
+            // sits anywhere in the screen subtree — which the seat-on-entry in
+            // RemapSimpleView (plus its tap-recovery) keeps true.
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown || e.nativeKeyEvent.repeatCount != 0) {
                     return@onPreviewKeyEvent false
@@ -315,7 +335,20 @@ fun RemapControlsScreen(
             },
     ) {
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // While a panel is up it behaves modally: directional focus must not
+                // wander into the screen content underneath it — refuse entry into this
+                // whole subtree (the editor's containment pattern). Gated on INTENT so
+                // the block lifts the moment a close starts and the summoning pill can
+                // take the return focus.
+                .then(
+                    if (openPanel != null) {
+                        Modifier
+                            .focusProperties { onEnter = { cancelFocusChange() } }
+                            .focusGroup()
+                    } else Modifier,
+                ),
             topBar = {
                 // The action-set manager: one tab per set (layers as subordinate tabs) on the
                 // shared ReorderableTabBar, flanked by the profile / options corner pills.
@@ -336,6 +369,8 @@ fun RemapControlsScreen(
                         onAddSet = { dialog = ActionSetDialogState.Add },
                     ),
                     profileLabel = profileName,
+                    profileFocusRequester = profilePillFocus,
+                    optionsFocusRequester = optionsPillFocus,
                     onOpenProfile = {
                         openProfileModal = null
                         openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
@@ -343,16 +378,6 @@ fun RemapControlsScreen(
                     onOpenOptions = {
                         openProfileModal = null
                         openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
-                    },
-                    onProfileButtonPositioned = { coords ->
-                        panelRootCoords?.let { root ->
-                            panelButtonBounds[RemapPanel.PROFILE] = root.localBoundingBoxOf(coords)
-                        }
-                    },
-                    onOptionsButtonPositioned = { coords ->
-                        panelRootCoords?.let { root ->
-                            panelButtonBounds[RemapPanel.OPTIONS] = root.localBoundingBoxOf(coords)
-                        }
                     },
                 )
             },
@@ -388,8 +413,6 @@ fun RemapControlsScreen(
         RemapPanelOverlay(
             openPanel = openPanel,
             onClose = { openProfileModal = null; openPanel = null },
-            buttonBounds = { panelButtonBounds[it] },
-            rootSize = panelRootSize,
             profiles = profiles,
             activeProfileId = activeProfileId,
             onSelectProfile = onSelectProfile,

@@ -1,6 +1,5 @@
 package com.mappo.ui.minput
 
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -86,7 +85,7 @@ fun <T> MinputPillDropdown(
                     if (enabled) {
                         Modifier.clip(RoundedCornerShape(50)).clickable(
                             interactionSource = interaction,
-                            indication = LocalIndication.current,
+                            indication = minputIndication(),
                             onClickLabel = onClickLabel,
                         ) { open = true }
                     } else Modifier.alpha(0.6f),

@@ -1,7 +1,9 @@
 package com.mappo.ui.minput
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -74,6 +76,18 @@ val MinputElevatedContainer = Color(0xFF434A5B)
 fun minputInputFieldContainer(): Color =
     lerp(minputBoxContainer(), Color.Black, 0.22f)
 
+/**
+ * The one hover/press/focus state-layer treatment for every minput interactive: an
+ * onSurface-colored ripple. Explicit (not `LocalIndication.current`) because the default
+ * ripple derives its color from [androidx.compose.material3.LocalContentColor] — a minput
+ * control hosted outside a Surface-managed subtree (overlay panels, frame chrome) would
+ * silently inherit whatever content color the host left behind and hover/focus much darker
+ * than its siblings. Library components pass this to their clickable/selectable.
+ */
+@Composable
+fun minputIndication(): IndicationNodeFactory =
+    ripple(color = MaterialTheme.colorScheme.onSurface)
+
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
 val MinputBoxStroke = 0.75.dp
 
@@ -134,6 +148,17 @@ private class BevelBrush(
     override fun hashCode(): Int =
         31 * (31 * topHighlight.hashCode() + bottomHighlight.hashCode()) + fadePx.hashCode()
 }
+
+/**
+ * Canonical timing/corner values for Mappo's rect-lerp morph family — the group editor's
+ * expand-from-box and any future in-place morphs speak these same values so the surfaces
+ * read as one system. (The remap package aliases these as its internal
+ * `ExpandMillis`/`CollapseMillis`/`GroupCorner`; [MinputModal] shares the corner but opens
+ * with its own fade + settle, not a morph.)
+ */
+const val MinputMorphExpandMillis = 300
+const val MinputMorphCollapseMillis = 240
+val MinputMorphCorner = 8.dp
 
 /** Height of the pill controls (buttons, dropdowns). */
 val MinputPillHeight = 24.dp

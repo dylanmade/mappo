@@ -131,7 +131,11 @@ fun MinputTextField(
                             modifier = Modifier
                                 .size(MinputPillIconSize)
                                 .clip(CircleShape)
-                                .clickable(role = Role.Button) { onValueChange("") },
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = minputIndication(),
+                                    role = Role.Button,
+                                ) { onValueChange("") },
                         )
                     }
                 }
