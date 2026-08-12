@@ -33,12 +33,12 @@ import androidx.compose.ui.unit.dp
  * between segments. Group silhouette stays a pill: outer ends fully rounded, inner edges
  * perfectly FLAT (square corners) — the classic connected-segment profile.
  *
- * Selection reads through the surface system: the selected segment wears **surface 2**
- * ([MinputElevatedContainer], lighter) with the family bevel; unselected segments sit DOWN
- * in the well fill ([minputInputFieldContainer], darker than surface 1) and are FLAT — no
- * bevel, matching the library's well treatment — so the selected tab reads as the one
- * raised button in a recessed track. Each segment hovers/presses with the pill family's
- * [minputInteractiveMotion] lift. Base behavior (single-choice semantics, ripple,
+ * Selection reads through the surface system: unselected segments wear **surface 2**
+ * ([MinputElevatedContainer]) with the family bevel — ordinary buttons on their plane —
+ * and the selected segment wears the **highlight plane** ([minputHighlightContainer],
+ * the lightest fill, reserved for selection) so it reads as the lit button in the row.
+ * The well fill stays reserved for text inputs. Each segment hovers/presses with the pill
+ * family's [minputInteractiveMotion] lift. Base behavior (single-choice semantics, ripple,
  * radio-button roles) comes from foundation's selectableGroup/selectable — the same base
  * the M3 component uses.
  *
@@ -70,14 +70,14 @@ fun <T> MinputGroupButton(
             )
             val isSelected = option == selected
             val fill by animateColorAsState(
-                targetValue = if (isSelected) MinputElevatedContainer else minputInputFieldContainer(),
+                targetValue = if (isSelected) minputHighlightContainer() else MinputElevatedContainer,
                 label = "minputGroupSegmentFill",
             )
             val content by animateColorAsState(
                 targetValue = if (isSelected) {
-                    MaterialTheme.colorScheme.onSurface
+                    MaterialTheme.colorScheme.onPrimary
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    MaterialTheme.colorScheme.onSurface
                 },
                 label = "minputGroupSegmentContent",
             )
@@ -85,10 +85,7 @@ fun <T> MinputGroupButton(
             Surface(
                 shape = shape,
                 color = fill,
-                // Only the raised (selected) segment wears the bevel; unselected segments
-                // are flat wells — a bevel ring on the dark fill also made their square
-                // edges read rounded against a dark host.
-                border = if (isSelected) minputBevelBorder(fill, outerCorner) else null,
+                border = minputBevelBorder(fill, outerCorner),
                 modifier = Modifier
                     .weight(1f)
                     .minputInteractiveMotion(interaction)

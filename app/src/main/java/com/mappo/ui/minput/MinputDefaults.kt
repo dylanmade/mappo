@@ -27,9 +27,9 @@ import androidx.compose.ui.unit.sp
  *
  * Philosophy (full doctrine in the `minput` skill):
  * - Styling over reinvented functionality — wrap M3/foundation equivalents for behavior.
- * - Three-plane surface system: background → surface 1 ([minputBoxContainer]) →
- *   surface 2 ([MinputElevatedContainer]); controls wear the styling of the plane ABOVE
- *   the one they sit on.
+ * - Surface system: background → surface 1 ([minputBoxContainer]) → surface 2
+ *   ([MinputElevatedContainer]) → highlight ([minputHighlightContainer], selection only);
+ *   controls wear the styling of the plane ABOVE the one they sit on.
  * - Coloration derives from theme tokens, overrideable per-view; child surfaces inherit
  *   their parent surface's coloration.
  * - In Mappo: minput first; a missing primitive is surfaced to Dylan before falling back
@@ -69,13 +69,25 @@ fun minputBoxContainer(): Color =
 val MinputElevatedContainer = Color(0xFF434A5B)
 
 /**
- * Fill for text-input fields sitting on a box/card plane: a darker "well" than the card it
- * sits on. Deliberately FLAT — no bevel border — because an input is not a button. Fixed
- * hex per Dylan's tuning: joins [MinputElevatedContainer] in the flagged hardcoded-color
- * debt to re-derive from theme tokens later.
+ * The highlight plane — the lightest fill in the family, sitting above even
+ * [MinputElevatedContainer]. Reserved for indicating SELECTION (e.g. the raised segment of
+ * [MinputGroupButton]); matches the M3 filled-button coloration (the "Map" CTA). Content on
+ * it uses `colorScheme.onPrimary`.
  */
 @Composable
-fun minputInputFieldContainer(): Color = Color(0xFF12141A)
+fun minputHighlightContainer(): Color = MaterialTheme.colorScheme.primary
+
+/**
+ * Fill for text-input fields sitting on a box/card plane: a darker "well" than the card it
+ * sits on. Deliberately FLAT — no bevel border — because an input is not a button. Same
+ * formula shape as [minputBoxContainer] (accent tint over a surface plane), one plane lower
+ * and fainter — lands at Dylan's tuned ≈#12141A under the current dark scheme while
+ * tracking theme edits.
+ */
+@Composable
+fun minputInputFieldContainer(): Color =
+    MaterialTheme.colorScheme.primary.copy(alpha = 0.03f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainerLowest)
 
 /**
  * The one hover/press/focus state-layer treatment for every minput interactive: an
