@@ -69,12 +69,13 @@ fun minputBoxContainer(): Color =
 val MinputElevatedContainer = Color(0xFF434A5B)
 
 /**
- * Fill for text-input fields sitting on a box/card plane: a slightly darker "well" than the
- * card it sits on. Deliberately FLAT — no bevel border — because an input is not a button.
+ * Fill for text-input fields sitting on a box/card plane: a darker "well" than the card it
+ * sits on. Deliberately FLAT — no bevel border — because an input is not a button. Fixed
+ * hex per Dylan's tuning: joins [MinputElevatedContainer] in the flagged hardcoded-color
+ * debt to re-derive from theme tokens later.
  */
 @Composable
-fun minputInputFieldContainer(): Color =
-    lerp(minputBoxContainer(), Color.Black, 0.22f)
+fun minputInputFieldContainer(): Color = Color(0xFF12141A)
 
 /**
  * The one hover/press/focus state-layer treatment for every minput interactive: an
