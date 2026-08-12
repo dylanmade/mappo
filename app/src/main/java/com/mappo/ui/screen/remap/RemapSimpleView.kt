@@ -383,7 +383,9 @@ internal fun RemapSimpleView(
                                 placeable.place(rect.left.roundToInt(), rect.top.roundToInt())
                             }
                         }
-                        .softDropShadow(cornerRadius = GroupCorner)
+                        // offsetY 0: the offset shadow paints a dark band hugging the bottom
+                        // edge that reads as the surface overextending.
+                        .softDropShadow(cornerRadius = GroupCorner, offsetY = 0.dp)
                         .clip(shape)
                         .background(container)
                         .border(minputBevelBorder(container, GroupCorner), shape)

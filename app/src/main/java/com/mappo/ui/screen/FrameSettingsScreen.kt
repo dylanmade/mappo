@@ -43,8 +43,8 @@ import com.mappo.ui.viewmodel.MainViewModel
 import kotlin.math.roundToInt
 
 /**
- * Frame style settings: the handheld frame's faux-hardware finish (2026-07-14). Three core
- * colors — shell / glass / bezel — each with the intensity sliders for the detail passes that
+ * Frame style settings: the handheld frame's faux-hardware finish (2026-07-14). Two core
+ * colors — shell / glass — each with the intensity sliders for the detail passes that
  * derive from it (see [FrameStyle] for the color hierarchy). Sliders preview LIVE while
  * dragging (no persistence) and commit on release; the frame around this very screen is the
  * preview surface.
@@ -129,13 +129,7 @@ fun FrameSettingsScreen(
             )
             HorizontalDivider()
 
-            SectionHeader("Screen bezel")
-            ColorRow(
-                label = "Bezel color",
-                helper = "Flat border around the screen — its own color, derived from neither",
-                color = style.bezelColor,
-                onClick = { pickingColor = FrameColorTarget.BEZEL },
-            )
+            SectionHeader("Screen")
             IntensityRow(
                 label = "Vignette",
                 helper = "Corner shading on the screen's edges, like a passive LCD",
@@ -157,12 +151,10 @@ fun FrameSettingsScreen(
             initialColor = when (target) {
                 FrameColorTarget.SHELL -> style.shellColor
                 FrameColorTarget.GLASS -> style.glassColor
-                FrameColorTarget.BEZEL -> style.bezelColor
             },
             title = when (target) {
                 FrameColorTarget.SHELL -> "Shell color"
                 FrameColorTarget.GLASS -> "Glass color"
-                FrameColorTarget.BEZEL -> "Bezel color"
             },
             // Hardware isn't translucent — alpha would punch holes in the device.
             supportAlpha = false,
@@ -171,7 +163,6 @@ fun FrameSettingsScreen(
                     when (target) {
                         FrameColorTarget.SHELL -> style.copy(shellColor = picked)
                         FrameColorTarget.GLASS -> style.copy(glassColor = picked)
-                        FrameColorTarget.BEZEL -> style.copy(bezelColor = picked)
                     },
                 )
                 pickingColor = null
@@ -181,7 +172,7 @@ fun FrameSettingsScreen(
     }
 }
 
-private enum class FrameColorTarget { SHELL, GLASS, BEZEL }
+private enum class FrameColorTarget { SHELL, GLASS }
 
 @Composable
 private fun SectionHeader(text: String) {

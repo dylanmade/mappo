@@ -66,7 +66,7 @@ const val HandheldFrameSlideMillis = 420
 
 private val TopMargin = 10.dp
 // Corner-squaring pass 2026-07-14: real hardware rounds far less than M3 chrome — the glass
-// especially (its INNER edge, at the bezel, is practically square; see LcdCorner/ScreenCorner).
+// especially (its INNER edge, at the screen, is practically square; see LcdCorner).
 private val GlassCorner = 6.dp
 private val GlassInset = 10.dp
 // Width of the off-white shell border wrapping the glass on its top/left/right (the shell also
@@ -94,7 +94,7 @@ private val GlassPrintColor = Color(0xFF9AA3AD)
 
 /**
  * The Mappo home chrome: a faux vertical retro handheld (original Game Boy silhouette) that
- * slides up from the bottom of the display. Only its screen is visible: the dark glass bezel
+ * slides up from the bottom of the display. Only its screen is visible: the dark glass frame
  * with the lit canvas every Mappo route renders into, plus the wordmark on the glass's
  * extended bottom border. The device body is the same width as the glass (nothing visible
  * left/right of the screen) and extends off the bottom edge of the display.
@@ -224,7 +224,7 @@ fun HandheldFrame(
 }
 
 /**
- * The screen glass: dark bezel, rounded top corners, the lit LCD inset, and the extended
+ * The screen glass: rounded top corners, the lit LCD inset directly into it, and the extended
  * bottom border carrying the wordmark (GBC-style "first border layer" logo placement) plus the
  * expand/contract toggle on its right side.
  */
@@ -261,8 +261,9 @@ private fun GlassPanel(
                 .drawBehind { drawGlassFinish(style) },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // The screen bezel wraps the lit canvas: a flat dark border (its own core color),
-            // with the passive-LCD square vignette shading the canvas's edges just inside it.
+            // surfaceContainerLowest — the lit screen canvas every Mappo route renders into,
+            // seated directly against the glass, with the passive-LCD square vignette shading
+            // its edges.
             Box(
                 Modifier
                     .padding(
@@ -272,24 +273,15 @@ private fun GlassPanel(
                     )
                     .size(width = lcdW, height = lcdH)
                     .clip(RoundedCornerShape(LcdCorner))
-                    .background(style.bezelColor),
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest),
             ) {
-                // surfaceContainerLowest — the lit screen canvas every Mappo route renders into.
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(BezelWidth)
-                        .clip(RoundedCornerShape(ScreenCorner))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
-                ) { content() }
+                content()
                 // Vignette overlay — draws OVER the canvas edges (pure draw layer: no
                 // pointer/focus surface, so input passes straight through to the content).
                 if (style.vignette > 0f) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .padding(BezelWidth)
-                            .clip(RoundedCornerShape(ScreenCorner))
                             .drawBehind { drawScreenVignette(style.vignette) },
                     )
                 }
@@ -483,21 +475,14 @@ private val ShellNoiseBrush: ShaderBrush by lazy {
 /** The shell↔glass gap ring (annotation 4). */
 private val WellWidth = 1.5.dp
 
-/** Corner radius of the screen-bezel block — the glass's INNER edge, practically square. */
+/** Corner radius of the lit canvas — the glass's INNER edge, practically square. */
 private val LcdCorner = 1.5.dp
 
-/** Corner radius of the lit canvas itself — fully square: a real LCD is made of square
- *  pixels, so its corners are literal right angles. */
-private val ScreenCorner = 0.dp
-
-/** Width of the flat dark bezel between glass and the lit canvas (annotation 7). */
-private val BezelWidth = 5.dp
-
-/** How far the bezel vignette reaches into the canvas (annotation 8). */
+/** How far the edge vignette reaches into the canvas (annotation 8). */
 private val VignetteWidth = 12.dp
 
 /** Vignette alpha at intensity 1.0 — full black would read as a broken backlight. */
-private const val MaxVignetteAlpha = 0.5f
+private const val MaxVignetteAlpha = 0.35f
 
 /** How far the shell's edge-shadow bands reach in from the silhouette toward the front face. */
 private val ShellShadowBand = 6.dp

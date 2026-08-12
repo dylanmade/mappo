@@ -167,7 +167,9 @@ fun MinputModal(
                     scaleX = scale
                     scaleY = scale
                 }
-                .softDropShadow(cornerRadius = MinputMorphCorner)
+                // offsetY 0: the offset shadow paints a dark band hugging the bottom edge
+                // that reads as the surface overextending.
+                .softDropShadow(cornerRadius = MinputMorphCorner, offsetY = 0.dp)
                 .clip(shape)
                 .background(container)
                 .border(minputBevelBorder(container, MinputMorphCorner), shape)

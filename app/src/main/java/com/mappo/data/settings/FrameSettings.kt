@@ -14,20 +14,17 @@ import javax.inject.Singleton
 /**
  * User-tunable styling for the handheld frame chrome (`HandheldFrame`) — the faux-hardware
  * detail pass (2026-07-14) simulating a physical device: plastic grain, edge lighting, the
- * shell↔glass gap, and the screen bezel.
+ * shell↔glass gap, and the screen vignette.
  *
  * Color hierarchy: [shellColor] and [glassColor] are CORE colors from which their layer's
  * highlights/shadows derive (the remap-pill bevel principle — lerp toward white/black by the
- * intensity); [bezelColor] is its own standalone core (the screen's flat dark border derives
- * from neither shell nor glass). Intensities are 0..1 sliders.
+ * intensity). Intensities are 0..1 sliders.
  */
 data class FrameStyle(
     /** Core plastic color of the outer shell (annotation 1 of the reference photo). */
     val shellColor: Color = Color(0xFFEFECE6),
     /** Core color of the inner glass frame (annotation 5). */
     val glassColor: Color = Color(0xFF5F656C),
-    /** Flat dark border around the screen itself (annotation 7) — standalone core color. */
-    val bezelColor: Color = Color(0xFF14161B),
     /** Plastic grain visibility on the shell (annotation 1's texture). */
     val shellTexture: Float = 0.25f,
     /** Light catching the shell's rounded edges (annotation 2). */
@@ -38,7 +35,7 @@ data class FrameStyle(
     val well: Float = 0.75f,
     /** Light on the glass frame's slightly rounded edges (annotation 6). */
     val glassHighlight: Float = 0.35f,
-    /** Corner shading on the bezel's inner edge — passive-LCD square vignette (annotation 8). */
+    /** Corner shading on the screen's edges — passive-LCD square vignette (annotation 8). */
     val vignette: Float = 0.30f,
 )
 
@@ -76,7 +73,6 @@ class FrameSettings @Inject constructor(
         prefs.edit()
             .putInt(KEY_SHELL_COLOR, style.shellColor.toArgb())
             .putInt(KEY_GLASS_COLOR, style.glassColor.toArgb())
-            .putInt(KEY_BEZEL_COLOR, style.bezelColor.toArgb())
             .putFloat(KEY_SHELL_TEXTURE, style.shellTexture)
             .putFloat(KEY_SHELL_HIGHLIGHT, style.shellHighlight)
             .putFloat(KEY_SHELL_SHADOW, style.shellShadow)
@@ -98,7 +94,6 @@ class FrameSettings @Inject constructor(
         return FrameStyle(
             shellColor = Color(prefs.getInt(KEY_SHELL_COLOR, d.shellColor.toArgb())),
             glassColor = Color(prefs.getInt(KEY_GLASS_COLOR, d.glassColor.toArgb())),
-            bezelColor = Color(prefs.getInt(KEY_BEZEL_COLOR, d.bezelColor.toArgb())),
             shellTexture = prefs.getFloat(KEY_SHELL_TEXTURE, d.shellTexture),
             shellHighlight = prefs.getFloat(KEY_SHELL_HIGHLIGHT, d.shellHighlight),
             shellShadow = prefs.getFloat(KEY_SHELL_SHADOW, d.shellShadow),
@@ -113,7 +108,6 @@ class FrameSettings @Inject constructor(
         private const val KEY_PREFIX = "frame_"
         private const val KEY_SHELL_COLOR = "frame_shell_color"
         private const val KEY_GLASS_COLOR = "frame_glass_color"
-        private const val KEY_BEZEL_COLOR = "frame_bezel_color"
         private const val KEY_SHELL_TEXTURE = "frame_shell_texture"
         private const val KEY_SHELL_HIGHLIGHT = "frame_shell_highlight"
         private const val KEY_SHELL_SHADOW = "frame_shell_shadow"
@@ -122,7 +116,7 @@ class FrameSettings @Inject constructor(
         private const val KEY_VIGNETTE = "frame_vignette"
 
         private val ALL_KEYS = listOf(
-            KEY_SHELL_COLOR, KEY_GLASS_COLOR, KEY_BEZEL_COLOR,
+            KEY_SHELL_COLOR, KEY_GLASS_COLOR,
             KEY_SHELL_TEXTURE, KEY_SHELL_HIGHLIGHT, KEY_SHELL_SHADOW,
             KEY_WELL, KEY_GLASS_HIGHLIGHT, KEY_VIGNETTE,
         )

@@ -117,7 +117,9 @@ fun MinputDialog(
                             // The card swallows its own taps so they can't fall through
                             // to the dismiss layer beneath.
                             .pointerInput(Unit) { detectTapGestures { } }
-                            .softDropShadow(cornerRadius = MinputMorphCorner)
+                            // offsetY 0: the offset shadow paints a dark band hugging the
+                            // bottom edge that reads as the surface overextending.
+                            .softDropShadow(cornerRadius = MinputMorphCorner, offsetY = 0.dp)
                             .clip(shape)
                             .background(container)
                             .border(minputBevelBorder(container, MinputMorphCorner), shape)
