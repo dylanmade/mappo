@@ -57,6 +57,8 @@ import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.requiresShizuku as outputRequiresShizuku
+import com.mappo.data.settings.TextSize
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.screen.remap.RemapBottomRow
@@ -152,6 +154,8 @@ fun RemapControlsScreen(
     onSelectProfile: (com.mappo.data.model.Profile) -> Unit = {},
     powerOn: Boolean = false,
     onPowerChange: (Boolean) -> Unit = {},
+    textSize: TextSize = TextSizeSettings.DEFAULT,
+    onTextSizeChange: (TextSize) -> Unit = {},
     optionsEntries: List<RemapOptionEntry> = emptyList(),
     // ── Profile-panel modals: the new-profile form (name + auto-switch app bindings) ──
     installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
@@ -418,6 +422,8 @@ fun RemapControlsScreen(
             onSelectProfile = onSelectProfile,
             powerOn = powerOn,
             onPowerChange = onPowerChange,
+            textSize = textSize,
+            onTextSizeChange = onTextSizeChange,
             optionsEntries = optionsEntries,
             openModal = openProfileModal,
             onOpenModal = { openProfileModal = it },

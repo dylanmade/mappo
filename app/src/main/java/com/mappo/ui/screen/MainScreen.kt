@@ -1,6 +1,8 @@
 package com.mappo.ui.screen
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -236,6 +238,7 @@ fun MainScreen(
     val viewingLayerId by viewModel.viewingLayerId.collectAsStateWithLifecycle()
     val remapEnabled by viewModel.remapEnabled.collectAsStateWithLifecycle()
     val overlayShowing by viewModel.overlayShowing.collectAsStateWithLifecycle()
+    val textSize by viewModel.textSize.collectAsStateWithLifecycle()
     // Feeds the profile panel's new-profile form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val appProfileBindings by viewModel.appProfileBindings.collectAsStateWithLifecycle()
@@ -383,6 +386,15 @@ fun MainScreen(
                     onPowerChange = { target ->
                         if (remapEnabled != target) viewModel.toggleRemap()
                         if (overlayShowing != target) viewModel.toggleOverlay()
+                    },
+                    textSize = textSize,
+                    onTextSizeChange = { size ->
+                        if (size != textSize) {
+                            viewModel.setTextSize(size)
+                            // The scale is baked into the activity's base context
+                            // (attachBaseContext) — recreate to re-wrap with the new value.
+                            context.findActivity()?.recreate()
+                        }
                     },
                     optionsEntries = listOf(
                         RemapOptionEntry("edit_overlay", "Edit overlay", Icons.Filled.Layers) {
@@ -2254,5 +2266,12 @@ internal fun BottomBar(
             modifier = Modifier.padding(end = 4.dp)
         )
     }
+}
+
+/** Unwraps a composition [Context] (possibly theme-/config-wrapped) to its hosting [Activity]. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 

@@ -21,6 +21,8 @@ import com.mappo.data.settings.ShizukuRequiredPreferences
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
+import com.mappo.data.settings.TextSize
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.settings.FrameStyle
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
@@ -67,6 +69,7 @@ class MainViewModelTest {
     private lateinit var installedAppsRepo: InstalledAppsRepository
     private lateinit var settings: AutoSwitchSettings
     private lateinit var frameSettings: FrameSettings
+    private lateinit var textSizeSettings: TextSizeSettings
     private lateinit var shizukuRequiredPrefs: ShizukuRequiredPreferences
     private lateinit var shizukuConnection: ShizukuConnection
     private lateinit var autoSwitcher: ProfileAutoSwitcher
@@ -104,6 +107,7 @@ class MainViewModelTest {
         installedAppsRepo = mockk(relaxed = true)
         settings = mockk(relaxed = true)
         frameSettings = mockk(relaxed = true)
+        textSizeSettings = mockk(relaxed = true)
         shizukuRequiredPrefs = mockk(relaxed = true)
         shizukuConnection = mockk(relaxed = true)
         autoSwitcher = mockk(relaxed = true)
@@ -132,6 +136,7 @@ class MainViewModelTest {
         every { bindingRepo.getAll() } returns allBindings
         every { layoutRepo.getLayoutsByProfile(any()) } returns allLayouts
         every { frameSettings.style } returns MutableStateFlow(FrameStyle())
+        every { textSizeSettings.size } returns MutableStateFlow(TextSize.SMALL)
         every { settings.autoSwitchEnabled } returns autoSwitchEnabled
         every { settings.autoCreateProfilesEnabled } returns autoCreateEnabled
         every { settings.ignoredPackages } returns ignoredPackages
@@ -148,6 +153,7 @@ class MainViewModelTest {
             installedAppsRepository = installedAppsRepo,
             autoSwitchSettings = settings,
             frameSettings = frameSettings,
+            textSizeSettings = textSizeSettings,
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
@@ -524,6 +530,7 @@ class MainViewModelTest {
             installedAppsRepository = installedAppsRepo,
             autoSwitchSettings = settings,
             frameSettings = frameSettings,
+            textSizeSettings = textSizeSettings,
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
@@ -934,6 +941,7 @@ class MainViewModelTest {
         installedAppsRepository = installedAppsRepo,
         autoSwitchSettings = settings,
         frameSettings = frameSettings,
+        textSizeSettings = textSizeSettings,
         shizukuRequiredPreferences = shizukuRequiredPrefs,
         shizukuConnection = shizukuConnection,
         autoSwitcher = autoSwitcher,
@@ -970,19 +978,20 @@ class MainViewModelTest {
 
     @Test
     fun toggleRemap_flipsRemapEnabled() {
-        assertFalse(subject.remapEnabled.value)
-        subject.toggleRemap()
+        // Remap defaults ON (KeyboardController seeds the flag true since the Shizuku pivot).
         assertTrue(subject.remapEnabled.value)
         subject.toggleRemap()
         assertFalse(subject.remapEnabled.value)
+        subject.toggleRemap()
+        assertTrue(subject.remapEnabled.value)
     }
 
     @Test
     fun toggleRemap_pushesNewValueToDispatcher() {
+        subject.toggleRemap() // on (default) → off
+        verify { inputDispatcher.setRemapEnabled(false) }
         subject.toggleRemap() // off → on
         verify { inputDispatcher.setRemapEnabled(true) }
-        subject.toggleRemap() // on → off
-        verify { inputDispatcher.setRemapEnabled(false) }
     }
 
     // ── Input dispatch ────────────────────────────────────────────────────────

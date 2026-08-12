@@ -23,6 +23,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.mappo.data.model.OverlayElement
 import com.mappo.data.model.OverlayGesture
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.overlay.OverlayLifecycleOwner
 import com.mappo.service.overlay.keyboard.KeyboardOverlayService
 import com.mappo.ui.screen.overlay.OverlayElementButton
@@ -130,7 +131,7 @@ class OverlayElementWindowManager @Inject constructor(
     ) {
         val owner = OverlayLifecycleOwner()
         val state: MutableState<OverlayElement> = mutableStateOf(element)
-        val composeView = ComposeView(displayContext).apply {
+        val composeView = ComposeView(TextSizeSettings.wrap(displayContext)).apply {
             setViewTreeLifecycleOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)

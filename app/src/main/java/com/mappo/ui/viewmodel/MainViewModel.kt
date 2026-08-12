@@ -40,6 +40,8 @@ import com.mappo.data.settings.ShizukuRequiredPreferences
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.FrameStyle
+import com.mappo.data.settings.TextSize
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.di.IoDispatcher
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.steam.auth.SteamCredentialStore
@@ -98,6 +100,7 @@ class MainViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val autoSwitchSettings: AutoSwitchSettings,
     private val frameSettings: FrameSettings,
+    private val textSizeSettings: TextSizeSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ProfileAutoSwitcher,
@@ -173,6 +176,9 @@ class MainViewModel @Inject constructor(
 
     /** Handheld-frame chrome styling (Frame style settings screen + HandheldFrame). */
     val frameStyle: StateFlow<FrameStyle> = frameSettings.style
+
+    /** App-level text size (options panel dropdown); applied via context wrapping. */
+    val textSize: StateFlow<TextSize> = textSizeSettings.size
 
     val appProfileBindings: StateFlow<ImmutableList<AppProfileBinding>> =
         appProfileBindingRepository.getAll()
@@ -409,6 +415,12 @@ class MainViewModel @Inject constructor(
     fun setFrameStyle(style: FrameStyle) = frameSettings.set(style)
 
     fun resetFrameStyle() = frameSettings.reset()
+
+    /**
+     * Persist the app-level text size. Takes effect via [TextSizeSettings.wrap] at each UI
+     * root — the caller recreates the activity; overlay windows pick it up on next mount.
+     */
+    fun setTextSize(size: TextSize) = textSizeSettings.set(size)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

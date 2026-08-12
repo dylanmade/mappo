@@ -24,6 +24,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.mappo.MainActivity
 import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.keyboard.KeyboardController
 import com.mappo.service.overlay.OverlayLifecycleOwner
@@ -141,7 +142,7 @@ class ToolbarOverlayManager @Inject constructor(
             return
         }
         val owner = OverlayLifecycleOwner()
-        val composeView = ComposeView(context).apply {
+        val composeView = ComposeView(TextSizeSettings.wrap(context)).apply {
             setViewTreeLifecycleOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)

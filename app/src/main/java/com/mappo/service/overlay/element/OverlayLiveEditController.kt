@@ -172,6 +172,7 @@ import com.mappo.data.model.OverlayGesture
 import com.mappo.data.model.RemapTarget
 import com.mappo.data.model.displayLabel
 import com.mappo.data.model.overlay.AppearanceLayer
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.model.overlay.CornerRadii
 import com.mappo.data.model.overlay.ElementAppearance
 import com.mappo.data.model.overlay.GradientStop
@@ -536,7 +537,7 @@ class OverlayLiveEditController @Inject constructor(
             }
         }
 
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent {
                 MappoTheme {
@@ -709,7 +710,7 @@ class OverlayLiveEditController @Inject constructor(
     private fun addHandleWindow(corner: Corner): HandleWindow {
         val owner = OverlayLifecycleOwner()
         val onTouch = makeHandleTouch(corner)
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent { MappoTheme { HandleDot(onTouch) } }
         }
@@ -725,7 +726,7 @@ class OverlayLiveEditController @Inject constructor(
 
     private fun addSelectionBoxWindow(): BoxWindow {
         val owner = OverlayLifecycleOwner()
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent { MappoTheme { SelectionBoxOutline() } }
         }
@@ -842,7 +843,7 @@ class OverlayLiveEditController @Inject constructor(
 
     private fun addScrim() {
         val owner = OverlayLifecycleOwner()
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent { MappoTheme { ScrimContent() } }
         }
@@ -1089,7 +1090,7 @@ class OverlayLiveEditController @Inject constructor(
                 else -> true
             }
         }
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent { MappoTheme { ProvideMenuRipple { PositionerContent(onTouch) } } }
         }
@@ -1316,7 +1317,7 @@ class OverlayLiveEditController @Inject constructor(
                 else -> true
             }
         }
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent { MappoTheme { ProvideMenuRipple { ToolbarContent(onTouch = onTouch) } } }
         }
@@ -1485,7 +1486,7 @@ class OverlayLiveEditController @Inject constructor(
         val owner = OverlayLifecycleOwner()
         // Dock to the side opposite the button (button center on the left half → drawer right).
         val drawerOnStart = (element.x + element.width / 2f) >= 0.5f
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent {
                 MappoTheme {
@@ -1686,7 +1687,7 @@ class OverlayLiveEditController @Inject constructor(
     private fun showExitConfirm(reForegroundOnCancel: Boolean) {
         if (confirmWindow != null) return
         val owner = OverlayLifecycleOwner()
-        val view = ComposeView(context).apply {
+        val view = ComposeView(TextSizeSettings.wrap(context)).apply {
             attachOwner(owner)
             setContent {
                 MappoTheme {
@@ -2094,7 +2095,7 @@ class OverlayLiveEditController @Inject constructor(
         builder: @Composable () -> List<MenuEntry>,
     ) {
         val owner = OverlayLifecycleOwner()
-        val composeView = ComposeView(context).apply {
+        val composeView = ComposeView(TextSizeSettings.wrap(context)).apply {
             defaultFocusHighlightEnabled = false
             setContent { MappoTheme { ProvideMenuRipple { CascadeMenuLevel(depth, builder, widthDp) } } }
         }

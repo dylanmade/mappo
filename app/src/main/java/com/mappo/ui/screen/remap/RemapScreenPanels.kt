@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.Profile
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
+import com.mappo.data.settings.TextSize
 import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputElevatedContainer
@@ -68,6 +70,7 @@ import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputPillContentPadding
+import com.mappo.ui.minput.MinputPillDropdown
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -141,6 +144,8 @@ internal fun RemapPanelOverlay(
     onSelectProfile: (Profile) -> Unit,
     powerOn: Boolean,
     onPowerChange: (Boolean) -> Unit,
+    textSize: TextSize,
+    onTextSizeChange: (TextSize) -> Unit,
     optionsEntries: List<RemapOptionEntry>,
     // ── Profile-panel modals (Add / all-profile options) ──────────────────────────
     openModal: ProfilePanelModal?,
@@ -202,6 +207,8 @@ internal fun RemapPanelOverlay(
             OptionsPanelContent(
                 powerOn = powerOn,
                 onPowerChange = onPowerChange,
+                textSize = textSize,
+                onTextSizeChange = onTextSizeChange,
                 entries = optionsEntries,
                 onClose = onClose,
                 closeFocusRequester = optionsCloseFocus,
@@ -435,6 +442,8 @@ private fun ProfilePanelContent(
 private fun OptionsPanelContent(
     powerOn: Boolean,
     onPowerChange: (Boolean) -> Unit,
+    textSize: TextSize,
+    onTextSizeChange: (TextSize) -> Unit,
     entries: List<RemapOptionEntry>,
     onClose: () -> Unit,
     closeFocusRequester: FocusRequester? = null,
@@ -460,6 +469,9 @@ private fun OptionsPanelContent(
         ) {
             item(key = "power") {
                 PowerRow(powerOn = powerOn, onPowerChange = onPowerChange)
+            }
+            item(key = "text_size") {
+                TextSizeRow(current = textSize, onPick = onTextSizeChange)
             }
             items(entries, key = { it.id }) { entry ->
                 PanelRow(onClick = { onClose(); entry.onClick() }) {
@@ -634,6 +646,43 @@ private fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
                 },
             )
         }
+    }
+}
+
+/**
+ * Text-size row: the app-level font scale, enforced independently of the OS setting (the
+ * UI is tuned against the OS "Small" scale — see [TextSize]). Same anatomy as the settings
+ * rows around it: glyph + label left, minput pill dropdown right.
+ */
+@Composable
+private fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            Icons.Filled.FormatSize,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Text size",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        MinputPillDropdown(
+            current = current,
+            options = TextSize.entries,
+            optionLabel = { it.label },
+            onPick = onPick,
+            onClickLabel = "Change text size",
+        )
     }
 }
 

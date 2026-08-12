@@ -1,5 +1,6 @@
 package com.mappo.ui.overlay
 
+import android.content.Context
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.lifecycleScope
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.overlay.element.OverlayLiveEditController
 import com.mappo.ui.theme.MappoTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -47,6 +49,11 @@ import javax.inject.Inject
 class OverlayEditActivity : ComponentActivity() {
 
     @Inject lateinit var controller: OverlayLiveEditController
+
+    override fun attachBaseContext(newBase: Context) {
+        // App-level text size (see MainActivity) — enforced on every activity window.
+        super.attachBaseContext(TextSizeSettings.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

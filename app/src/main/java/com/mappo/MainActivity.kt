@@ -1,6 +1,7 @@
 package com.mappo
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +21,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.themestudio.core.ThemeStudioProvider
 import com.themestudio.persistence.SharedPrefsThemeOverridesStorage
 import dagger.hilt.android.AndroidEntryPoint
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.InputDispatcher
 import com.mappo.ui.screen.MainScreen
 import com.mappo.ui.screen.home.HomeBackdrop
@@ -40,6 +42,13 @@ class MainActivity : ComponentActivity() {
     // the same destination after backing out re-navigates — a plain String wouldn't re-fire.
     private var pendingRoute by mutableStateOf<String?>(null)
     private var routeNonce by mutableStateOf(0)
+
+    override fun attachBaseContext(newBase: Context) {
+        // App-level text size: the whole UI is tuned against the OS "Small" font scale, so
+        // the app enforces its own scale instead of inheriting the device setting. Applied
+        // at the context so every window this activity spawns (dialogs, popups) agrees.
+        super.attachBaseContext(TextSizeSettings.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -15,6 +15,8 @@ import com.mappo.data.settings.ShizukuRequiredPreferences
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.FrameStyle
+import com.mappo.data.settings.TextSize
+import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
@@ -61,6 +63,7 @@ class MainViewModelMultiBindTest {
     private lateinit var installedAppsRepo: InstalledAppsRepository
     private lateinit var settings: AutoSwitchSettings
     private lateinit var frameSettings: FrameSettings
+    private lateinit var textSizeSettings: TextSizeSettings
     private lateinit var shizukuRequiredPrefs: ShizukuRequiredPreferences
     private lateinit var shizukuConnection: ShizukuConnection
     private lateinit var autoSwitcher: ProfileAutoSwitcher
@@ -98,6 +101,7 @@ class MainViewModelMultiBindTest {
         installedAppsRepo = mockk(relaxed = true)
         settings = mockk(relaxed = true)
         frameSettings = mockk(relaxed = true)
+        textSizeSettings = mockk(relaxed = true)
         shizukuRequiredPrefs = mockk(relaxed = true)
         shizukuConnection = mockk(relaxed = true)
         autoSwitcher = mockk(relaxed = true)
@@ -122,6 +126,7 @@ class MainViewModelMultiBindTest {
         every { bindingRepo.getAll() } returns allBindings
         every { layoutRepo.getLayoutsByProfile(any()) } returns allLayouts
         every { frameSettings.style } returns MutableStateFlow(FrameStyle())
+        every { textSizeSettings.size } returns MutableStateFlow(TextSize.SMALL)
         every { settings.autoSwitchEnabled } returns autoSwitchEnabled
         every { settings.autoCreateProfilesEnabled } returns autoCreateEnabled
         every { settings.ignoredPackages } returns ignoredPackages
@@ -139,6 +144,7 @@ class MainViewModelMultiBindTest {
             installedAppsRepository = installedAppsRepo,
             autoSwitchSettings = settings,
             frameSettings = frameSettings,
+            textSizeSettings = textSizeSettings,
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
