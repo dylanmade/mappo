@@ -122,7 +122,7 @@ fun <T> MinputGroupButton(
 }
 
 /** Gap between segments — the M3 button-group side of this component's M2/M3 mix. */
-private val GroupSegmentGap = 3.dp
+private val GroupSegmentGap = 4.dp
 
 /** Segment inner corners: perfectly square (outer ends stay full pill) — the M2 side. */
-private val GroupInnerCorner = 0.dp
+private val GroupInnerCorner = 2.dp

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
@@ -108,6 +109,20 @@ val MinputBoxStroke = 0.75.dp
 private const val BevelTopHighlightStrength = 0.10f
 private const val BevelBottomHighlightStrength = 0.05f
 
+/** Luminance floor below which the bevel strengths apply untouched — every dark plane
+ *  (well, surface 1, surface 2) sits under it, so their tuned look never shifts. */
+private const val BevelBoostLumFloor = 0.10f
+
+/** Strength multiplier gained per unit of luminance above the floor. */
+private const val BevelBoostPerLum = 6f
+
+/** Nudging a fill toward white produces a shrinking delta as the fill lightens (the white
+ *  headroom collapses), and light colors need a LARGER absolute delta to read at all — so
+ *  on a light fill (the highlight plane) the stock strengths render an invisible bevel.
+ *  Scale strength up with luminance to keep the stroke equally legible on every plane. */
+private fun bevelStrengthBoost(base: Color): Float =
+    1f + BevelBoostPerLum * (base.luminance() - BevelBoostLumFloor).coerceAtLeast(0f)
+
 /** Where along the corner arc the bevel finishes fading: 1−cos(45°) of the radius — the
  *  point where the outline's tangent passes 45° and "top" geometrically becomes "side". */
 private const val BevelFadeOfRadius = 0.9f
@@ -124,11 +139,12 @@ private const val BevelFadeOfRadius = 0.9f
 @Composable
 fun minputBevelBorder(base: Color, cornerRadius: Dp): BorderStroke {
     val fadePx = with(LocalDensity.current) { (cornerRadius * BevelFadeOfRadius).toPx() }
+    val boost = bevelStrengthBoost(base)
     return BorderStroke(
         MinputBoxStroke,
         BevelBrush(
-            topHighlight = lerp(base, Color.White, BevelTopHighlightStrength),
-            bottomHighlight = lerp(base, Color.White, BevelBottomHighlightStrength),
+            topHighlight = lerp(base, Color.White, (BevelTopHighlightStrength * boost).coerceAtMost(1f)),
+            bottomHighlight = lerp(base, Color.White, (BevelBottomHighlightStrength * boost).coerceAtMost(1f)),
             fadePx = fadePx,
         ),
     )
