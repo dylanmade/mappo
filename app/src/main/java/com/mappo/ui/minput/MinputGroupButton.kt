@@ -85,7 +85,11 @@ fun <T> MinputGroupButton(
             Surface(
                 shape = shape,
                 color = fill,
-                border = minputBevelBorder(fill, outerCorner),
+                border = minputBevelBorder(
+                    fill,
+                    cornerRadius = if (i == 0) outerCorner else GroupInnerCorner,
+                    endCornerRadius = if (i == options.lastIndex) outerCorner else GroupInnerCorner,
+                ),
                 modifier = Modifier
                     .weight(1f)
                     .minputInteractiveMotion(interaction)

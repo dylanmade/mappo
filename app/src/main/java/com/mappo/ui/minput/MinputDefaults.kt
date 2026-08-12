@@ -1,5 +1,8 @@
 package com.mappo.ui.minput
 
+import android.graphics.ComposeShader
+import android.graphics.PorterDuff
+import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.material3.MaterialTheme
@@ -15,8 +18,10 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -127,6 +132,11 @@ private fun bevelStrengthBoost(base: Color): Float =
  *  point where the outline's tangent passes 45° and "top" geometrically becomes "side". */
 private const val BevelFadeOfRadius = 0.9f
 
+/** Fade run for a squared(-ish) corner, applied as a floor on the 45°-point run above: a
+ *  physically square corner sheds the top face's light almost immediately, so its side
+ *  highlight dies within this short distance instead of a rounded arc's long travel. */
+private val BevelSquareCornerFade = 2.dp
+
 /**
  * The bevel border on buttons + cards (replaced the old solid accent outline): a very faint
  * thin top and bottom highlight, each the base fill nudged toward white, fading
@@ -135,17 +145,33 @@ private const val BevelFadeOfRadius = 0.9f
  * ends just before the top border becomes the side border; that needs the real component
  * size, hence a [ShaderBrush] with per-size stops rather than fraction-based gradient stops
  * (which overshot the corners on anything taller than a pill).
+ *
+ * Sides may round differently ([cornerRadius] = start side, [endCornerRadius] = end side —
+ * a group-button end segment mixes a pill end with squared inner edges): each side edge
+ * fades over ITS corner's run, so a squared edge darkens much sooner than a rounded one
+ * (floored at [BevelSquareCornerFade] rather than collapsing to zero).
  */
 @Composable
-fun minputBevelBorder(base: Color, cornerRadius: Dp): BorderStroke {
-    val fadePx = with(LocalDensity.current) { (cornerRadius * BevelFadeOfRadius).toPx() }
+fun minputBevelBorder(
+    base: Color,
+    cornerRadius: Dp,
+    endCornerRadius: Dp = cornerRadius,
+): BorderStroke {
+    val density = LocalDensity.current
+    fun fadePx(radius: Dp): Float = with(density) {
+        maxOf((radius * BevelFadeOfRadius).toPx(), BevelSquareCornerFade.toPx())
+    }
+    val startFadePx = fadePx(cornerRadius)
+    val endFadePx = fadePx(endCornerRadius)
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val boost = bevelStrengthBoost(base)
     return BorderStroke(
         MinputBoxStroke,
         BevelBrush(
             topHighlight = lerp(base, Color.White, (BevelTopHighlightStrength * boost).coerceAtMost(1f)),
             bottomHighlight = lerp(base, Color.White, (BevelBottomHighlightStrength * boost).coerceAtMost(1f)),
-            fadePx = fadePx,
+            fadeLeftPx = if (rtl) endFadePx else startFadePx,
+            fadeRightPx = if (rtl) startFadePx else endFadePx,
         ),
     )
 }
@@ -159,9 +185,27 @@ fun minputBevelBorder(base: Color, cornerRadius: Dp): BorderStroke {
 private class BevelBrush(
     private val topHighlight: Color,
     private val bottomHighlight: Color,
-    private val fadePx: Float,
+    private val fadeLeftPx: Float,
+    private val fadeRightPx: Float,
 ) : ShaderBrush() {
     override fun createShader(size: Size): Shader {
+        val left = verticalShader(size, fadeLeftPx)
+        // Nested ComposeShaders need API 28 on a hardware canvas; 26/27 degrade to the
+        // uniform single-gradient bevel.
+        if (fadeLeftPx == fadeRightPx || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return left
+        val right = verticalShader(size, fadeRightPx)
+        // Positional pick — left×(1−x/w) + right×(x/w). The two verticals agree wherever
+        // the stroke runs horizontally (solid top/bottom rows), so the crossfade is only
+        // ever visible at the side strokes, where the ramps sit at ~0/~1. Transparent-black
+        // is fine here: DST_IN reads only the mask's alpha.
+        return ComposeShader(
+            ComposeShader(left, horizontalAlphaRamp(size, leftOpaque = true), PorterDuff.Mode.DST_IN),
+            ComposeShader(right, horizontalAlphaRamp(size, leftOpaque = false), PorterDuff.Mode.DST_IN),
+            PorterDuff.Mode.ADD,
+        )
+    }
+
+    private fun verticalShader(size: Size, fadePx: Float): Shader {
         val fade = (fadePx / size.height).coerceIn(0.01f, 0.49f)
         return LinearGradientShader(
             from = Offset.Zero,
@@ -171,11 +215,25 @@ private class BevelBrush(
         )
     }
 
-    override fun equals(other: Any?): Boolean = other is BevelBrush &&
-        other.topHighlight == topHighlight && other.bottomHighlight == bottomHighlight && other.fadePx == fadePx
+    private fun horizontalAlphaRamp(size: Size, leftOpaque: Boolean): Shader =
+        LinearGradientShader(
+            from = Offset.Zero,
+            to = Offset(size.width, 0f),
+            colors = if (leftOpaque) listOf(Color.Black, Color.Transparent)
+            else listOf(Color.Transparent, Color.Black),
+        )
 
-    override fun hashCode(): Int =
-        31 * (31 * topHighlight.hashCode() + bottomHighlight.hashCode()) + fadePx.hashCode()
+    override fun equals(other: Any?): Boolean = other is BevelBrush &&
+        other.topHighlight == topHighlight && other.bottomHighlight == bottomHighlight &&
+        other.fadeLeftPx == fadeLeftPx && other.fadeRightPx == fadeRightPx
+
+    override fun hashCode(): Int {
+        var h = topHighlight.hashCode()
+        h = 31 * h + bottomHighlight.hashCode()
+        h = 31 * h + fadeLeftPx.hashCode()
+        h = 31 * h + fadeRightPx.hashCode()
+        return h
+    }
 }
 
 /**
