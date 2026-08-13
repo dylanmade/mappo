@@ -135,7 +135,7 @@ private const val BevelFadeOfRadius = 0.9f
 /** Fade run for a squared(-ish) corner, applied as a floor on the 45°-point run above: a
  *  physically square corner sheds the top face's light almost immediately, so its side
  *  highlight dies within this short distance instead of a rounded arc's long travel. */
-private val BevelSquareCornerFade = 2.dp
+private val BevelSquareCornerFade = 1.dp
 
 /**
  * The bevel border on buttons + cards (replaced the old solid accent outline): a very faint

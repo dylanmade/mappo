@@ -66,7 +66,15 @@ import com.mappo.ui.mappoKeyboardOptions
  * @param leadingIcon optional glyph at the pill's start (e.g. Search).
  * @param clearable shows a clear (×) affordance while the field holds text; tapping it
  *   empties the field via [onValueChange] without opening the editor.
- * @param editTitle overline title of the editor; defaults to [placeholder].
+ * @param editTitle overline title of the editor; defaults to [placeholder]. Unused with
+ *   [inlineEdit].
+ * @param inlineEdit alternative editing UX for fields the caller KNOWS sit high on screen
+ *   (top-of-screen filters, dropdown search): activation swaps the pill in place for a live
+ *   [MinputTextWell] instead of opening the modal editor, and the IME spawns as an overlay
+ *   above all app content — nothing dodges it, so only use this where the keyboard cannot
+ *   cover the field. Keystrokes commit live through [onValueChange] (filter semantics — no
+ *   Save/Cancel draft); IME Done or focus loss ends editing. Activation stays tap-to-edit,
+ *   so the resting pill remains an ordinary d-pad focus stop.
  */
 @Composable
 fun MinputTextField(
@@ -78,11 +86,25 @@ fun MinputTextField(
     leadingIcon: ImageVector? = null,
     clearable: Boolean = false,
     editTitle: String? = null,
+    inlineEdit: Boolean = false,
 ) {
     var editing by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(50)
     val interaction = remember { MutableInteractionSource() }
+
+    if (inlineEdit && editing) {
+        MinputTextFieldInlineWell(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = placeholder,
+            leadingIcon = leadingIcon,
+            clearable = clearable,
+            onDone = { editing = false },
+            modifier = modifier,
+        )
+        return
+    }
 
     Surface(
         shape = shape,
@@ -160,6 +182,49 @@ fun MinputTextField(
 }
 
 /**
+ * The [inlineEdit][MinputTextField] editing state: the pill swapped in place for a live
+ * well — same shape, fill, and decor, plus the focus ring — bound straight to the caller's
+ * [value]/[onValueChange]. Seated as it appears (activating the pill IS the typing intent —
+ * the same sanctioned auto-focus exception as the edit dialog), which spawns the IME as an
+ * overlay above all app content. Editing ends on IME Done or when focus leaves the well
+ * (tap elsewhere); the value is already committed keystroke-by-keystroke.
+ */
+@Composable
+private fun MinputTextFieldInlineWell(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String?,
+    leadingIcon: ImageVector?,
+    clearable: Boolean,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val wellFocus = remember { FocusRequester() }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    // Exit only on LOSING focus — the state starts unfocused while the seat request lands.
+    var hadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { runCatching { wellFocus.requestFocus() } }
+    LaunchedEffect(focused) {
+        if (focused) hadFocus = true else if (hadFocus) onDone()
+    }
+    MinputTextWell(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = placeholder,
+        leadingIcon = leadingIcon,
+        onClear = if (clearable && value.isNotEmpty()) {
+            { onValueChange("") }
+        } else null,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onDone() }),
+        interactionSource = interaction,
+        focusRequester = wellFocus,
+        modifier = modifier,
+    )
+}
+
+/**
  * The field's editor: a [MinputDialog] (overline title, text well, Cancel/Save). A dialog
  * WINDOW on purpose — centering, dim, back / outside-tap dismissal, and floating above the
  * soft keyboard are all stock platform behavior, exactly like the label field's original
@@ -223,7 +288,11 @@ private fun MinputTextFieldEditDialog(
  * live [BasicTextField]. Not a public primitive — inline fields capture d-pad focus and
  * break gamepad navigation, so app surfaces use the tap-to-edit [MinputTextField]. This
  * exists for minput-internal editing contexts where inline typing is the point and the
- * keyboard can't cover the field: the edit dialog above, [MinputSlider]'s value field.
+ * keyboard can't cover the field: the edit dialog above, the field's inline-edit state,
+ * [MinputSlider]'s value field.
+ *
+ * @param leadingIcon optional glyph at the well's start, mirroring the display pill's.
+ * @param onClear when non-null, shows the clear (×) glyph, which invokes it.
  */
 @Composable
 internal fun MinputTextWell(
@@ -232,6 +301,8 @@ internal fun MinputTextWell(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     placeholder: String? = null,
+    leadingIcon: ImageVector? = null,
+    onClear: (() -> Unit)? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
@@ -278,6 +349,15 @@ internal fun MinputTextWell(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(horizontal = MinputPillContentPadding),
                 ) {
+                    if (leadingIcon != null) {
+                        Icon(
+                            leadingIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(MinputPillIconSize),
+                            tint = colors.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(MinputGlyphLabelGap))
+                    }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty() && placeholder != null) {
                             Text(
@@ -288,6 +368,25 @@ internal fun MinputTextWell(
                             )
                         }
                         innerTextField()
+                    }
+                    if (onClear != null) {
+                        Spacer(Modifier.width(MinputGlyphLabelGap))
+                        // Same sub-touch-target × as the display pill's — it has to live
+                        // inside the 24dp well.
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Clear text",
+                            tint = colors.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(MinputPillIconSize)
+                                .clip(CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = minputIndication(),
+                                    role = Role.Button,
+                                    onClick = onClear,
+                                ),
+                        )
                     }
                 }
             },

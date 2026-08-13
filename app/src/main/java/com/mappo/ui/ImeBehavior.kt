@@ -27,11 +27,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
  * [Modifier.imeActivation] together on every inline text field.
  *
  * NOTE the primary defense is structural, not these helpers: app surfaces use the tap-to-edit
- * `MinputTextField` (a pill that opens an edit modal), so no inline field sits in the gamepad
- * navigation path at all. The value-based `BasicTextField` overload documents that it IGNORES
+ * `MinputTextField` (a pill that opens an edit modal — or, with `inlineEdit`, swaps in place
+ * for a live well), so no inline field sits in the gamepad navigation path at rest. The
+ * value-based `BasicTextField` overload documents that it IGNORES
  * [KeyboardOptions.showKeyboardOnFocus], so [mappoKeyboardOptions] is inert on the inline
- * wells that remain — those live only inside editing modals, where the keyboard appearing on
- * focus is acceptable.
+ * wells that remain — those appear only after an explicit edit activation (modals, the
+ * inline-edit state), where the keyboard appearing on focus is acceptable.
  */
 @Composable
 fun mappoKeyboardOptions(base: KeyboardOptions = KeyboardOptions.Default): KeyboardOptions {
