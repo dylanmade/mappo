@@ -34,6 +34,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputBarHeight
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.minputBevelBorder
@@ -71,8 +73,8 @@ internal fun RemapTopBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(TopBarHeight)
-                    .padding(horizontal = BarEdgePadding),
+                    .height(MinputBarHeight)
+                    .padding(horizontal = MinputBarEdgePadding),
             ) {
                 ProfileContextButton(
                     appLabel = appLabel,
@@ -192,12 +194,6 @@ private fun ProfileContextButton(
         }
     }
 }
-
-// Bar = context button height + a whisker of air above and below.
-private val TopBarHeight = 38.dp
-
-/** Horizontal inset at the bar's edges. */
-private val BarEdgePadding = 6.dp
 
 /** Fixed footprint of the context button — load-bearing for the icon's exact centering. */
 private val ProfileButtonWidth = 280.dp

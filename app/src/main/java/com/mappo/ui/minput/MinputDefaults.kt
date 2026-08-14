@@ -300,3 +300,13 @@ val MinputPanelDividerContentGap = 6.dp
  *  (button − glyph)/2 inside an invisible circular tap target), so a bare title at the same
  *  padding looks flush-left by comparison — this nudge optically matches the two sides. */
 val MinputPanelTitleInset = (MinputIconButtonSize - MinputIconButtonIconSize) / 2
+
+// ── App-bar anatomy ──────────────────────────────────────────────────────────────────────
+// The fixed edge bars of the screen chrome (the remap top bar, the home frame's bottom bar):
+// a surfaceContainer strip separated from content by a divider. Both bars pull these values.
+
+/** Bar height — the context button's height plus a whisker of air above and below. */
+val MinputBarHeight = 38.dp
+
+/** Horizontal inset at a bar's edges. */
+val MinputBarEdgePadding = 6.dp

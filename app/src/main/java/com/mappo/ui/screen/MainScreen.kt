@@ -49,7 +49,6 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SecurityUpdateGood
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -147,8 +146,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mappo.ui.MappoGesture
 import com.mappo.ui.nav.MappoRoute
-import com.mappo.ui.screen.home.HandheldFrame
-import com.mappo.ui.screen.home.HandheldFrameSlideMillis
+import com.mappo.ui.screen.home.ScreenFrame
+import com.mappo.ui.screen.home.ScreenFrameFadeMillis
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
@@ -248,9 +247,9 @@ fun MainScreen(
     val shizukuReady by viewModel.shizukuReady.collectAsStateWithLifecycle()
     val shizukuState by viewModel.shizukuState.collectAsStateWithLifecycle()
 
-    // Home is the handheld-device frame floating over the apps underneath (translucent window),
-    // shown on launch. `frameVisible` drives its slide-up entrance / slide-down exit; dismissing
-    // it on MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
+    // Home is the screen frame floating over the apps underneath (translucent window), shown
+    // on launch. `frameVisible` drives its fade-in entrance / fade-out exit; dismissing it on
+    // MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
     var frameVisible by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
@@ -277,11 +276,11 @@ fun MainScreen(
     val activity = context as? Activity
     val currentIsHomeRoute by rememberUpdatedState(isHomeRoute)
     // Dismissing the home means "leave Mappo": background the task so touches fall through to
-    // the app underneath. The delay lets the frame's slide-down exit play before the task
+    // the app underneath. The delay lets the frame's fade-out exit play before the task
     // disappears.
     LaunchedEffect(frameVisible) {
         if (!frameVisible && currentIsHomeRoute) {
-            delay(HandheldFrameSlideMillis + 60L)
+            delay(ScreenFrameFadeMillis + 60L)
             activity?.moveTaskToBack(true)
         }
     }
@@ -292,14 +291,14 @@ fun MainScreen(
         if (isHomeRoute) frameVisible = true
     }
     // Select+A chord while Mappo is foreground (see InputAccessibilityService): toggle the
-    // frame in place. Dismissing slides it down and backgrounds the task — directly here for
+    // frame in place. Dismissing fades it out and backgrounds the task — directly here for
     // sub-routes; the frameVisible effect above covers MAIN.
     LaunchedEffect(Unit) {
         MainActivity.homeToggleRequests.collect {
             if (frameVisible) {
                 frameVisible = false
                 if (!currentIsHomeRoute) {
-                    delay(HandheldFrameSlideMillis + 60L)
+                    delay(ScreenFrameFadeMillis + 60L)
                     activity?.moveTaskToBack(true)
                 }
             } else {
@@ -416,9 +415,9 @@ fun MainScreen(
                         RemapOptionEntry("theme_studio", "Theme studio", Icons.Filled.Palette) {
                             navController.navigate(MappoRoute.THEME_STUDIO)
                         },
-                        RemapOptionEntry("frame_style", "Frame style", Icons.Filled.Smartphone) {
-                            navController.navigate(MappoRoute.FRAME_STYLE)
-                        },
+                        // "Frame style" entry pulled 2026-08-14 with the handheld frame tabled
+                        // (ScreenFrame mounts instead); the route + FrameSettingsScreen survive
+                        // for the frame's possible return.
                         RemapOptionEntry("shizuku_setup", "Shizuku setup", Icons.Filled.SecurityUpdateGood) {
                             navController.navigate(MappoRoute.SHIZUKU_SETUP)
                         },
@@ -946,15 +945,15 @@ fun MainScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // ── The handheld device frame: home chrome + the 1:1 screen canvas hosting every
-        // route. Slides up on launch; on MAIN a tap on the scrim (or Back / B) slides it down
-        // and backgrounds the task (see the frameVisible effect above). ──
-        val frameStyle by viewModel.frameStyle.collectAsStateWithLifecycle()
-        HandheldFrame(
+        // ── The screen frame: the canvas hosting every route (compact 1:1 preview by
+        // default, expandable to the full display) + the wordmark bottom bar. Fades in on
+        // launch; on MAIN a tap on the scrim (or Back / B) fades it out and backgrounds the
+        // task (see the frameVisible effect above). The skeuomorphic HandheldFrame is tabled,
+        // not deleted — its mount point is the one thing that changed. ──
+        ScreenFrame(
             shown = frameVisible,
             dismissEnabled = isHomeRoute,
             onDismissRequest = { frameVisible = false },
-            style = frameStyle,
             screenContent = screenContent,
         )
 
