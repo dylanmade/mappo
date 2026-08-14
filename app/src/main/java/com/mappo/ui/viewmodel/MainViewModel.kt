@@ -47,6 +47,7 @@ import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.steam.auth.SteamCredentialStore
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
+import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.CompiledConfig
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.input.toCompiled
@@ -76,6 +77,7 @@ import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -105,6 +107,7 @@ class MainViewModel @Inject constructor(
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ProfileAutoSwitcher,
     private val foregroundAppFilter: ForegroundAppFilter,
+    foregroundAppMonitor: ForegroundAppMonitor,
     private val keyboardTemplateRepository: KeyboardTemplateRepository,
     private val inputDispatcher: InputDispatcher,
     private val overlayPresenter: OverlayPresenter,
@@ -122,6 +125,24 @@ class MainViewModel @Inject constructor(
     val steamAccountName: StateFlow<String?> = steamCredentialStore.credentials
         .map { it?.accountName }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The most recent foreground app OTHER than Mappo (the auto-switch detection feed),
+     * label resolved off the UI thread. Drives the top-bar application/layout button and
+     * the layout panel's application filter default.
+     */
+    val currentApp: StateFlow<InstalledAppsRepository.InstalledApp?> =
+        foregroundAppMonitor.currentPackage
+            .map { pkg ->
+                pkg?.let {
+                    InstalledAppsRepository.InstalledApp(
+                        packageName = it,
+                        label = foregroundAppFilter.appLabel(it),
+                    )
+                }
+            }
+            .flowOn(ioDispatcher)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // Source of truth lives in KeyboardController (Brick 2 of single-screen refactor).
     // Re-exposed here so the activity surface — MainScreen, tests, drawer wiring —

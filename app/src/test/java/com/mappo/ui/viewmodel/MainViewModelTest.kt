@@ -26,6 +26,7 @@ import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.settings.FrameStyle
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
+import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.keyboard.KeyboardController
 import com.mappo.service.overlay.element.OverlayLiveEditController
@@ -74,6 +75,7 @@ class MainViewModelTest {
     private lateinit var shizukuConnection: ShizukuConnection
     private lateinit var autoSwitcher: ProfileAutoSwitcher
     private lateinit var filter: ForegroundAppFilter
+    private lateinit var foregroundAppMonitor: ForegroundAppMonitor
     private lateinit var templateRepo: KeyboardTemplateRepository
     private lateinit var inputDispatcher: InputDispatcher
     private lateinit var overlayPresenter: OverlayPresenter
@@ -112,6 +114,8 @@ class MainViewModelTest {
         shizukuConnection = mockk(relaxed = true)
         autoSwitcher = mockk(relaxed = true)
         filter = mockk(relaxed = true)
+        foregroundAppMonitor = mockk(relaxed = true)
+        every { foregroundAppMonitor.currentPackage } returns MutableStateFlow(null)
         templateRepo = mockk(relaxed = true)
         inputDispatcher = mockk(relaxed = true)
         overlayPresenter = mockk(relaxed = true)
@@ -158,6 +162,7 @@ class MainViewModelTest {
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
             foregroundAppFilter = filter,
+            foregroundAppMonitor = foregroundAppMonitor,
             keyboardTemplateRepository = templateRepo,
             inputDispatcher = inputDispatcher,
             overlayPresenter = overlayPresenter,
@@ -535,6 +540,7 @@ class MainViewModelTest {
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
             foregroundAppFilter = filter,
+            foregroundAppMonitor = foregroundAppMonitor,
             keyboardTemplateRepository = templateRepo,
             inputDispatcher = inputDispatcher,
             overlayPresenter = overlayPresenter,
@@ -946,6 +952,7 @@ class MainViewModelTest {
         shizukuConnection = shizukuConnection,
         autoSwitcher = autoSwitcher,
         foregroundAppFilter = filter,
+        foregroundAppMonitor = foregroundAppMonitor,
         keyboardTemplateRepository = templateRepo,
         inputDispatcher = inputDispatcher,
         overlayPresenter = overlayPresenter,

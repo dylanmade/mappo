@@ -241,6 +241,8 @@ fun MainScreen(
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
     // Feeds the profile panel's new-profile form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
+    // The detected foreground game/app — top-bar context button + layout filter default.
+    val currentApp by viewModel.currentApp.collectAsStateWithLifecycle()
     val appProfileBindings by viewModel.appProfileBindings.collectAsStateWithLifecycle()
     val shizukuRequiredAcked by viewModel.shizukuRequiredAcknowledged.collectAsStateWithLifecycle()
     val shizukuReady by viewModel.shizukuReady.collectAsStateWithLifecycle()
@@ -365,6 +367,7 @@ fun MainScreen(
                 RemapControlsScreen(
                     config = activeControllerConfig,
                     profileName = activeProfile?.name,
+                    currentApp = currentApp,
                     // ── Profile panel (opened by the top bar's Select pill / physical Select) ──
                     profiles = profiles,
                     activeProfileId = activeProfile?.id,

@@ -1,130 +1,98 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mappo.R
-import com.mappo.data.model.steam.ControllerConfig
-import com.mappo.ui.component.ReorderableTabBar
-import com.mappo.ui.component.TabBarItem
+import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputPillButton
-import kotlinx.collections.immutable.toImmutableList
+import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.minputIndication
+import com.mappo.ui.minput.minputInteractiveMotion
+import com.mappo.ui.minput.minputMiniTextStyle
+import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
- * Actions the scope tab bar can request on a set/layer tab (long-press menu picks). The screen
- * owns the actual dialogs; these just open them for the given id.
- */
-internal class RemapScopeTabActions(
-    val onRenameSet: (setId: Long) -> Unit,
-    val onDuplicateSet: (setId: Long) -> Unit,
-    val onDeleteSet: (setId: Long) -> Unit,
-    val onAddLayer: (parentSetId: Long) -> Unit,
-    val onRenameLayer: (layerId: Long) -> Unit,
-    val onDuplicateLayer: (layerId: Long) -> Unit,
-    val onDeleteLayer: (layerId: Long) -> Unit,
-    val onAddSet: () -> Unit,
-)
-
-/**
- * The rebuilt Remap Controls top bar: profile pill (physical Select's glyph — the button that
- * summons the profile view) in the top-left corner, options pill (Start's glyph) in the
- * top-right, and between them one tab per action set, each set's layers following it as
- * subordinate tabs (outlined Layers glyph). The tab cluster centers vertically AND
- * horizontally, with the scroll chevrons flanking the GROUP of tabs (hugTabs) rather than
- * pinning to the bar edges. Tab behavior (tap / long-press menu / chevron scroll) comes from
- * the shared [ReorderableTabBar] extracted from the virtual-keyboard tab UI. Drag-to-reorder
- * is wired off until a set-reordering repository op exists (the tab order IS the boot-set
- * order, so this is the planned home for that affordance). [RemapScopeTabActions.onAddSet]
- * is currently unreachable pending a new home.
+ * The Remap Controls top bar (2026-08-13 rework): the action-set tabs moved down into the
+ * content view (the set row above the group boxes — see [RemapSimpleView]), and the whole
+ * flexible middle now belongs to ONE large centered summon for the layout (profile) panel —
+ * the current application and layout context at a glance: app title (right-aligned, overline
+ * label) | app icon (dead center) | layout name (left-aligned, overline label). The options
+ * pill keeps the trailing corner (physical Start's glyph); physical Select still summons the
+ * layout panel.
  */
 @Composable
 internal fun RemapTopBar(
-    config: ControllerConfig?,
-    viewingSetId: Long?,
-    viewingLayerId: Long?,
-    onSelectActionSet: (Long) -> Unit,
-    onSelectLayer: (Long?) -> Unit,
-    actions: RemapScopeTabActions,
-    profileLabel: String?,
+    appLabel: String?,
+    appPackage: String?,
+    layoutLabel: String?,
     onOpenProfile: () -> Unit,
     onOpenOptions: () -> Unit,
     modifier: Modifier = Modifier,
-    // Focus-return targets: when a corner pill's panel closes, controller focus hands back
-    // to the pill that summoned it (the editor's return-to-home-box pattern).
+    // Focus-return targets: when a summoned panel closes, controller focus hands back to
+    // the control that summoned it (the editor's return-to-home-box pattern).
     profileFocusRequester: FocusRequester? = null,
     optionsFocusRequester: FocusRequester? = null,
 ) {
     // surfaceContainer — app-bar plane, one step up from the screen surface.
     Column(modifier = modifier) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TopBarHeight)
                     .padding(horizontal = BarEdgePadding),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Profile: the active profile's name behind the physical button that opens it.
-                // Width-capped — profile names are user-typed (NameableText doctrine; the
-                // pill's own single-line ellipsis does the truncation).
-                MinputPillButton(
-                    text = profileLabel ?: "Profile",
+                ProfileContextButton(
+                    appLabel = appLabel,
+                    appPackage = appPackage,
+                    layoutLabel = layoutLabel,
                     onClick = onOpenProfile,
-                    leadingIcon = painterResource(R.drawable.xbox_button_view),
                     modifier = Modifier
-                        .widthIn(max = CornerPillMaxWidth)
+                        .align(Alignment.Center)
                         .then(
                             if (profileFocusRequester != null) {
                                 Modifier.focusRequester(profileFocusRequester)
                             } else Modifier,
                         ),
                 )
-                // Tab cluster centers in the remaining span between the two corner pills.
-                Box(
-                    modifier = Modifier.weight(1f).padding(horizontal = BarEdgePadding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    ScopeTabs(
-                        config = config,
-                        viewingSetId = viewingSetId,
-                        viewingLayerId = viewingLayerId,
-                        onSelectActionSet = onSelectActionSet,
-                        onSelectLayer = onSelectLayer,
-                        actions = actions,
-                    )
-                }
                 MinputPillButton(
                     text = "Options",
                     onClick = onOpenOptions,
                     leadingIcon = painterResource(R.drawable.xbox_button_menu),
                     modifier = Modifier
+                        .align(Alignment.CenterEnd)
                         .then(
                             if (optionsFocusRequester != null) {
                                 Modifier.focusRequester(optionsFocusRequester)
@@ -137,135 +105,106 @@ internal fun RemapTopBar(
     }
 }
 
-private const val SET_PREFIX = "set:"
-private const val LAYER_PREFIX = "layer:"
-
+/**
+ * The layout-panel summon: a double-height pill at a FIXED width — the fixed footprint plus
+ * the equal-weight text flanks are what pin the app icon to the exact horizontal center
+ * regardless of how long either name runs (both truncate with ellipses). Application block
+ * right-aligns toward the icon, layout block left-aligns away from it, each under its own
+ * overline label.
+ */
 @Composable
-private fun ScopeTabs(
-    config: ControllerConfig?,
-    viewingSetId: Long?,
-    viewingLayerId: Long?,
-    onSelectActionSet: (Long) -> Unit,
-    onSelectLayer: (Long?) -> Unit,
-    actions: RemapScopeTabActions,
+private fun ProfileContextButton(
+    appLabel: String?,
+    appPackage: String?,
+    layoutLabel: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val sets = config?.actionSets.orEmpty()
-    val tabs = remember(config) {
-        buildList {
-            sets.forEach { setGraph ->
-                add(
-                    TabBarItem(
-                        key = SET_PREFIX + setGraph.actionSet.id,
-                        label = setGraph.actionSet.title,
-                        // Filled gamepad = a set with NO inheritance; when the Inherit
-                        // feature wires up, inheriting sets switch to the OUTLINED gamepad
-                        // (Icons.Outlined.SportsEsports) and the strip's Inherit pill mirrors
-                        // the inherited tab's icon + label. No inheritance exists in the data
-                        // model yet, so every set reads filled today.
-                        leadingIcon = Icons.Filled.SportsEsports,
-                    ),
+    val container = minputBoxContainer()
+    val shape = RoundedCornerShape(50)
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        shape = shape,
+        color = container,
+        border = minputBevelBorder(container, ProfileButtonHeight / 2),
+        modifier = modifier
+            .minputInteractiveMotion(interaction)
+            .width(ProfileButtonWidth)
+            .height(ProfileButtonHeight)
+            .clip(shape)
+            .clickable(
+                interactionSource = interaction,
+                indication = minputIndication(),
+                role = Role.Button,
+                onClickLabel = "Open layouts",
+                onClick = onClick,
+            ),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = ProfileButtonContentPadding),
+        ) {
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "Application".uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
-                setGraph.layers.forEach { layerGraph ->
-                    add(
-                        TabBarItem(
-                            key = LAYER_PREFIX + layerGraph.layer.id,
-                            label = layerGraph.layer.title,
-                            leadingIcon = Icons.Outlined.Layers,
-                            dimmed = true,
-                        ),
-                    )
-                }
+                Text(
+                    text = appLabel ?: "None detected",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-        }.toImmutableList()
-    }
-    val selectedKey = when {
-        viewingLayerId != null -> LAYER_PREFIX + viewingLayerId
-        viewingSetId != null -> SET_PREFIX + viewingSetId
-        else -> tabs.firstOrNull()?.key
-    }
-    // Menu state is local — transient chrome, no need to hoist to the ViewModel here.
-    var menuFor by remember { mutableStateOf<String?>(null) }
-
-    ReorderableTabBar(
-        tabs = tabs,
-        selectedKey = selectedKey,
-        contextMenuFor = menuFor,
-        hugTabs = true,
-        onSelect = { key ->
-            when {
-                key.startsWith(SET_PREFIX) -> {
-                    onSelectActionSet(key.removePrefix(SET_PREFIX).toLong())
-                    onSelectLayer(null)
-                }
-                key.startsWith(LAYER_PREFIX) -> {
-                    val layerId = key.removePrefix(LAYER_PREFIX).toLong()
-                    val parentSet = sets.firstOrNull { s -> s.layers.any { it.layer.id == layerId } }
-                    parentSet?.let { onSelectActionSet(it.actionSet.id) }
-                    onSelectLayer(layerId)
-                }
+            Spacer(Modifier.width(MinputGlyphLabelGap))
+            val icon = rememberAppIconPainter(appPackage)
+            if (icon != null) {
+                Image(icon, contentDescription = null, modifier = Modifier.size(ProfileButtonIconSize))
+            } else {
+                Icon(
+                    Icons.Filled.Apps,
+                    contentDescription = null,
+                    modifier = Modifier.size(ProfileButtonIconSize),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        },
-        onLongPressMenu = { menuFor = it },
-        onReorder = { _, _ -> /* pending a set-reorder repository op */ },
-        onCloseMenu = { menuFor = null },
-        reorderEnabled = false,
-        tabHeight = ScopeTabHeight,
-        dense = true,
-    ) { tab ->
-        val close = { menuFor = null }
-        if (tab.key.startsWith(SET_PREFIX)) {
-            val setId = tab.key.removePrefix(SET_PREFIX).toLong()
-            DropdownMenuItem(
-                text = { Text("Rename set") },
-                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                onClick = { close(); actions.onRenameSet(setId) },
-            )
-            DropdownMenuItem(
-                text = { Text("Duplicate set") },
-                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
-                onClick = { close(); actions.onDuplicateSet(setId) },
-            )
-            DropdownMenuItem(
-                text = { Text("Add layer") },
-                leadingIcon = { Icon(Icons.Outlined.Layers, contentDescription = null) },
-                onClick = { close(); actions.onAddLayer(setId) },
-            )
-            DropdownMenuItem(
-                text = { Text("Delete set", color = MaterialTheme.colorScheme.error) },
-                leadingIcon = {
-                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                },
-                onClick = { close(); actions.onDeleteSet(setId) },
-            )
-        } else {
-            val layerId = tab.key.removePrefix(LAYER_PREFIX).toLong()
-            DropdownMenuItem(
-                text = { Text("Rename layer") },
-                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                onClick = { close(); actions.onRenameLayer(layerId) },
-            )
-            DropdownMenuItem(
-                text = { Text("Duplicate layer") },
-                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
-                onClick = { close(); actions.onDuplicateLayer(layerId) },
-            )
-            DropdownMenuItem(
-                text = { Text("Delete layer", color = MaterialTheme.colorScheme.error) },
-                leadingIcon = {
-                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                },
-                onClick = { close(); actions.onDeleteLayer(layerId) },
-            )
+            Spacer(Modifier.width(MinputGlyphLabelGap))
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                Text(
+                    text = "Layout".uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                Text(
+                    text = layoutLabel ?: "Layout",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
-// Bar = tab height + a whisker of air above and below (tabs center vertically now).
-private val TopBarHeight = 36.dp
-private val ScopeTabHeight = 32.dp
+// Bar = context button height + a whisker of air above and below.
+private val TopBarHeight = 38.dp
 
-/** Horizontal inset at the bar's edges AND between each corner pill and the tab cluster. */
+/** Horizontal inset at the bar's edges. */
 private val BarEdgePadding = 6.dp
 
-/** Width cap for the profile pill — its label is a user-typed profile name. */
-private val CornerPillMaxWidth = 110.dp
+/** Fixed footprint of the context button — load-bearing for the icon's exact centering. */
+private val ProfileButtonWidth = 280.dp
+private val ProfileButtonHeight = 32.dp
+
+/** Content inset inside the context button (wider than a mini pill — it's a bigger surface). */
+private val ProfileButtonContentPadding = 14.dp
+
+/** The application icon's edge — the button's centerpiece. */
+private val ProfileButtonIconSize = 20.dp

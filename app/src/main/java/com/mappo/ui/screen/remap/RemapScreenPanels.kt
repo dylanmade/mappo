@@ -17,15 +17,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
@@ -49,6 +55,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,10 +66,10 @@ import com.mappo.data.model.Profile
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.TextSize
 import com.mappo.ui.compact.scaledLayout
+import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputGroupButton
 import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelDividerInset
@@ -85,31 +92,42 @@ import kotlinx.collections.immutable.ImmutableList
 internal enum class RemapPanel { PROFILE, OPTIONS }
 
 /**
- * The two modals summoned from the profile panel's header utility buttons: ADD is the
- * new-profile form; OPTIONS holds settings that apply across all profiles. Both are
- * centered [MinputModal] cards stacked above the profile panel.
+ * The modals summoned from the layout panel: ADD is the new-layout form; OPTIONS holds
+ * settings that apply across all layouts; APPLICATIONS is the application-filter picker
+ * (summoned from the filter row's app button). All are [MinputModal] surfaces stacked
+ * above the panel.
  */
-internal enum class ProfilePanelModal { ADD, OPTIONS }
+internal enum class ProfilePanelModal { ADD, OPTIONS, APPLICATIONS }
 
 /**
- * Sort tabs for the profiles panel list. RECENT approximates "recently used" with creation
- * recency (no last-used tracking yet); GAME_APP orders by the profile's associated app
- * (auto-switch bindings), app-less profiles last.
+ * Sort options for the layout panel's list. RECENT approximates "recently used" with
+ * creation recency (no last-used tracking yet); LIKES is a placeholder ordering until
+ * community sharing brings real like counts. [naturalAscending] is the direction each sort
+ * resets to when picked — the direction toggle flips from there.
  */
-private enum class ProfileSort(val label: String) {
-    RECENT("Recent"),
-    NAME("Name"),
-    GAME_APP("Game / app"),
+private enum class ProfileSort(val label: String, val naturalAscending: Boolean) {
+    RECENT("Recent", naturalAscending = false),
+    LIKES("Likes", naturalAscending = false),
+    NAME("A to Z", naturalAscending = true),
+}
+
+/** Sort options for the Applications modal's list. RECENT approximates "most recently
+ *  used" with the package's install/update recency ([InstalledApp.recencyKey]) until
+ *  usage tracking or game-library scanning lands. */
+private enum class AppSort(val label: String, val naturalAscending: Boolean) {
+    RECENT("Recent", naturalAscending = false),
+    NAME("A to Z", naturalAscending = true),
 }
 
 /**
- * The profile panel's top-level views: the user's own profiles vs. browsing/importing
- * community-uploaded ones (servers / Steam). COMMUNITY is a placeholder surface for now —
- * the UX is being pinned down before any browsing/importing lands.
+ * The layout panel's application filter: [All] shows every layout, [Global] only layouts
+ * with no app association, [App] only layouts bound (via auto-switch bindings) to one
+ * package. Defaults to the detected foreground app each time the panel opens.
  */
-private enum class ProfileTab(val label: String) {
-    MINE("My profiles"),
-    COMMUNITY("Community"),
+internal sealed interface LayoutAppFilter {
+    data object All : LayoutAppFilter
+    data object Global : LayoutAppFilter
+    data class App(val packageName: String, val label: String) : LayoutAppFilter
 }
 
 /**
@@ -155,6 +173,7 @@ internal fun RemapPanelOverlay(
     appBindings: Map<String, Long>,
     onLoadInstalledApps: () -> Unit,
     onCreateProfile: (name: String, packages: Set<String>) -> Unit,
+    currentApp: InstalledApp? = null,
     modifier: Modifier = Modifier,
 ) {
     // One focus seat per surface — each modal owns its own seat/trap/recovery through
@@ -166,7 +185,18 @@ internal fun RemapPanelOverlay(
     val optionsCloseFocus = remember { FocusRequester() }
     val addModalCloseFocus = remember { FocusRequester() }
     val profileOptionsCloseFocus = remember { FocusRequester() }
+    val applicationsCloseFocus = remember { FocusRequester() }
     val modalUp = openModal != null
+
+    // The application filter, hoisted here so the Applications modal (stacked above the
+    // panel) and the panel's filter row share it. Keyed on the panel being open: each
+    // summon starts fresh, re-defaulting to the currently detected app.
+    val profileOpen = openPanel == RemapPanel.PROFILE
+    var appFilter by remember(profileOpen) {
+        mutableStateOf<LayoutAppFilter>(
+            currentApp?.let { LayoutAppFilter.App(it.packageName, it.label) } ?: LayoutAppFilter.All,
+        )
+    }
 
     Box(modifier) {
         // The two panels: full-bleed modals inset by EditorMargin (the group editor's
@@ -189,9 +219,9 @@ internal fun RemapPanelOverlay(
                 onSelectProfile = onSelectProfile,
                 onClose = onClose,
                 onOpenModal = onOpenModal,
-                installedApps = installedApps,
                 appBindings = appBindings,
                 onLoadInstalledApps = onLoadInstalledApps,
+                appFilter = appFilter,
                 closeFocusRequester = profileCloseFocus,
             )
         }
@@ -248,15 +278,32 @@ internal fun RemapPanelOverlay(
                 closeFocusRequester = profileOptionsCloseFocus,
             )
         }
+        MinputModal(
+            open = openModal == ProfilePanelModal.APPLICATIONS,
+            onDismiss = onCloseModal,
+            margin = ApplicationsModalMargin,
+            focusSeat = applicationsCloseFocus,
+            testTag = "profile-modal:APPLICATIONS",
+            modifier = Modifier.matchParentSize(),
+        ) {
+            ApplicationsModalContent(
+                installedApps = installedApps,
+                currentFilter = appFilter,
+                onPickFilter = { appFilter = it; onCloseModal() },
+                onLoadInstalledApps = onLoadInstalledApps,
+                onClose = onCloseModal,
+                closeFocusRequester = applicationsCloseFocus,
+            )
+        }
     }
 }
 
 /**
- * Profile selection, v1: a basic list of the current profiles in the group-editor's
- * dimensionality. Selecting a profile activates it and closes the panel. The header's
- * center tabs split the panel into "My profiles" (the list) and "Community" (a placeholder
- * for browsing/importing shared profiles). (Duplicate / delete and richer layout return in
- * a later pass — this view is deliberately minimal.)
+ * Layout selection (UI label "Layouts"; the code keeps the Profile names): the filter row —
+ * application filter (opens the Applications modal), inline search, dormant advanced-filters
+ * button, sort + direction — over the layout list. Selecting a layout activates it and
+ * closes the panel. (The former My profiles ↔ Community header tabs were removed 2026-08-13;
+ * community browsing returns in a different form later.)
  */
 @Composable
 private fun ProfilePanelContent(
@@ -265,74 +312,42 @@ private fun ProfilePanelContent(
     onSelectProfile: (Profile) -> Unit,
     onClose: () -> Unit,
     onOpenModal: (ProfilePanelModal) -> Unit,
-    installedApps: List<InstalledApp>,
     appBindings: Map<String, Long>,
     onLoadInstalledApps: () -> Unit,
+    appFilter: LayoutAppFilter,
     closeFocusRequester: FocusRequester? = null,
 ) {
-    // View tab + live name filter + sort tab. All live here so they reset whenever the
-    // panel closes (the panel content leaves composition) — each summon starts fresh.
-    var tab by remember { mutableStateOf(ProfileTab.MINE) }
+    // Live name filter + sort. Local so they reset whenever the panel closes (the content
+    // leaves composition) — each summon starts fresh.
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(ProfileSort.RECENT) }
-    // Game/app sort labels profiles by their bound apps' display names — make sure the
-    // installed-app labels are loaded once that sort is picked.
-    LaunchedEffect(sort) {
-        if (sort == ProfileSort.GAME_APP) onLoadInstalledApps()
-    }
+    var ascending by remember { mutableStateOf(ProfileSort.RECENT.naturalAscending) }
+    // The Applications modal needs the installed list the moment it's summoned — start the
+    // (cached, one-shot) load as the panel opens so the modal never pops in empty.
+    LaunchedEffect(Unit) { onLoadInstalledApps() }
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
             glyphRes = R.drawable.xbox_button_view,
-            title = "Profiles",
+            title = "Layouts",
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
-            center = {
-                // My profiles ↔ Community view switch, centered between title and utilities.
-                Box(
-                    modifier = Modifier.weight(1f).padding(horizontal = PanelContentPadding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MinputGroupButton(
-                        options = ProfileTab.entries,
-                        selected = tab,
-                        onSelect = { tab = it },
-                        optionLabel = { it.label },
-                        modifier = Modifier.widthIn(max = ProfileTabsMaxWidth).fillMaxWidth(),
-                    )
-                }
-            },
             actions = {
                 // Add · Options sit adjacent to Close at one rhythm — the group editor's
                 // header utility treatment (cog·kebab·close).
                 MinputIconButton(
                     icon = Icons.Filled.Add,
-                    contentDescription = "New profile",
+                    contentDescription = "New layout",
                     onClick = { onOpenModal(ProfilePanelModal.ADD) },
                 )
                 MinputIconButton(
                     icon = Icons.Filled.Tune,
-                    contentDescription = "Profile options",
+                    contentDescription = "Layout options",
                     onClick = { onOpenModal(ProfilePanelModal.OPTIONS) },
                 )
             },
         )
-        PanelDivider()
-        if (tab == ProfileTab.COMMUNITY) {
-            // Placeholder surface — browsing/importing community + Steam-sourced profiles
-            // lands here later; the tab exists to pin down the UX.
-            Box(
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(PanelContentPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "Browse and import community profiles here — coming soon",
-                    style = minputMiniTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            return@Column
-        }
-        // Search + sort share one row: filter field left, sort tabs right.
+        // PanelDivider()
+        // The filter row: application filter · search · (dormant) filters · sort + direction.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -342,53 +357,73 @@ private fun ProfilePanelContent(
                     start = PanelContentPadding,
                     end = PanelContentPadding,
                     top = MinputPanelDividerContentGap,
-                    bottom = 6.dp,
+                    // bottom = MinputPanelDividerContentGap,
                 ),
         ) {
+            AppFilterButton(
+                filter = appFilter,
+                onClick = { onOpenModal(ProfilePanelModal.APPLICATIONS) },
+            )
             MinputTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = "Search profiles",
+                placeholder = "Search layouts",
                 leadingIcon = Icons.Filled.Search,
                 clearable = true,
+                // Top-of-panel field — the sanctioned modal-less variant; the IME overlays
+                // the list below, never the field.
+                inlineEdit = true,
                 modifier = Modifier.weight(1f),
             )
-            MinputGroupButton(
-                options = ProfileSort.entries,
-                selected = sort,
-                onSelect = { sort = it },
-                optionLabel = { it.label },
-                modifier = Modifier.weight(1.4f),
+            // Advanced filters — dormant until the filter menu is built.
+            MinputIconButton(
+                icon = Icons.Filled.FilterList,
+                contentDescription = "Filters",
+                onClick = {},
+                enabled = false,
             )
+            MinputPillDropdown(
+                current = sort,
+                elevated = true,
+                options = ProfileSort.entries,
+                optionLabel = { it.label },
+                onPick = { sort = it; ascending = it.naturalAscending },
+                onClickLabel = "Sort layouts",
+            )
+            SortDirectionButton(ascending = ascending, onToggle = { ascending = !ascending })
+        }
+        // PanelDivider()
+        val packagesByProfile = appBindings.entries.groupBy({ it.value }, { it.key })
+        val appFiltered = when (appFilter) {
+            LayoutAppFilter.All -> profiles
+            LayoutAppFilter.Global -> profiles.filter { packagesByProfile[it.id].isNullOrEmpty() }
+            is LayoutAppFilter.App -> profiles.filter {
+                packagesByProfile[it.id]?.contains(appFilter.packageName) == true
+            }
         }
         val trimmed = query.trim()
         val filtered = if (trimmed.isEmpty()) {
-            profiles
+            appFiltered
         } else {
-            profiles.filter { it.name.contains(trimmed, ignoreCase = true) }
+            appFiltered.filter { it.name.contains(trimmed, ignoreCase = true) }
         }
-        val displayed = when (sort) {
+        val comparator = when (sort) {
             // No last-used tracking yet — "Recent" approximates with creation recency.
-            ProfileSort.RECENT -> filtered.sortedByDescending { it.id }
-            ProfileSort.NAME -> filtered.sortedBy { it.name.lowercase() }
-            // Order by the profile's associated app (auto-switch bindings): app-bound
-            // profiles first, alphabetical by app label (package name until labels load),
-            // then app-less profiles by name.
-            ProfileSort.GAME_APP -> {
-                val packagesByProfile = appBindings.entries.groupBy({ it.value }, { it.key })
-                val labelByPackage = installedApps.associateBy({ it.packageName }, { it.label })
-                fun appKey(profile: Profile): String? = packagesByProfile[profile.id]
-                    ?.minOfOrNull { pkg -> (labelByPackage[pkg] ?: pkg).lowercase() }
-                filtered.sortedWith(
-                    compareBy<Profile> { appKey(it) == null }
-                        .thenBy { appKey(it) ?: "" }
-                        .thenBy { it.name.lowercase() },
-                )
-            }
+            ProfileSort.RECENT -> compareBy<Profile> { it.id }
+            // Placeholder until community sharing brings real like counts — everything
+            // ties at zero, so recency breaks the tie.
+            ProfileSort.LIKES -> compareBy<Profile> { profileLikes(it) }.thenBy { it.id }
+            ProfileSort.NAME -> compareBy { it.name.lowercase() }
         }
+        val displayed = filtered.sortedWith(if (ascending) comparator else comparator.reversed())
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(horizontal = PanelContentPadding, vertical = 2.dp),
+            contentPadding = PaddingValues(
+                start = PanelContentPadding,
+                end = PanelContentPadding,
+                top = MinputPanelDividerContentGap,
+                bottom = 2.dp,
+            ),
         ) {
             if (displayed.isEmpty()) {
                 item(key = "empty") {
@@ -397,7 +432,7 @@ private fun ProfilePanelContent(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "No profiles match",
+                            text = "No layouts match",
                             style = minputMiniTextStyle(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -414,7 +449,7 @@ private fun ProfilePanelContent(
                         if (profile.id == activeProfileId) {
                             Icon(
                                 Icons.Filled.Check,
-                                contentDescription = "Active profile",
+                                contentDescription = "Active layout",
                                 modifier = Modifier.size(PanelRowIconSize),
                                 tint = MaterialTheme.colorScheme.primary,
                             )
@@ -427,11 +462,83 @@ private fun ProfilePanelContent(
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
+                    Spacer(Modifier.width(MinputGlyphLabelGap))
+                    // Placeholder metadata until community sharing lands: every local
+                    // layout is authored by the device owner with no like count.
+                    TileMetaColumn(
+                        label = "Author",
+                        value = "You",
+                        modifier = Modifier.widthIn(max = TileAuthorMaxWidth),
+                    )
+                    Spacer(Modifier.width(MinputPillContentPadding))
+                    TileMetaColumn(label = "Likes", value = profileLikes(profile).toString())
                 }
             }
         }
     }
+}
+
+/** Like count for a layout — a constant until community sharing brings real counts. */
+private fun profileLikes(@Suppress("UNUSED_PARAMETER") profile: Profile): Int = 0
+
+/**
+ * One overline-labeled metadata attribute on a layout tile (Author, Likes) — label stacked
+ * over value, both single-line.
+ */
+@Composable
+private fun TileMetaColumn(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.End) {
+        Text(
+            text = label.uppercase(),
+            style = minputOverlineTextStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Text(
+            text = value,
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * The application-filter summon: current filter's icon + label on a pill, capped at
+ * [AppFilterMaxWidth] so long application titles ellipsize instead of squeezing the row.
+ */
+@Composable
+private fun AppFilterButton(filter: LayoutAppFilter, onClick: () -> Unit) {
+    val appIcon = rememberAppIconPainter((filter as? LayoutAppFilter.App)?.packageName)
+    val (label, fallbackIcon) = when (filter) {
+        LayoutAppFilter.All -> "All applications" to Icons.Filled.Apps
+        LayoutAppFilter.Global -> "Global" to Icons.Filled.Public
+        is LayoutAppFilter.App -> filter.label to Icons.Filled.Apps
+    }
+    MinputPillButton(
+        text = label,
+        elevated = true,
+        onClick = onClick,
+        leadingIcon = appIcon ?: rememberVectorPainter(fallbackIcon),
+        // App icons render untinted (full-color); the vector fallbacks take the standard
+        // glyph tint.
+        leadingIconTint = if (appIcon != null) Color.Unspecified
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.widthIn(max = AppFilterMaxWidth),
+    )
+}
+
+/** Sort-direction toggle: the icon shows the CURRENT direction; tapping flips it. */
+@Composable
+private fun SortDirectionButton(ascending: Boolean, onToggle: () -> Unit) {
+    MinputIconButton(
+        icon = if (ascending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+        contentDescription = if (ascending) "Sorted ascending" else "Sorted descending",
+        onClick = onToggle,
+    )
 }
 
 /**
@@ -785,6 +892,171 @@ private fun AddProfileModalContent(
 }
 
 /**
+ * The application-filter picker: every launchable app on the device (games join the list
+ * when the planned library scanning lands — local-folder scraping plus installed-game lists
+ * from frontends like GameNative / GameHub), behind its own search + sort row, with the two
+ * meta filters pinned on top: "All applications" and "Global" (layouts with no app
+ * association). Picking any row commits the filter and closes the modal.
+ */
+@Composable
+private fun ApplicationsModalContent(
+    installedApps: List<InstalledApp>,
+    currentFilter: LayoutAppFilter,
+    onPickFilter: (LayoutAppFilter) -> Unit,
+    onLoadInstalledApps: () -> Unit,
+    onClose: () -> Unit,
+    // Attached to the Close button; the hosting MinputModal owns the seat/recovery.
+    closeFocusRequester: FocusRequester? = null,
+) {
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(AppSort.RECENT) }
+    var ascending by remember { mutableStateOf(AppSort.RECENT.naturalAscending) }
+    LaunchedEffect(Unit) { onLoadInstalledApps() }
+    Column(Modifier.fillMaxSize()) {
+        PanelHeader(
+            title = "Applications",
+            icon = Icons.Filled.Apps,
+            onClose = onClose,
+            closeFocusRequester = closeFocusRequester,
+        )
+        // PanelDivider()
+        // The modal's own filter row: search + sort + direction (same anatomy as the
+        // layout panel's row, minus the app filter it exists to set).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PanelContentPadding,
+                    end = PanelContentPadding,
+                    // top = MinputPanelDividerContentGap,
+                    bottom = MinputPanelDividerContentGap,
+                ),
+        ) {
+            MinputTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Search applications",
+                leadingIcon = Icons.Filled.Search,
+                clearable = true,
+                // Top-of-modal field — the sanctioned modal-less variant.
+                inlineEdit = true,
+                modifier = Modifier.weight(1f),
+            )
+            MinputPillDropdown(
+                current = sort,
+                elevated = true,
+                options = AppSort.entries,
+                optionLabel = { it.label },
+                onPick = { sort = it; ascending = it.naturalAscending },
+                onClickLabel = "Sort applications",
+            )
+            SortDirectionButton(ascending = ascending, onToggle = { ascending = !ascending })
+        }
+        // PanelDivider()
+        val trimmed = query.trim()
+        val filtered = if (trimmed.isEmpty()) {
+            installedApps
+        } else {
+            installedApps.filter { it.label.contains(trimmed, ignoreCase = true) }
+        }
+        val comparator = when (sort) {
+            AppSort.RECENT -> compareBy<InstalledApp> { it.recencyKey }
+            AppSort.NAME -> compareBy { it.label.lowercase() }
+        }
+        val displayed = filtered.sortedWith(if (ascending) comparator else comparator.reversed())
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(
+                start = PanelContentPadding,
+                end = PanelContentPadding,
+                top = MinputPanelDividerContentGap,
+                bottom = 2.dp,
+            ),
+        ) {
+            item(key = "all") {
+                AppRow(
+                    label = "All applications",
+                    vectorIcon = Icons.Filled.Apps,
+                    active = currentFilter == LayoutAppFilter.All,
+                    onClick = { onPickFilter(LayoutAppFilter.All) },
+                )
+            }
+            item(key = "global") {
+                AppRow(
+                    label = "Global",
+                    vectorIcon = Icons.Filled.Public,
+                    active = currentFilter == LayoutAppFilter.Global,
+                    onClick = { onPickFilter(LayoutAppFilter.Global) },
+                )
+            }
+            if (displayed.isEmpty()) {
+                item(key = "empty") {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(PanelRowHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (installedApps.isEmpty()) "Loading applications…" else "No applications match",
+                            style = minputMiniTextStyle(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(displayed, key = { it.packageName }) { app ->
+                AppRow(
+                    label = app.label,
+                    packageName = app.packageName,
+                    active = (currentFilter as? LayoutAppFilter.App)?.packageName == app.packageName,
+                    onClick = { onPickFilter(LayoutAppFilter.App(app.packageName, app.label)) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One row of the Applications modal: launcher icon (or a tinted [vectorIcon] for the meta
+ * filters) + label. [active] marks the currently applied filter.
+ */
+@Composable
+private fun AppRow(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    packageName: String? = null,
+    vectorIcon: ImageVector? = null,
+) {
+    PanelRow(onClick = onClick, active = active) {
+        val appIcon = rememberAppIconPainter(packageName)
+        when {
+            appIcon != null -> Image(
+                painter = appIcon,
+                contentDescription = null,
+                modifier = Modifier.size(PanelRowIconSize),
+            )
+            vectorIcon != null -> Icon(
+                vectorIcon,
+                contentDescription = null,
+                modifier = Modifier.size(PanelRowIconSize),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> Box(Modifier.size(PanelRowIconSize))
+        }
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = label,
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * Options that apply across ALL profiles. Deliberately empty for now — the surface and its
  * summon exist so content can land here without another chrome pass.
  */
@@ -817,9 +1089,14 @@ private fun ProfileOptionsModalContent(
 /** Horizontal content inset of the panel's header + list (also the divider inset). */
 private val PanelContentPadding = 8.dp
 
-/** Width cap for the header's My profiles ↔ Community tabs, so the pair stays a compact
- *  centered switch instead of swallowing the whole flexible middle. */
-private val ProfileTabsMaxWidth = 210.dp
+/** Width cap for the application-filter pill — application titles ellipsize past it. */
+private val AppFilterMaxWidth = 132.dp
+
+/** Width cap for a tile's Author value (user/community names are unbounded). */
+private val TileAuthorMaxWidth = 88.dp
+
+/** The Applications modal insets a step past the layout panel so it reads as stacked. */
+private val ApplicationsModalMargin = EditorMargin + 10.dp
 
 /** Compact list-row height (between the editor's 38dp rows and the 32dp tabs). */
 private val PanelRowHeight = 32.dp

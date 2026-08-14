@@ -1,6 +1,7 @@
 package com.mappo.ui.minput
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,9 +9,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +49,11 @@ import androidx.compose.ui.unit.dp
  *
  * Segments share the width equally; size the group via [modifier] (typically
  * `fillMaxWidth()`).
+ *
+ * @param trailingActionIcon optional ACTION segment closing the group — a deliberate break
+ *   from single-choice convention: a narrow fixed-width segment (it takes the group's outer
+ *   end rounding) that fires [onTrailingAction] instead of selecting. Born for the action-set
+ *   row's "+" (add a set).
  */
 @Composable
 fun <T> MinputGroupButton(
@@ -53,6 +63,9 @@ fun <T> MinputGroupButton(
     optionLabel: (T) -> String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    trailingActionIcon: ImageVector? = null,
+    trailingActionDescription: String? = null,
+    onTrailingAction: () -> Unit = {},
 ) {
     val outerCorner = MinputPillHeight / 2
     Row(
@@ -61,12 +74,13 @@ fun <T> MinputGroupButton(
             .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(GroupSegmentGap),
     ) {
+        val lastRoundedIndex = if (trailingActionIcon != null) -1 else options.lastIndex
         options.forEachIndexed { i, option ->
             val shape = RoundedCornerShape(
                 topStart = if (i == 0) outerCorner else GroupInnerCorner,
                 bottomStart = if (i == 0) outerCorner else GroupInnerCorner,
-                topEnd = if (i == options.lastIndex) outerCorner else GroupInnerCorner,
-                bottomEnd = if (i == options.lastIndex) outerCorner else GroupInnerCorner,
+                topEnd = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
+                bottomEnd = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
             )
             val isSelected = option == selected
             val fill by animateColorAsState(
@@ -88,7 +102,7 @@ fun <T> MinputGroupButton(
                 border = minputBevelBorder(
                     fill,
                     cornerRadius = if (i == 0) outerCorner else GroupInnerCorner,
-                    endCornerRadius = if (i == options.lastIndex) outerCorner else GroupInnerCorner,
+                    endCornerRadius = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
                 ),
                 modifier = Modifier
                     .weight(1f)
@@ -122,6 +136,49 @@ fun <T> MinputGroupButton(
                 }
             }
         }
+        if (trailingActionIcon != null) {
+            // The action segment: fixed narrow width (never a selection peer), wearing the
+            // unselected surface-2 treatment and the group's outer end rounding.
+            val shape = RoundedCornerShape(
+                topStart = GroupInnerCorner,
+                bottomStart = GroupInnerCorner,
+                topEnd = outerCorner,
+                bottomEnd = outerCorner,
+            )
+            val interaction = remember { MutableInteractionSource() }
+            Surface(
+                shape = shape,
+                color = MinputElevatedContainer,
+                border = minputBevelBorder(
+                    MinputElevatedContainer,
+                    cornerRadius = GroupInnerCorner,
+                    endCornerRadius = outerCorner,
+                ),
+                modifier = Modifier
+                    .width(GroupActionSegmentWidth)
+                    .minputInteractiveMotion(interaction)
+                    .fillMaxHeight()
+                    .then(
+                        if (enabled) {
+                            Modifier.clip(shape).clickable(
+                                interactionSource = interaction,
+                                indication = minputIndication(),
+                                role = Role.Button,
+                                onClick = onTrailingAction,
+                            )
+                        } else Modifier.alpha(0.55f),
+                    ),
+            ) {
+                Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        trailingActionIcon,
+                        contentDescription = trailingActionDescription,
+                        modifier = Modifier.size(MinputPillIconSize),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -130,3 +187,7 @@ private val GroupSegmentGap = 4.dp
 
 /** Segment inner corners: perfectly square (outer ends stay full pill) — the M2 side. */
 private val GroupInnerCorner = 2.dp
+
+/** Fixed width of the trailing ACTION segment — icon-only, deliberately narrower than the
+ *  equal-weight selection segments so it reads as an appendix, not a peer. */
+private val GroupActionSegmentWidth = 30.dp

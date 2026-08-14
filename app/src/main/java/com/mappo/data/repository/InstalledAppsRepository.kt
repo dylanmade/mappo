@@ -29,6 +29,10 @@ class InstalledAppsRepository @Inject constructor(
     data class InstalledApp(
         val packageName: String,
         val label: String,
+        /** Recency key for "Recent" app sorts. Approximated with the package's
+         *  lastUpdateTime — true most-recently-USED ordering needs usage-access
+         *  permission (or the planned game-library scanning), neither wired yet. */
+        val recencyKey: Long = 0L,
     )
 
     suspend fun launchableApps(): List<InstalledApp> = withContext(ioDispatcher) {
@@ -47,7 +51,12 @@ class InstalledAppsRepository @Inject constructor(
                 } catch (_: PackageManager.NameNotFoundException) {
                     pkg
                 }
-                InstalledApp(packageName = pkg, label = label)
+                val updated = try {
+                    pm.getPackageInfo(pkg, 0).lastUpdateTime
+                } catch (_: PackageManager.NameNotFoundException) {
+                    0L
+                }
+                InstalledApp(packageName = pkg, label = label, recencyKey = updated)
             }
             .sortedBy { it.label.lowercase() }
             .toList()

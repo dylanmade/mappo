@@ -67,7 +67,6 @@ import com.mappo.ui.screen.remap.ProfilePanelModal
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.RemapPanel
 import com.mappo.ui.screen.remap.RemapPanelOverlay
-import com.mappo.ui.screen.remap.RemapScopeTabActions
 import com.mappo.ui.screen.remap.RemapSections
 import com.mappo.ui.screen.remap.RemapSimpleView
 import com.mappo.ui.screen.remap.RemapTopBar
@@ -147,7 +146,10 @@ fun RemapControlsScreen(
     // data); default no-ops until those land — the menu items render but do nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
     onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
-    // ── Profile / options panels (the top-bar corner pills; physical Select / Start) ─────
+    // ── Profile / options panels (the top-bar summons; physical Select / Start) ─────
+    // The auto-switch detection feed: the current foreground game/app, shown on the top
+    // bar's context button and defaulting the layout panel's application filter.
+    currentApp: com.mappo.data.repository.InstalledAppsRepository.InstalledApp? = null,
     profiles: kotlinx.collections.immutable.ImmutableList<com.mappo.data.model.Profile> =
         kotlinx.collections.immutable.persistentListOf(),
     activeProfileId: Long? = null,
@@ -354,25 +356,12 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
             topBar = {
-                // The action-set manager: one tab per set (layers as subordinate tabs) on the
-                // shared ReorderableTabBar, flanked by the profile / options corner pills.
+                // Application + layout context on the big centered summon; the action-set
+                // tabs that lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    config = config,
-                    viewingSetId = viewingSet?.actionSet?.id,
-                    viewingLayerId = viewingLayerId,
-                    onSelectActionSet = onSelectActionSet,
-                    onSelectLayer = onSelectLayer,
-                    actions = RemapScopeTabActions(
-                        onRenameSet = { dialog = ActionSetDialogState.Rename(it) },
-                        onDuplicateSet = { dialog = ActionSetDialogState.Duplicate(it) },
-                        onDeleteSet = { dialog = ActionSetDialogState.Delete(it) },
-                        onAddLayer = { layerDialog = LayerDialogState.Add(it) },
-                        onRenameLayer = { layerDialog = LayerDialogState.Rename(it) },
-                        onDuplicateLayer = { layerDialog = LayerDialogState.Duplicate(it) },
-                        onDeleteLayer = { layerDialog = LayerDialogState.Delete(it) },
-                        onAddSet = { dialog = ActionSetDialogState.Add },
-                    ),
-                    profileLabel = profileName,
+                    appLabel = currentApp?.label,
+                    appPackage = currentApp?.packageName,
+                    layoutLabel = profileName,
                     profileFocusRequester = profilePillFocus,
                     optionsFocusRequester = optionsPillFocus,
                     onOpenProfile = {
@@ -401,6 +390,11 @@ fun RemapControlsScreen(
                         config = config,
                         onMap = { /* input-mapping wizard — UI-only CTA for now */ },
                         editorCallbacks = editorCallbacks,
+                        onSelectActionSet = { id ->
+                            onSelectActionSet(id)
+                            onSelectLayer(null)
+                        },
+                        onAddSet = { dialog = ActionSetDialogState.Add },
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         bottomContent = {
                             RemapBottomRow(
@@ -432,6 +426,7 @@ fun RemapControlsScreen(
             appBindings = appBindings,
             onLoadInstalledApps = onLoadInstalledApps,
             onCreateProfile = onCreateProfile,
+            currentApp = currentApp,
             modifier = Modifier.matchParentSize(),
         )
     }

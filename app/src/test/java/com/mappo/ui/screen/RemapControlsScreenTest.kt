@@ -250,12 +250,12 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
     }
 
-    // ── Top-bar tabs: set management ─────────────────────────────────────
+    // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     @Test
-    fun topBar_hasNoBackOrAddButtons() {
-        // Back + add-set buttons were removed from the top bar (2026-07-12) pending a new
-        // home for that functionality; the bar is tabs-only for now.
+    fun topBar_hasNoBackButton_addSetLivesInSetRow() {
+        // The top bar carries no Back; the add-set affordance is the set row's "+" action
+        // segment in the content view (one instance).
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -274,8 +274,8 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
     }
 
     @Test
@@ -303,100 +303,15 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("Switch to: Menu").assertIsDisplayed()
     }
 
-    // ── Top-bar tabs: layers ─────────────────────────────────────────────
-
     @Test
-    fun tabs_listLayers_asSubordinateTabs() {
+    fun setRow_listsAllSets_notJustViewing() {
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
-                        config = singleSetConfigWithLayers(
-                            layers = listOf(10L to "Scope", 11L to "Vehicle"),
-                        ),
-                        viewingActionSetId = 1L,
-                        viewingLayerId = null,  // base view → the set tab is selected, not a layer
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-
-        composeRule.onNodeWithText("Scope", ignoreCase = true, useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("Vehicle", ignoreCase = true, useUnmergedTree = true).assertExists()
-    }
-
-    @Test
-    fun tabs_selectingLayer_invokesOnSelectLayer_withId() {
-        var selectedLayerId: Long? = -1L  // sentinel; null is a meaningful value
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = singleSetConfigWithLayers(
-                            layers = listOf(10L to "Scope", 11L to "Vehicle"),
-                        ),
-                        viewingActionSetId = 1L,
-                        viewingLayerId = null,
-                        onSelectLayer = { selectedLayerId = it },
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-
-        composeRule.onNodeWithText("Vehicle", ignoreCase = true, useUnmergedTree = true).performClick()
-        composeRule.waitForIdle()
-
-        assert(selectedLayerId == 11L) {
-            "Expected onSelectLayer(11L), got $selectedLayerId"
-        }
-    }
-
-    @Test
-    fun tabs_selectingSetTab_dropsToBase_withNull() {
-        var lastSelected: Long? = -1L
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = singleSetConfigWithLayers(
-                            layers = listOf(10L to "Scope"),
-                        ),
-                        viewingActionSetId = 1L,
-                        viewingLayerId = 10L,
-                        onSelectLayer = { lastSelected = it },
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-
-        // Tapping the set tab itself selects the base set (no layer overlay). (By tag — the
-        // set's "Default" title collides with the simple view's "Default" summary labels.)
-        composeRule.onNodeWithTag("tab:set:1").performClick()
-        composeRule.waitForIdle()
-
-        assert(lastSelected == null) {
-            "Expected selecting the set row to fire onSelectLayer(null), got $lastSelected"
-        }
-    }
-
-    @Test
-    fun tabs_listAllSetsLayers_notJustViewing() {
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = twoSetConfigWithLayers(
-                            setALayers = listOf(10L to "ScopeA"),
-                            setBLayers = listOf(20L to "ScopeB"),
+                        config = twoSetConfig(
+                            setAButtonA = BindingOutput.Unbound,
+                            setBButtonA = BindingOutput.Unbound,
                         ),
                         viewingActionSetId = 2L,  // viewing set B
                         onOpenInputEditor = { _, _, _ -> },
@@ -407,10 +322,66 @@ class RemapControlsScreenTest {
             }
         }
 
-        // The tab bar is a global switcher: every set's layers are listed, not just the
-        // viewing set's (unlike the old per-set pill row).
-        composeRule.onNodeWithText("ScopeA", ignoreCase = true, useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("ScopeB", ignoreCase = true, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Gameplay", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Menu", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun setRow_selectingSet_selectsSetAndDropsLayer() {
+        var selectedSetId: Long? = null
+        var selectedLayerId: Long? = -1L  // sentinel; null is a meaningful value
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = twoSetConfigWithLayers(
+                            setALayers = listOf(10L to "ScopeA"),
+                            setBLayers = emptyList(),
+                        ),
+                        viewingActionSetId = 1L,
+                        viewingLayerId = 10L,
+                        onSelectActionSet = { selectedSetId = it },
+                        onSelectLayer = { selectedLayerId = it },
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Menu", useUnmergedTree = true).performClick()
+        composeRule.waitForIdle()
+
+        assert(selectedSetId == 2L) { "Expected onSelectActionSet(2L), got $selectedSetId" }
+        assert(selectedLayerId == null) {
+            "Expected the set pick to drop to base with onSelectLayer(null), got $selectedLayerId"
+        }
+    }
+
+    @Test
+    fun setRow_doesNotListLayers() {
+        // Layers deliberately lost their tab surface in the 2026-08-13 top-bar rework; they
+        // return with the set-management cog. The set row lists sets only.
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = singleSetConfigWithLayers(
+                            layers = listOf(10L to "Scope", 11L to "Vehicle"),
+                        ),
+                        viewingActionSetId = 1L,
+                        viewingLayerId = null,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onAllNodesWithText("Scope", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Vehicle", useUnmergedTree = true).assertCountEquals(0)
     }
 
     // ── Overlay editing mode (Brick 5.5.c) ────────────────────────────────────

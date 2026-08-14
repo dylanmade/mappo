@@ -293,7 +293,7 @@ val MinputPanelHeaderHeight = 42.dp
 val MinputPanelDividerInset = 8.dp
 
 /** Vertical gap between the divider and the first content row below it. */
-val MinputPanelDividerContentGap = 10.dp
+val MinputPanelDividerContentGap = 6.dp
 
 /** Start inset for a NON-interactive header title (leading icon + overline). The header's
  *  trailing [MinputIconButton]s read this much inward of their edge (their glyph sits
