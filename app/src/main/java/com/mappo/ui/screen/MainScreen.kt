@@ -148,6 +148,8 @@ import com.mappo.ui.MappoGesture
 import com.mappo.ui.nav.MappoRoute
 import com.mappo.ui.screen.home.ScreenFrame
 import com.mappo.ui.screen.home.ScreenFrameFadeMillis
+import com.mappo.ui.screen.remap.ApplicationsScreen
+import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.service.autoswitch.ProfileAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
@@ -263,10 +265,10 @@ fun MainScreen(
         }
     }
 
-    // The home route is the Remap Controls screen (the d-pad flower home was retired
-    // 2026-08-07): opening Mappo lands straight on the controls page.
+    // The home route is the Applications view (2026-08-14 flow rebuild): opening Mappo
+    // lands on the application list, then applications → layouts → controls.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
-    val isHomeRoute = currentBackStackEntry?.destination?.route == MappoRoute.REMAP_CONTROLS
+    val isHomeRoute = currentBackStackEntry?.destination?.route == MappoRoute.APPLICATIONS
 
     // The home is a fullscreen *transparent* window, so a dismissed frame on the home route is
     // an invisible trap: nothing is drawn, yet the activity still swallows every touch over
@@ -345,7 +347,7 @@ fun MainScreen(
     val screenContent: @Composable () -> Unit = {
         NavHost(
             navController = navController,
-            startDestination = MappoRoute.REMAP_CONTROLS,
+            startDestination = MappoRoute.APPLICATIONS,
             // The soft keyboard OVERLAYS the UI — it must never move or squeeze it (imePadding
             // here used to shrink the routes inside the handheld frame's LCD whenever the IME
             // opened, shifting everything; removed 2026-07-11). Fields low on the screen may
@@ -357,7 +359,69 @@ fun MainScreen(
             popEnterTransition = { fadeIn(tween(250)) },
             popExitTransition = { fadeOut(tween(250)) },
         ) {
-            composable(MappoRoute.REMAP_CONTROLS) { entry ->
+            composable(MappoRoute.APPLICATIONS) {
+                // The home: every launchable application; picking one opens its layouts.
+                ApplicationsScreen(
+                    installedApps = installedApps,
+                    onLoadInstalledApps = viewModel::loadInstalledApps,
+                    onPickApp = { app ->
+                        navController.navigate(MappoRoute.layouts(app.packageName, app.label)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    // This view IS the home — back dismisses the frame, which backgrounds
+                    // the task via the frameVisible effect above.
+                    onBack = { frameVisible = false },
+                )
+            }
+            composable(
+                MappoRoute.LAYOUTS,
+                arguments = listOf(
+                    navArgument(MappoRoute.ARG_APP_PACKAGE) { type = NavType.StringType },
+                    navArgument(MappoRoute.ARG_APP_LABEL) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                ),
+            ) { entry ->
+                val appPackage = entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE).orEmpty()
+                val appLabel = entry.arguments?.getString(MappoRoute.ARG_APP_LABEL)
+                    .orEmpty().ifEmpty { appPackage }
+                LayoutsScreen(
+                    appPackage = appPackage,
+                    appLabel = appLabel,
+                    profiles = profiles,
+                    activeProfileId = activeProfile?.id,
+                    appBindings = remember(appProfileBindings) {
+                        appProfileBindings.associate { it.packageName to it.profileId }
+                    },
+                    onSelectLayout = { profile ->
+                        // Selecting a layout activates it and opens its controls view,
+                        // carrying this view's application context.
+                        viewModel.selectProfile(profile)
+                        navController.navigate(MappoRoute.remapControls(appPackage, appLabel)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onBack = { navController.popBackStack() },
+                    installedApps = installedApps,
+                    onLoadInstalledApps = viewModel::loadInstalledApps,
+                    onCreateProfile = viewModel::createProfile,
+                )
+            }
+            composable(
+                MappoRoute.REMAP_CONTROLS,
+                arguments = listOf(
+                    navArgument(MappoRoute.ARG_APP_PACKAGE) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument(MappoRoute.ARG_APP_LABEL) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                ),
+            ) { entry ->
                 // Phase 2: the inline command picker pops back here, delivering its result via this
                 // entry's savedStateHandle (same key the InputEditor route used).
                 val remapPickerResult by entry.savedStateHandle
@@ -366,18 +430,12 @@ fun MainScreen(
                 RemapControlsScreen(
                     config = activeControllerConfig,
                     profileName = activeProfile?.name,
-                    currentApp = currentApp,
-                    // ── Profile panel (opened by the top bar's Select pill / physical Select) ──
-                    profiles = profiles,
-                    activeProfileId = activeProfile?.id,
-                    onSelectProfile = { profile -> viewModel.selectProfile(profile) },
-                    // New-profile form (the panel's Add modal): picker data + one-shot create.
-                    installedApps = installedApps,
-                    appBindings = remember(appProfileBindings) {
-                        appProfileBindings.associate { it.packageName to it.profileId }
-                    },
-                    onLoadInstalledApps = viewModel::loadInstalledApps,
-                    onCreateProfile = viewModel::createProfile,
+                    // The application context this screen was reached through (empty on a
+                    // deep launch with none — the bar falls back to a generic glyph).
+                    viewedAppPackage = entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)
+                        ?.ifEmpty { null },
+                    viewedAppLabel = entry.arguments?.getString(MappoRoute.ARG_APP_LABEL)
+                        ?.ifEmpty { null },
                     // ── Options panel: master power + the destinations that lived in the old
                     // home screen's options fly-out ──
                     // Master power (the old toolbar's master switch) drives remap AND the
@@ -525,9 +583,10 @@ fun MainScreen(
                     shizukuState = shizukuState,
                     onAcknowledgeShizukuRequired = viewModel::acknowledgeShizukuRequired,
                     onOpenShizukuSetup = { navController.navigate(MappoRoute.SHIZUKU_SETUP) },
-                    // This screen IS the home now — back dismisses the frame, which
-                    // backgrounds the task via the frameVisible effect above.
-                    onBack = { frameVisible = false },
+                    // Back returns to the layouts view this screen was reached through
+                    // (the browse chain guarantees one beneath except on deep launches,
+                    // which land back on the applications home).
+                    onBack = { navController.popBackStack() },
                     onOpenInputEditor = { inputSource, groupInputKey, label ->
                         // Brick 5.5.c: in overlay mode, eagerly materialize the layer
                         // override before navigating so the editor opens against a
@@ -954,6 +1013,31 @@ fun MainScreen(
             shown = frameVisible,
             dismissEnabled = isHomeRoute,
             onDismissRequest = { frameVisible = false },
+            // The bottom bar's active-context shortcut: detected application + active
+            // layout; tapping rebuilds the browse chain (home → layouts → controls) so
+            // Back walks it naturally.
+            activeAppLabel = currentApp?.label,
+            activeAppPackage = currentApp?.packageName,
+            activeLayoutLabel = activeProfile?.name,
+            onOpenActiveLayout = {
+                val app = currentApp
+                if (app != null) {
+                    navController.navigate(MappoRoute.layouts(app.packageName, app.label)) {
+                        popUpTo(MappoRoute.APPLICATIONS)
+                        launchSingleTop = true
+                    }
+                    navController.navigate(MappoRoute.remapControls(app.packageName, app.label)) {
+                        launchSingleTop = true
+                    }
+                } else {
+                    // No detected application — open the controls view bare; Back lands
+                    // on the applications home.
+                    navController.navigate(MappoRoute.remapControls()) {
+                        popUpTo(MappoRoute.APPLICATIONS)
+                        launchSingleTop = true
+                    }
+                }
+            },
             screenContent = screenContent,
         )
 

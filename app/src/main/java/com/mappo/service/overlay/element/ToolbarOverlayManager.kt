@@ -217,10 +217,12 @@ class ToolbarOverlayManager @Inject constructor(
             },
             onEditOverlay = { overlayLiveEditController.requestEdit() },
             // Brick 2: deep-screen items launch the config host straight to their route.
-            onEditControls = { launchRoute(MappoRoute.REMAP_CONTROLS) },
-            // Profile selection is a panel inside the Remap Controls screen now (the
-            // standalone CHANGE_PROFILE route is gone) — land on the controls home.
-            onOpenProfile = { launchRoute(MappoRoute.REMAP_CONTROLS) },
+            // remapControls() (no app context) — the REMAP_CONTROLS const is a pattern
+            // with arg placeholders now, not a navigable string.
+            onEditControls = { launchRoute(MappoRoute.remapControls()) },
+            // Layout selection lives on the applications → layouts browse chain now (the
+            // controls-screen profile panel is gone) — land on the applications home.
+            onOpenProfile = { launchRoute(MappoRoute.APPLICATIONS) },
             onOpenAutoSwitch = { launchRoute(MappoRoute.AUTO_SWITCH) },
             onOpenBlocklist = { launchRoute(MappoRoute.BLOCKLIST) },
             onOpenThemeStudio = { launchRoute(MappoRoute.THEME_STUDIO) },

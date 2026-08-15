@@ -253,9 +253,11 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     @Test
-    fun topBar_hasNoBackButton_addSetLivesInSetRow() {
-        // The top bar carries no Back; the add-set affordance is the set row's "+" action
-        // segment in the content view (one instance).
+    fun topBar_hasBackToLayouts_addSetLivesInSetRow() {
+        // 2026-08-14 flow rebuild: the top bar leads with Back (returning to the layouts
+        // view); the add-set affordance is the set row's "+" action segment in the content
+        // view (one instance).
+        var backed = false
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -267,15 +269,18 @@ class RemapControlsScreenTest {
                         viewingActionSetId = 1L,
                         onSelectActionSet = {},
                         onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
+                        onBack = { backed = true },
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
                 }
             }
         }
 
-        composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.waitForIdle()
+        assert(backed) { "Expected the top bar's Back to invoke onBack" }
     }
 
     @Test

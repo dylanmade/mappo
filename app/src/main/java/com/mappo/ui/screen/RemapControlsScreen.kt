@@ -63,7 +63,6 @@ import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
-import com.mappo.ui.screen.remap.ProfilePanelModal
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.RemapPanel
 import com.mappo.ui.screen.remap.RemapPanelOverlay
@@ -146,37 +145,26 @@ fun RemapControlsScreen(
     // data); default no-ops until those land — the menu items render but do nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
     onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
-    // ── Profile / options panels (the top-bar summons; physical Select / Start) ─────
-    // The auto-switch detection feed: the current foreground game/app, shown on the top
-    // bar's context button and defaulting the layout panel's application filter.
-    currentApp: com.mappo.data.repository.InstalledAppsRepository.InstalledApp? = null,
-    profiles: kotlinx.collections.immutable.ImmutableList<com.mappo.data.model.Profile> =
-        kotlinx.collections.immutable.persistentListOf(),
-    activeProfileId: Long? = null,
-    onSelectProfile: (com.mappo.data.model.Profile) -> Unit = {},
+    // ── The viewed application context (rides the route from the layouts view) ─────
+    // Shown in the top bar's "Viewing <application> layout:" stack; the layouts view this
+    // screen backs out to belongs to the same application.
+    viewedAppLabel: String? = null,
+    viewedAppPackage: String? = null,
+    // ── Options panel (the top-bar summon; physical Start) ─────────────────────────
     powerOn: Boolean = false,
     onPowerChange: (Boolean) -> Unit = {},
     textSize: TextSize = TextSizeSettings.DEFAULT,
     onTextSizeChange: (TextSize) -> Unit = {},
     optionsEntries: List<RemapOptionEntry> = emptyList(),
-    // ── Profile-panel modals: the new-profile form (name + auto-switch app bindings) ──
-    installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
-    appBindings: Map<String, Long> = emptyMap(),
-    onLoadInstalledApps: () -> Unit = {},
-    onCreateProfile: (name: String, packages: Set<String>) -> Unit = { _, _ -> },
 ) {
-    // Physical/gesture back navigates home. The expanded group editor and the profile/options
-    // panel overlay install their own (more-recent) BackHandlers while open, so this only
-    // fires when nothing else is dismissable.
+    // Physical/gesture back returns to the layouts view. The expanded group editor and the
+    // options panel overlay install their own (more-recent) BackHandlers while open, so this
+    // only fires when nothing else is dismissable.
     BackHandler { onBack() }
 
-    // Which full-screen panel (profile / options) is open. User intent — survives the
-    // navigation round-trips the options entries launch.
+    // Whether the options panel is open. User intent — survives the navigation round-trips
+    // the options entries launch.
     var openPanel by rememberSaveable { mutableStateOf<RemapPanel?>(null) }
-    // Which profile-panel modal (Add / all-profile options) is up. Plain `remember` like the
-    // dialog states below — modals are short-lived and never outlive their panel; every
-    // openPanel mutation clears it so a modal can't orphan over a closed/switched panel.
-    var openProfileModal by remember { mutableStateOf<ProfilePanelModal?>(null) }
     // Which management dialog is currently open. Plain `remember` — dialogs are short-lived;
     // rotation-survival isn't worth a custom Saver.
     var dialog by remember { mutableStateOf<ActionSetDialogState>(ActionSetDialogState.None) }
@@ -271,28 +259,23 @@ fun RemapControlsScreen(
     // (a focused container that spatially contains everything is a directional-search dead
     // end — and worse, d-pad moves from it search OUTWARD, past the screen into the frame
     // chrome; a focusable root Box shipped exactly that bug). The initial seat lands on the
-    // top-left group box inside RemapSimpleView; these requesters hand focus back to the
-    // summoning corner pill when its panel closes (the editor's return-to-home-box pattern).
-    val profilePillFocus = remember { FocusRequester() }
+    // top-left group box inside RemapSimpleView; this requester hands focus back to the
+    // summoning corner pill when the options panel closes (the return-to-home-box pattern).
     val optionsPillFocus = remember { FocusRequester() }
     var lastOpenPanel by remember { mutableStateOf(openPanel) }
     LaunchedEffect(openPanel) {
         val closed = lastOpenPanel
         lastOpenPanel = openPanel
         if (openPanel == null && closed != null) {
-            runCatching {
-                when (closed) {
-                    RemapPanel.PROFILE -> profilePillFocus.requestFocus()
-                    RemapPanel.OPTIONS -> optionsPillFocus.requestFocus()
-                }
-            }
+            runCatching { optionsPillFocus.requestFocus() }
         }
     }
 
-    // Root Box: the Scaffold plus the profile/options panel overlay, which must cover the
-    // top bar — hence hosted HERE rather than inside the Scaffold content. The Box also owns
-    // the physical-button summons (Select → profile, Start → options — the same buttons whose
-    // glyphs the corner pills wear; B closes an open panel).
+    // Root Box: the Scaffold plus the options panel overlay, which must cover the top bar —
+    // hence hosted HERE rather than inside the Scaffold content. The Box also owns the
+    // physical-button shortcuts (Select → back to the layouts view, its old layout-panel
+    // muscle memory; Start → options, the button whose glyph the corner pill wears; B
+    // closes an open panel).
     Box(
         modifier = modifier
             // Preview handlers fire along the focus path, so this is live whenever focus
@@ -304,33 +287,24 @@ fun RemapControlsScreen(
                 }
                 when (e.key) {
                     Key.ButtonSelect -> {
-                        if (openProfileModal != null) {
-                            // A modal is the topmost dismissable — Select backs out of it
-                            // rather than tearing down the panel underneath it.
-                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close profile modal")
-                            openProfileModal = null
+                        if (openPanel != null) {
+                            // A panel is the topmost dismissable — close it rather than
+                            // navigating away underneath it.
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
+                            openPanel = null
                         } else {
-                            Log.d(REMAP_SCREEN_TAG, "key: Select -> toggle profile panel")
-                            openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> back to layouts view")
+                            onBack()
                         }
                         true
                     }
                     Key.ButtonStart -> {
-                        if (openProfileModal != null) {
-                            Log.d(REMAP_SCREEN_TAG, "key: Start -> close profile modal")
-                            openProfileModal = null
-                        } else {
-                            Log.d(REMAP_SCREEN_TAG, "key: Start -> toggle options panel")
-                            openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
-                        }
+                        Log.d(REMAP_SCREEN_TAG, "key: Start -> toggle options panel")
+                        openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
                         true
                     }
                     Key.ButtonB -> {
-                        if (openProfileModal != null) {
-                            Log.d(REMAP_SCREEN_TAG, "key: B -> close profile modal")
-                            openProfileModal = null
-                            true
-                        } else if (openPanel != null) {
+                        if (openPanel != null) {
                             Log.d(REMAP_SCREEN_TAG, "key: B -> close panel")
                             openPanel = null
                             true
@@ -356,20 +330,15 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
             topBar = {
-                // Application + layout context on the big centered summon; the action-set
-                // tabs that lived here moved into RemapSimpleView's set row.
+                // Back to the layouts view + the viewed application/layout context; the
+                // action-set tabs that lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    appLabel = currentApp?.label,
-                    appPackage = currentApp?.packageName,
+                    appLabel = viewedAppLabel,
+                    appPackage = viewedAppPackage,
                     layoutLabel = profileName,
-                    profileFocusRequester = profilePillFocus,
+                    onBack = onBack,
                     optionsFocusRequester = optionsPillFocus,
-                    onOpenProfile = {
-                        openProfileModal = null
-                        openPanel = if (openPanel == RemapPanel.PROFILE) null else RemapPanel.PROFILE
-                    },
                     onOpenOptions = {
-                        openProfileModal = null
                         openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
                     },
                 )
@@ -410,23 +379,12 @@ fun RemapControlsScreen(
 
         RemapPanelOverlay(
             openPanel = openPanel,
-            onClose = { openProfileModal = null; openPanel = null },
-            profiles = profiles,
-            activeProfileId = activeProfileId,
-            onSelectProfile = onSelectProfile,
+            onClose = { openPanel = null },
             powerOn = powerOn,
             onPowerChange = onPowerChange,
             textSize = textSize,
             onTextSizeChange = onTextSizeChange,
             optionsEntries = optionsEntries,
-            openModal = openProfileModal,
-            onOpenModal = { openProfileModal = it },
-            onCloseModal = { openProfileModal = null },
-            installedApps = installedApps,
-            appBindings = appBindings,
-            onLoadInstalledApps = onLoadInstalledApps,
-            onCreateProfile = onCreateProfile,
-            currentApp = currentApp,
             modifier = Modifier.matchParentSize(),
         )
     }

@@ -12,11 +12,28 @@ import android.net.Uri
  * refactor if/when serialization arrives for another reason.
  */
 object MappoRoute {
-    // REMAP_CONTROLS is the START DESTINATION (2026-08-07): opening Mappo lands on the
-    // controls page. The old MAIN (d-pad flower home) and CHANGE_PROFILE (standalone profile
-    // screen) routes were retired — profile selection and the options list are full-screen
-    // panels inside the Remap Controls screen now (RemapScreenPanels.kt).
-    const val REMAP_CONTROLS = "remap_controls"
+    // ── The browse chain (2026-08-14 flow rebuild) ────────────────────────────────
+    //
+    // APPLICATIONS is the START DESTINATION: opening Mappo lands on the application list
+    // (upgraded from the layout panel's Applications modal). Picking an application opens
+    // its LAYOUTS view; picking a layout there opens REMAP_CONTROLS for it. The former
+    // full-screen profile panel inside the controls screen was retired with this chain —
+    // only the options panel remains a controls-screen overlay.
+    const val APPLICATIONS = "applications"
+
+    // The selected application rides the route so the layouts/controls chrome can show its
+    // icon + title without re-resolving (label lookups are async).
+    const val ARG_APP_PACKAGE = "appPackage"
+    const val ARG_APP_LABEL = "appLabel"
+    const val LAYOUTS = "layouts/{$ARG_APP_PACKAGE}?$ARG_APP_LABEL={$ARG_APP_LABEL}"
+    fun layouts(appPackage: String, appLabel: String): String =
+        "layouts/${Uri.encode(appPackage)}?$ARG_APP_LABEL=${Uri.encode(appLabel)}"
+
+    const val REMAP_CONTROLS = "remap_controls?$ARG_APP_PACKAGE={$ARG_APP_PACKAGE}&$ARG_APP_LABEL={$ARG_APP_LABEL}"
+    fun remapControls(appPackage: String? = null, appLabel: String? = null): String =
+        if (appPackage == null) "remap_controls"
+        else "remap_controls?$ARG_APP_PACKAGE=${Uri.encode(appPackage)}" +
+            "&$ARG_APP_LABEL=${Uri.encode(appLabel ?: "")}"
     const val AUTO_SWITCH = "auto_switch"
     const val BLOCKLIST = "blocklist"
     const val THEME_STUDIO = "theme_studio"
