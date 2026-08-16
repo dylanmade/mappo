@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -218,13 +217,12 @@ private fun OptionsPanelContent(
 }
 
 /**
- * Sticky panel header, matching the group editor's header anatomy: optional leading [onBack]
- * arrow, then leading identity (a physical button's prompt glyph — rendered UNTINTED, fixed
- * hardware colors — a tinted vector [icon], or a custom [leading] composable, e.g. an
- * application icon), overline title, an optional [center] control filling the flexible
- * middle (it owns the weight), then optional utility [actions] adjacent to Close at one
- * rhythm. [onClose] is null on proper VIEWS (the applications/layouts screens), which
- * navigate instead of dismissing.
+ * Sticky panel header, matching the group editor's header anatomy: leading identity (a
+ * physical button's prompt glyph — rendered UNTINTED, fixed hardware colors — or a tinted
+ * vector [icon]), overline title, an optional [center] control filling the flexible middle
+ * (it owns the weight), then optional utility [actions] adjacent to Close at one rhythm.
+ * Proper VIEWS use the shared [RemapTopBar] instead (2026-08-15) — this header is for the
+ * panel/modal surfaces stacked over them.
  */
 @Composable
 internal fun PanelHeader(
@@ -232,8 +230,6 @@ internal fun PanelHeader(
     onClose: (() -> Unit)? = null,
     glyphRes: Int? = null,
     icon: ImageVector? = null,
-    leading: (@Composable () -> Unit)? = null,
-    onBack: (() -> Unit)? = null,
     center: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable () -> Unit = {},
     closeFocusRequester: FocusRequester? = null,
@@ -245,20 +241,10 @@ internal fun PanelHeader(
             .height(MinputPanelHeaderHeight)
             .padding(horizontal = PanelContentPadding),
     ) {
-        if (onBack != null) {
-            MinputIconButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                onClick = onBack,
-            )
-            Spacer(Modifier.width(MinputGlyphLabelGap))
-        }
         // Non-interactive title block: nudged inward to optically match the trailing icon
         // buttons, whose glyphs sit inside an invisible circular tap target.
         Spacer(Modifier.width(MinputPanelTitleInset))
-        if (leading != null) {
-            leading()
-        } else if (glyphRes != null) {
+        if (glyphRes != null) {
             Icon(
                 painterResource(glyphRes),
                 contentDescription = null,

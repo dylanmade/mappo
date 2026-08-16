@@ -1,6 +1,7 @@
 package com.mappo.ui.minput
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -75,6 +76,14 @@ import com.mappo.ui.mappoKeyboardOptions
  *   cover the field. Keystrokes commit live through [onValueChange] (filter semantics — no
  *   Save/Cancel draft); IME Done or focus loss ends editing. Activation stays tap-to-edit,
  *   so the resting pill remains an ordinary d-pad focus stop.
+ * @param light the lighter well fill ([minputInputFieldContainerLight]) for fields sitting
+ *   directly on the BACKGROUND plane, where the standard well — built on the lowest surface
+ *   plane — would vanish into the screen background. Fields on a box/card plane keep the
+ *   default.
+ * @param outlined wraps the well in a solid ring derived from the field's own fill variant
+ *   ([minputInputFieldOutline]), rendered like the button outlines — an inner stroke of
+ *   [MinputBoxStroke] width — so outlined and plain primitives measure identically. The
+ *   fill stays flat (an outline is not a bevel; a well is still not a button).
  */
 @Composable
 fun MinputTextField(
@@ -87,11 +96,14 @@ fun MinputTextField(
     clearable: Boolean = false,
     editTitle: String? = null,
     inlineEdit: Boolean = false,
+    light: Boolean = false,
+    outlined: Boolean = false,
 ) {
     var editing by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(50)
     val interaction = remember { MutableInteractionSource() }
+    val container = if (light) minputInputFieldContainerLight() else minputInputFieldContainer()
 
     if (inlineEdit && editing) {
         MinputTextFieldInlineWell(
@@ -100,6 +112,8 @@ fun MinputTextField(
             placeholder = placeholder,
             leadingIcon = leadingIcon,
             clearable = clearable,
+            container = container,
+            outlined = outlined,
             onDone = { editing = false },
             modifier = modifier,
         )
@@ -108,7 +122,8 @@ fun MinputTextField(
 
     Surface(
         shape = shape,
-        color = minputInputFieldContainer(),
+        color = container,
+        border = if (outlined) BorderStroke(MinputBoxStroke, minputInputFieldOutline(container)) else null,
         modifier = modifier
             .minputInteractiveMotion(interaction)
             .height(MinputPillHeight)
@@ -196,6 +211,8 @@ private fun MinputTextFieldInlineWell(
     placeholder: String?,
     leadingIcon: ImageVector?,
     clearable: Boolean,
+    container: Color,
+    outlined: Boolean,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -216,6 +233,8 @@ private fun MinputTextFieldInlineWell(
         onClear = if (clearable && value.isNotEmpty()) {
             { onValueChange("") }
         } else null,
+        container = container,
+        outlined = outlined,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         interactionSource = interaction,
@@ -293,6 +312,10 @@ private fun MinputTextFieldEditDialog(
  *
  * @param leadingIcon optional glyph at the well's start, mirroring the display pill's.
  * @param onClear when non-null, shows the clear (×) glyph, which invokes it.
+ * @param container the well fill variant the well wears — the summoning pill's, so the
+ *   inline-edit swap keeps the resting field's coloration.
+ * @param outlined mirrors the display pill's outline: the same fill-derived ring, sharing
+ *   the focus ring's border slot (the focus color simply wins while focused).
  */
 @Composable
 internal fun MinputTextWell(
@@ -303,6 +326,8 @@ internal fun MinputTextWell(
     placeholder: String? = null,
     leadingIcon: ImageVector? = null,
     onClear: (() -> Unit)? = null,
+    container: Color = minputInputFieldContainer(),
+    outlined: Boolean = false,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
@@ -311,16 +336,18 @@ internal fun MinputTextWell(
     val colors = MaterialTheme.colorScheme
     val focused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(50)
-    // The minput translation of M3's focused-border state.
+    val restingRing = if (outlined) minputInputFieldOutline(container) else Color.Transparent
+    // The minput translation of M3's focused-border state; doubles as the outline's slot so
+    // an outlined well never wears two strokes.
     val focusRing by animateColorAsState(
-        targetValue = if (focused && enabled) colors.primary.copy(alpha = 0.55f) else Color.Transparent,
+        targetValue = if (focused && enabled) colors.primary.copy(alpha = 0.55f) else restingRing,
         label = "minputWellFocusRing",
     )
     val textStyle = minputMiniTextStyle().copy(color = colors.onSurface)
 
     Surface(
         shape = shape,
-        color = minputInputFieldContainer(),
+        color = container,
         modifier = modifier
             .height(MinputPillHeight)
             .border(MinputBoxStroke, focusRing, shape)

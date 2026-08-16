@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,9 @@ import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputBarHeight
+import com.mappo.ui.minput.MinputBarIconTextGap
+import com.mappo.ui.minput.MinputBarStackGap
+import com.mappo.ui.minput.MinputBarWidgetIconSize
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputModalEnterMillis
@@ -245,9 +249,11 @@ private fun FrameBottomBar(
 
 /**
  * The active-context shortcut (rehomed from the controls top bar 2026-08-14): the detected
- * application and the runtime-active layout at a glance — application block right-aligned
- * toward the centered icon, layout block left-aligned away from it, each under its own
- * overline. Tapping opens the active layout's controls view.
+ * profile (application) and the runtime-active layout at a glance — profile block
+ * right-aligned toward the centered icon, layout block left-aligned away from it, each
+ * under its own overline. Icon size and stack metrics are the shared bar-widget values, so
+ * this and the top bar's viewing widget read as siblings. Tapping opens the active
+ * layout's controls view.
  *
  * INVISIBLE variant of the pill family: no fill, no bevel — bare content over the bar,
  * keeping only the clip (ripple bound), indication, and press motion. The fixed footprint
@@ -279,9 +285,13 @@ private fun ActiveContextButton(
             )
             .padding(horizontal = ContextButtonContentPadding),
     ) {
-        Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+        ) {
             Text(
-                text = "Active application".uppercase(),
+                text = "Active profile".uppercase(),
                 style = minputOverlineTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -294,20 +304,24 @@ private fun ActiveContextButton(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Spacer(Modifier.width(MinputBarIconTextGap))
         val icon = rememberAppIconPainter(appPackage)
         if (icon != null) {
-            AppIconImage(icon, size = ContextButtonIconSize)
+            AppIconImage(icon, size = MinputBarWidgetIconSize)
         } else {
             Icon(
                 Icons.Filled.Apps,
                 contentDescription = null,
-                modifier = Modifier.size(ContextButtonIconSize),
+                modifier = Modifier.size(MinputBarWidgetIconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.width(MinputGlyphLabelGap))
-        Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+        Spacer(Modifier.width(MinputBarIconTextGap))
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+        ) {
             Text(
                 text = "Active layout".uppercase(),
                 style = minputOverlineTextStyle(),
@@ -331,6 +345,3 @@ private val ContextButtonHeight = 32.dp
 
 /** Content inset inside the context button (wider than a mini pill — it's a bigger surface). */
 private val ContextButtonContentPadding = 14.dp
-
-/** The application icon's edge — the button's centerpiece. */
-private val ContextButtonIconSize = 20.dp

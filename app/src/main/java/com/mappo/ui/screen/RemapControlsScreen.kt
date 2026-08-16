@@ -40,12 +40,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
@@ -61,6 +63,7 @@ import com.mappo.data.settings.TextSize
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
+import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
 import com.mappo.ui.screen.remap.RemapOptionEntry
@@ -333,13 +336,22 @@ fun RemapControlsScreen(
                 // Back to the layouts view + the viewed application/layout context; the
                 // action-set tabs that lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    appLabel = viewedAppLabel,
+                    overline = if (viewedAppLabel != null) {
+                        "Viewing $viewedAppLabel layout"
+                    } else "Viewing layout",
+                    title = profileName ?: "Layout",
                     appPackage = viewedAppPackage,
-                    layoutLabel = profileName,
                     onBack = onBack,
-                    optionsFocusRequester = optionsPillFocus,
-                    onOpenOptions = {
-                        openPanel = if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                    actions = {
+                        MinputPillButton(
+                            text = "Options",
+                            onClick = {
+                                openPanel =
+                                    if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                            },
+                            leadingIcon = painterResource(R.drawable.xbox_button_menu),
+                            modifier = Modifier.focusRequester(optionsPillFocus),
+                        )
                     },
                 )
             },

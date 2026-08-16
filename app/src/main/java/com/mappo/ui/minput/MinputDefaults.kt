@@ -96,6 +96,20 @@ fun minputInputFieldContainer(): Color =
         .compositeOver(MaterialTheme.colorScheme.surfaceContainerLowest)
 
 /**
+ * The lighter well variant, for text-input fields sitting directly on the BACKGROUND
+ * plane: the standard well ([minputInputFieldContainer]) is built on the lowest surface
+ * plane, so against the screen background it all but vanishes — there is no darker plane
+ * for a background-seated well to recess into. This variant steps the base one plane UP
+ * instead (same formula shape over `surfaceContainerLow`), lifting the field off the
+ * background while staying fainter than the surface-1 controls beside it, so it still
+ * reads as a well rather than a button.
+ */
+@Composable
+fun minputInputFieldContainerLight(): Color =
+    MaterialTheme.colorScheme.primary.copy(alpha = 0.03f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainerLow)
+
+/**
  * The one hover/press/focus state-layer treatment for every minput interactive: an
  * onSurface-colored ripple. Explicit (not `LocalIndication.current`) because the default
  * ripple derives its color from [androidx.compose.material3.LocalContentColor] — a minput
@@ -127,6 +141,22 @@ private const val BevelBoostPerLum = 6f
  *  Scale strength up with luminance to keep the stroke equally legible on every plane. */
 private fun bevelStrengthBoost(base: Color): Float =
     1f + BevelBoostPerLum * (base.luminance() - BevelBoostLumFloor).coerceAtLeast(0f)
+
+/** How far an input field's outline deviates from the well fill it wraps — matched to the
+ *  bevel's top highlight so outlined wells and beveled buttons carry one stroke intensity. */
+private const val InputFieldOutlineStrength = BevelTopHighlightStrength
+
+/**
+ * Outline color for an `outlined` text-input field, derived from the field's own container
+ * fill (pass whichever well variant the instance wears): the fill nudged toward white by
+ * the bevel family's derivation — same strength as the bevel's top highlight,
+ * luminance-adaptive boost included — but applied as a solid uniform ring rather than a
+ * fading bevel, because a well is flat, not raised. Rendered like every button outline:
+ * an INNER stroke of [MinputBoxStroke] width (see the NB below [minputBevelBorder]), so
+ * outlined and plain fields measure identically.
+ */
+fun minputInputFieldOutline(base: Color): Color =
+    lerp(base, Color.White, (InputFieldOutlineStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
 
 /** Where along the corner arc the bevel finishes fading: 1−cos(45°) of the radius — the
  *  point where the outline's tangent passes 45° and "top" geometrically becomes "side". */
@@ -310,3 +340,13 @@ val MinputBarHeight = 38.dp
 
 /** Horizontal inset at a bar's edges. */
 val MinputBarEdgePadding = 6.dp
+
+/** The app icon inside a bar's context widget (the top bar's viewing stack, the bottom
+ *  bar's active shortcut) — one size so the two widgets read as siblings. */
+val MinputBarWidgetIconSize = 20.dp
+
+/** Horizontal gap between a bar widget's app icon and its flanking text stack(s). */
+val MinputBarIconTextGap = 6.dp
+
+/** Vertical gap inside a bar widget's text stack, between the overline and the value. */
+val MinputBarStackGap = 1.dp

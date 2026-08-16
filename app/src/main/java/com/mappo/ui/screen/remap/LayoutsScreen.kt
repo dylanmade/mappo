@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
@@ -39,15 +38,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mappo.data.model.Profile
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
-import com.mappo.ui.component.AppIconImage
-import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillDropdown
-import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
@@ -72,9 +68,9 @@ private enum class LayoutsModal { ADD, OPTIONS }
 /**
  * The layouts view for ONE application (UI label "layouts"; the code keeps the Profile
  * names) — the middle of the applications → layouts → controls browse chain (2026-08-14).
- * Rebuilt on the Applications view's anatomy: header (back arrow · the application's icon ·
- * "<application> layouts" · Add/Tune utilities), search + sort + direction row, then the
- * layout tiles. Only child layouts of [appPackage] (associated via auto-switch bindings)
+ * Rebuilt on the Profiles view's anatomy: the shared browse-chain top bar (back arrow · the
+ * profile's application icon · "<profile> - Layouts" · Add/Tune utilities), search + sort +
+ * direction row, then the layout tiles. Only child layouts of [appPackage] (associated via auto-switch bindings)
  * are listed; selecting one activates it and opens the controls view.
  */
 @Composable
@@ -110,22 +106,12 @@ fun LayoutsScreen(
         // surface — the screen's content plane.
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize()) {
-                PanelHeader(
-                    title = "$appLabel layouts",
+                // The shared browse-chain bar: back to the profiles home, the profile's
+                // application icon, then its utilities.
+                RemapTopBar(
+                    overline = "$appLabel Layouts",
+                    appPackage = appPackage,
                     onBack = onBack,
-                    leading = {
-                        val icon = rememberAppIconPainter(appPackage)
-                        if (icon != null) {
-                            AppIconImage(icon, size = MinputPillIconSize)
-                        } else {
-                            Icon(
-                                Icons.Filled.Apps,
-                                contentDescription = null,
-                                modifier = Modifier.size(MinputPillIconSize),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
                     actions = {
                         // Add · Options adjacent at one rhythm — the group editor's header
                         // utility treatment.
@@ -151,6 +137,7 @@ fun LayoutsScreen(
                         .padding(
                             start = PanelContentPadding,
                             end = PanelContentPadding,
+                            top = MinputPanelDividerContentGap,
                             bottom = MinputPanelDividerContentGap,
                         ),
                 ) {
@@ -210,7 +197,7 @@ fun LayoutsScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = if (children.isEmpty()) "No layouts for this application yet"
+                                    text = if (children.isEmpty()) "No layouts for this profile yet"
                                     else "No layouts match",
                                     style = minputMiniTextStyle(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

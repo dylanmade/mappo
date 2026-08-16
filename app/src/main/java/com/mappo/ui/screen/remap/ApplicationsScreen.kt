@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,10 +50,12 @@ internal enum class AppSort(val label: String, val naturalAscending: Boolean) {
 }
 
 /**
- * The Applications view — the app's HOME (2026-08-14 flow rebuild): every launchable app on
- * the device (games join the list when the planned library scanning lands — local-folder
- * scraping plus installed-game lists from frontends like GameNative / GameHub), behind its
- * own search + sort row. Picking an application opens its [LayoutsScreen].
+ * The Profiles view — the app's HOME (2026-08-14 flow rebuild; retitled "Profiles"
+ * 2026-08-15 — each row is an application's profile; the code keeps the Applications
+ * names): every launchable app on the device (games join the list when the planned library
+ * scanning lands — local-folder scraping plus installed-game lists from frontends like
+ * GameNative / GameHub), behind its own search + sort row. Picking a profile opens its
+ * [LayoutsScreen].
  *
  * Upgraded from the layout panel's Applications modal; the "All applications" / "Global"
  * meta-filter rows died with the filter they existed to set.
@@ -78,7 +79,8 @@ fun ApplicationsScreen(
     // surface — the screen's content plane.
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize()) {
-            PanelHeader(title = "Applications", icon = Icons.Filled.Apps)
+            // The shared browse-chain bar: back on the home means "leave Mappo".
+            RemapTopBar(overline = "Profiles", onBack = onBack)
             // The filter row: search + sort + direction.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -88,13 +90,14 @@ fun ApplicationsScreen(
                     .padding(
                         start = PanelContentPadding,
                         end = PanelContentPadding,
+                        top = MinputPanelDividerContentGap,
                         bottom = MinputPanelDividerContentGap,
                     ),
             ) {
                 MinputTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = "Search applications",
+                    placeholder = "Search profiles",
                     leadingIcon = Icons.Filled.Search,
                     clearable = true,
                     // Top-of-screen field — the sanctioned modal-less variant.
@@ -107,7 +110,7 @@ fun ApplicationsScreen(
                     options = AppSort.entries,
                     optionLabel = { it.label },
                     onPick = { sort = it; ascending = it.naturalAscending },
-                    onClickLabel = "Sort applications",
+                    onClickLabel = "Sort profiles",
                 )
                 SortDirectionButton(ascending = ascending, onToggle = { ascending = !ascending })
             }
@@ -138,7 +141,7 @@ fun ApplicationsScreen(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = if (installedApps.isEmpty()) "Loading applications…" else "No applications match",
+                                text = if (installedApps.isEmpty()) "Loading profiles…" else "No profiles match",
                                 style = minputMiniTextStyle(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
