@@ -18,7 +18,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.mappo.MainActivity
 import com.mappo.data.model.DeviceButton
-import com.mappo.ui.screen.home.HomeBackdrop
 import com.mappo.data.model.RemapTarget
 import com.mappo.data.model.steam.InputSource
 import com.mappo.service.foreground.ForegroundAppMonitor
@@ -550,15 +549,10 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
                 Log.i(TAG, "onKeyEvent: Select+A → toggle home frame in place")
                 MainActivity.requestHomeToggle()
             } else {
-                // Capture the display BEFORE our window exists — the one moment the home
-                // backdrop can't contain Mappo itself. Launch from the callback either way.
-                Log.i(TAG, "onKeyEvent: Select+A → capture backdrop, then launch home frame")
-                captureScreenshot { screenshot ->
-                    HomeBackdrop.setFrom(screenshot)
-                    startActivity(
-                        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                }
+                Log.i(TAG, "onKeyEvent: Select+A → launch home frame")
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
             }
             return true
         }

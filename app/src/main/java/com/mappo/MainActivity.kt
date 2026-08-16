@@ -1,40 +1,37 @@
 package com.mappo
 
-import android.app.Activity
 import android.content.Context
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import android.content.Intent
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.ui.Modifier
 import com.themestudio.core.ThemeStudioProvider
 import com.themestudio.persistence.SharedPrefsThemeOverridesStorage
 import dagger.hilt.android.AndroidEntryPoint
 import com.mappo.data.settings.TextSizeSettings
-import com.mappo.service.input.InputDispatcher
 import com.mappo.ui.screen.MainScreen
-import com.mappo.ui.screen.home.HomeBackdrop
 import com.mappo.ui.theme.MappoTheme
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-
-    @Inject lateinit var inputDispatcher: InputDispatcher
 
     // Deep-route request from the toolbar overlay (OVERLAY_TOOLBAR_PLAN.md, Brick 2). The
     // overlay launches us with EXTRA_ROUTE naming a NavHost destination; MainScreen navigates
@@ -52,50 +49,41 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        captureBackdropIfStale()
         consumeRouteExtra(intent)
-        // Fully immersive, GameNative-style: the system bars are HIDDEN by default and Mappo
-        // uses the entire screen (incl. the display cutout). A swipe from the edge reveals the
-        // bars transiently, OVER the content, without shifting layout — so the Edit Overlay
-        // coordinate space matches a real fullscreen game.
-        //
-        // Why immersive and not plain edge-to-edge: the window is translucent (so the home
-        // drawer reveals the app behind), and a translucent activity is laid out within the
-        // content frame — it's exempt from edge-to-edge enforcement and can't draw under the
-        // bars no matter the flags. Hiding the bars sidesteps that: there are no bar insets,
-        // so the content frame becomes the whole display. FLAG_LAYOUT_NO_LIMITS pins the frame
-        // to the full display (incl. cutout); enableEdgeToEdge keeps the bars transparent for
-        // the moments they transiently appear. See `hideSystemBars` + onWindowFocusChanged.
+        // A normal opaque app window (2026-08-16 — the drawer-over-the-game concept is
+        // retired; only the run-mode overlay windows and OverlayEditActivity render over the
+        // game, and only the latter is immersive). The system bars stay visible with their
+        // own layout space: enableEdgeToEdge un-fits the decor, so the compose root paints
+        // the whole window (bar strips included) and pads content by the systemBars insets —
+        // deliberately NOT safeDrawing, which includes the IME and would break the
+        // keyboard-overlay policy. Transparent bar styles let our fill show through the bars.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
-        window.addFlags(
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        hideSystemBars()
-
-        // The home is a translucent window over the foregrounded app, so the default "scale up
-        // from the launcher icon" open animation looks wrong. Fade the (mostly transparent) window
-        // — and its bottom toolbar — in and out instead, while the app behind holds still (hold).
-        // API 34+ only; older devices keep the platform default.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, R.anim.hold)
-            overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, R.anim.hold, android.R.anim.fade_out)
-        }
 
         setContent {
             val themeStorage = remember { SharedPrefsThemeOverridesStorage(applicationContext) }
             ThemeStudioProvider(storage = themeStorage) {
                 MappoTheme {
-                    MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
+                    // surfaceContainerLowest — the app's background plane, painted across the
+                    // FULL window so the system-bar strips wear it too (theme-aware, unlike
+                    // the theme's static windowBackground).
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                    ) {
+                        // The system bars' reserved layout space: everything lays out between
+                        // them so bar content never occludes app content.
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .windowInsetsPadding(WindowInsets.systemBars),
+                        ) {
+                            MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
+                        }
+                    }
                 }
             }
         }
@@ -106,19 +94,7 @@ class MainActivity : ComponentActivity() {
         // singleTask: a re-launch (e.g. the overlay firing a new deep-route intent while we're
         // already alive) arrives here, not onCreate. Re-point getIntent() and consume the route.
         setIntent(intent)
-        captureBackdropIfStale()
         consumeRouteExtra(intent)
-    }
-
-    /**
-     * Launcher-icon / deep-link path for the home's blurred backdrop: fire a screenshot right
-     * away, before our first frame lands (the window fades in from transparent, so an early
-     * capture is near-clean). Skipped when the Select+A chord just captured — that shot was
-     * taken BEFORE launch and must not be replaced by one that may include our own window.
-     */
-    private fun captureBackdropIfStale() {
-        if (HomeBackdrop.isFresh()) return
-        inputDispatcher.captureScreenshot { HomeBackdrop.setFrom(it) }
     }
 
     override fun onResume() {
@@ -135,18 +111,6 @@ class MainActivity : ComponentActivity() {
         val route = intent?.getStringExtra(EXTRA_ROUTE) ?: return
         pendingRoute = route
         routeNonce++
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        // Immersive isn't sticky across focus changes (the transient swipe, returning from
-        // another activity, dialogs), so re-hide whenever we regain focus.
-        if (hasFocus) hideSystemBars()
-    }
-
-    private fun hideSystemBars() {
-        WindowCompat.getInsetsController(window, window.decorView)
-            .hide(WindowInsetsCompat.Type.systemBars())
     }
 
     companion object {

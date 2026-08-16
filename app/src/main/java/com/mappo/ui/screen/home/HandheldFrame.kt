@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -26,7 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +50,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -135,23 +132,10 @@ fun HandheldFrame(
         val availW = maxWidth
         val availH = maxHeight
 
-        // Frozen blurred backdrop of the app underneath (captured + downscale-blurred in
-        // HomeBackdrop — window/RenderEffect blur is unusable on this device). Fades with the
-        // slide so dismissing melts back to the live sharp app. Null (no capture) → the live
-        // background stays fully visible, undimmed.
-        val backdrop by HomeBackdrop.bitmap.collectAsState()
-        backdrop?.let { image ->
-            Image(
-                bitmap = image,
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = 1f - slide.value },
-                contentScale = ContentScale.FillBounds,
-            )
-        }
         // Invisible tap-catcher (deliberately NOT a dimming scrim): a tap outside the device
-        // dismisses the home on MAIN.
+        // dismisses the home on MAIN. (The frozen-blur backdrop died with the
+        // drawer-over-the-game concept, 2026-08-16 — if this frame returns, it returns as a
+        // decorative frame over the app's own opaque background.)
         if (slide.value < 1f) {
             Box(
                 Modifier

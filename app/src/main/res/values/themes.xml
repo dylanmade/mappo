@@ -5,9 +5,10 @@
          moments. Dark variant lives in values-night/themes.xml. -->
     <style name="Theme.Mappo" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <!-- Translucent variant for MainActivity: the home is the drawer floating over whatever
-         app is underneath, so the window must let it show through. Secondary routes paint
-         opaque Scaffolds over this, so only the transparent MAIN route reveals the app behind. -->
+    <!-- Translucent variant for OverlayEditActivity ONLY (2026-08-16 — MainActivity is a
+         normal opaque app now; the drawer-over-the-game concept is retired): with no captured
+         backdrop the editor reveals the live content behind it, so overlay editing stays
+         WYSIWYG over the real game. -->
     <style name="Theme.Mappo.Translucent" parent="Theme.Mappo">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

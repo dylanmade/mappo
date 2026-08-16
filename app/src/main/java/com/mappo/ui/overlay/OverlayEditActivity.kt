@@ -57,9 +57,10 @@ class OverlayEditActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Match MainActivity: fully immersive (bars hidden, swipe to reveal transiently) so the
-        // edit surface is full-bleed and the screenshot/overlay coordinate space lines up 1:1
-        // with a real fullscreen game.
+        // The app's ONLY fully-immersive window (2026-08-16 — MainActivity shows the system
+        // bars now): bars hidden, swipe to reveal transiently, so the edit surface is
+        // full-bleed and the screenshot/overlay coordinate space lines up 1:1 with a real
+        // fullscreen game.
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
         WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =

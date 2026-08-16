@@ -6,7 +6,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -35,7 +34,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,8 +84,8 @@ private const val ExpandMillis = 320
  * screens — and **expanded** fills the entire display. The resize is animated.
  *
  * Enter/exit is the quick modal fade (alpha + settle-scale on the same spec as
- * [com.mappo.ui.minput.MinputModal]) instead of the old slide — the frozen blurred backdrop
- * still fades with it, and a tap outside the compact screen still dismisses on MAIN.
+ * [com.mappo.ui.minput.MinputModal]) instead of the old slide; a tap outside the compact
+ * screen still dismisses on MAIN.
  */
 @Composable
 fun ScreenFrame(
@@ -122,23 +119,10 @@ fun ScreenFrame(
         val availW = maxWidth
         val availH = maxHeight
 
-        // Frozen blurred backdrop of the app underneath (captured + downscale-blurred in
-        // HomeBackdrop — window/RenderEffect blur is unusable on this device). Fades with the
-        // frame so dismissing melts back to the live sharp app. Null (no capture) → the live
-        // background stays fully visible, undimmed.
-        val backdrop by HomeBackdrop.bitmap.collectAsState()
-        backdrop?.let { image ->
-            Image(
-                bitmap = image,
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = fade.value },
-                contentScale = ContentScale.FillBounds,
-            )
-        }
         // Invisible tap-catcher (deliberately NOT a dimming scrim): a tap outside the compact
-        // screen dismisses the home on MAIN.
+        // screen dismisses the home on MAIN. (The frozen-blur backdrop that used to fill this
+        // area died with the drawer-over-the-game concept, 2026-08-16 — the activity is opaque
+        // now and paints its own background.)
         if (fade.value > 0f) {
             Box(
                 Modifier
