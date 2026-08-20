@@ -78,9 +78,11 @@ import kotlinx.collections.immutable.ImmutableList
 
 /**
  * The full-screen overlay panels of the controls screen. Only OPTIONS remains (physical
- * Start / the top bar's Options pill): the former PROFILE panel — layout selection — was
- * upgraded into the applications → layouts browse chain of proper routes (2026-08-14;
- * [ApplicationsScreen] / [LayoutsScreen]).
+ * Start / the top bar's Layout settings pill): the former PROFILE panel — layout
+ * selection — was upgraded into the browse chain of proper routes (2026-08-14). Rescoped
+ * 2026-08-20: the GLOBAL app options (power, text size, the destination rows) moved to
+ * the wordmark drawer ([com.mappo.ui.screen.home.MappoDrawerContent]); this panel is now
+ * "Layout settings" — the entries scoped to the layout being edited.
  */
 internal enum class RemapPanel { OPTIONS }
 
@@ -111,10 +113,6 @@ data class RemapOptionEntry(
 internal fun RemapPanelOverlay(
     openPanel: RemapPanel?,
     onClose: () -> Unit,
-    powerOn: Boolean,
-    onPowerChange: (Boolean) -> Unit,
-    textSize: TextSize,
-    onTextSizeChange: (TextSize) -> Unit,
     optionsEntries: List<RemapOptionEntry>,
     modifier: Modifier = Modifier,
 ) {
@@ -131,11 +129,7 @@ internal fun RemapPanelOverlay(
             testTag = "remap-panel:OPTIONS",
             modifier = Modifier.matchParentSize(),
         ) {
-            OptionsPanelContent(
-                powerOn = powerOn,
-                onPowerChange = onPowerChange,
-                textSize = textSize,
-                onTextSizeChange = onTextSizeChange,
+            LayoutSettingsPanelContent(
                 entries = optionsEntries,
                 onClose = onClose,
                 closeFocusRequester = optionsCloseFocus,
@@ -156,15 +150,12 @@ internal fun SortDirectionButton(ascending: Boolean, onToggle: () -> Unit) {
 }
 
 /**
- * The options panel: the master Power switch (rehomed from the old home screen) followed by
- * the destination rows that used to live in the home options fly-out.
+ * The Layout settings panel: the entries scoped to the layout being edited (Edit overlay
+ * today; more per-layout settings land here as they exist). The global rows this panel
+ * used to carry live in the wordmark drawer now.
  */
 @Composable
-private fun OptionsPanelContent(
-    powerOn: Boolean,
-    onPowerChange: (Boolean) -> Unit,
-    textSize: TextSize,
-    onTextSizeChange: (TextSize) -> Unit,
+private fun LayoutSettingsPanelContent(
     entries: List<RemapOptionEntry>,
     onClose: () -> Unit,
     closeFocusRequester: FocusRequester? = null,
@@ -172,7 +163,7 @@ private fun OptionsPanelContent(
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
             glyphRes = R.drawable.xbox_button_menu,
-            title = "Options",
+            title = "Layout settings",
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
         )
@@ -188,31 +179,31 @@ private fun OptionsPanelContent(
                 bottom = 2.dp,
             ),
         ) {
-            item(key = "power") {
-                PowerRow(powerOn = powerOn, onPowerChange = onPowerChange)
-            }
-            item(key = "text_size") {
-                TextSizeRow(current = textSize, onPick = onTextSizeChange)
-            }
             items(entries, key = { it.id }) { entry ->
-                PanelRow(onClick = { onClose(); entry.onClick() }) {
-                    Icon(
-                        entry.icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(PanelRowIconSize),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(MinputGlyphLabelGap))
-                    Text(
-                        text = entry.label,
-                        style = minputMiniTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                OptionEntryRow(entry = entry, onClose = onClose)
             }
         }
+    }
+}
+
+/** One destination row shared by the Layout settings panel and the wordmark drawer. */
+@Composable
+internal fun OptionEntryRow(entry: RemapOptionEntry, onClose: () -> Unit) {
+    PanelRow(onClick = { onClose(); entry.onClick() }) {
+        Icon(
+            entry.icon,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = entry.label,
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -322,10 +313,10 @@ internal fun PanelRow(
 /**
  * Master power row (the old home's PowerControl reshaped as a settings row): LED + label
  * left, the halo-stripped scaled switch right. Drives remap AND the button overlay in
- * lockstep via the caller.
+ * lockstep via the caller. Internal: lives in the wordmark drawer (2026-08-20).
  */
 @Composable
-private fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
+internal fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -379,7 +370,7 @@ private fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
  * rows around it: glyph + label left, minput pill dropdown right.
  */
 @Composable
-private fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
+internal fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier

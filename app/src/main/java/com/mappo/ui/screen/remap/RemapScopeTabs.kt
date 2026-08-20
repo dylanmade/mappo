@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputBarEdgePadding
@@ -37,14 +39,15 @@ import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
- * The shared browse-chain top bar (2026-08-15): every view of the profiles → layouts →
- * controls chain wears the same bar — Back arrow, the viewed profile's application icon
- * (generic glyph on the profiles home), then the header text: an [overline] label with an
- * optional value line beneath it (the controls view stacks the viewed layout's name there).
- * Trailing [actions] are the view's utilities (Add/Tune on layouts, the Options pill on
- * controls). A surfaceContainer strip over a divider on the shared [MinputBarHeight] /
- * [MinputBarEdgePadding] anatomy, mirrored by the frame's bottom bar — the icon and stack
- * metrics deliberately match the bottom bar's active-context widget.
+ * The shared browse-chain top bar (2026-08-15; slots widened for the 2026-08-20 flow
+ * re-imagining): every view of the chain wears the same bar — a [navigation] slot at the
+ * start (defaults to the Back arrow; the controls home swaps in the Auto switch stack),
+ * the viewed profile's application icon (generic glyph when none), the header text — an
+ * [overline] label with an optional value line beneath it — then [leadingActions] sitting
+ * WITH the identity cluster (the controls view's Activate / View layouts pills) and
+ * right-aligned trailing [actions] (Add/Tune on layouts, Layout settings on controls).
+ * A surfaceContainer strip over a divider on the shared [MinputBarHeight] /
+ * [MinputBarEdgePadding] anatomy, mirrored by the frame's bottom bar.
  */
 @Composable
 internal fun RemapTopBar(
@@ -55,6 +58,9 @@ internal fun RemapTopBar(
     appPackage: String? = null,
     // Focus-return target: when a summoned surface closes, controller focus hands back here.
     backFocusRequester: FocusRequester? = null,
+    // Start-slot override; null renders the default Back arrow wired to [onBack].
+    navigation: (@Composable () -> Unit)? = null,
+    leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     // surfaceContainer — app-bar plane, one step up from the screen surface.
@@ -67,14 +73,18 @@ internal fun RemapTopBar(
                     .height(MinputBarHeight)
                     .padding(horizontal = MinputBarEdgePadding),
             ) {
-                MinputIconButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    onClick = onBack,
-                    modifier = if (backFocusRequester != null) {
-                        Modifier.focusRequester(backFocusRequester)
-                    } else Modifier,
-                )
+                if (navigation != null) {
+                    navigation()
+                } else {
+                    MinputIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        onClick = onBack,
+                        modifier = if (backFocusRequester != null) {
+                            Modifier.focusRequester(backFocusRequester)
+                        } else Modifier,
+                    )
+                }
                 Spacer(Modifier.width(MinputGlyphLabelGap))
                 val icon = rememberAppIconPainter(appPackage)
                 if (icon != null) {
@@ -88,8 +98,11 @@ internal fun RemapTopBar(
                     )
                 }
                 Spacer(Modifier.width(MinputBarIconTextGap))
+                // Intrinsic width under a chrome cap (names are unbounded — the
+                // NameableText rule), so leading actions can sit WITH the identity
+                // cluster instead of being pushed to the far edge.
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.widthIn(max = TopBarStackMaxWidth),
                     verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
                 ) {
                     Text(
@@ -109,10 +122,17 @@ internal fun RemapTopBar(
                         )
                     }
                 }
+                Spacer(Modifier.width(MinputBarIconTextGap))
+                leadingActions()
                 Spacer(Modifier.width(MinputGlyphLabelGap))
+                Spacer(Modifier.weight(1f))
                 actions()
             }
         }
         HorizontalDivider()
     }
 }
+
+/** Width cap for the bar's overline/title stack — profile and application names are
+ *  unbounded, and the bar has actions to fit on both sides of them. */
+private val TopBarStackMaxWidth = 200.dp

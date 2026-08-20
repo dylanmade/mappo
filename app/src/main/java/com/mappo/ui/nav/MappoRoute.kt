@@ -12,13 +12,14 @@ import android.net.Uri
  * refactor if/when serialization arrives for another reason.
  */
 object MappoRoute {
-    // ── The browse chain (2026-08-14 flow rebuild) ────────────────────────────────
+    // ── The browse chain (2026-08-20 flow re-imagining) ───────────────────────────
     //
-    // APPLICATIONS is the START DESTINATION: opening Mappo lands on the application list
-    // (upgraded from the layout panel's Applications modal). Picking an application opens
-    // its LAYOUTS view; picking a layout there opens REMAP_CONTROLS for it. The former
-    // full-screen profile panel inside the controls screen was retired with this chain —
-    // only the options panel remains a controls-screen overlay.
+    // REMAP_CONTROLS with no profile arg is the START DESTINATION — the home is the
+    // controls view of the currently ACTIVE layout. "View layouts" opens the LAYOUTS
+    // view; picking a layout there opens a second REMAP_CONTROLS entry that VIEWS it
+    // (profileId arg set) without activating — the top bar's "Activate layout" does
+    // that. APPLICATIONS (the Profiles list) remains the browse fallback when the
+    // active layout has no bound application.
     const val APPLICATIONS = "applications"
 
     // The selected application rides the route so the layouts/controls chrome can show its
@@ -29,11 +30,20 @@ object MappoRoute {
     fun layouts(appPackage: String, appLabel: String): String =
         "layouts/${Uri.encode(appPackage)}?$ARG_APP_LABEL=${Uri.encode(appLabel)}"
 
-    const val REMAP_CONTROLS = "remap_controls?$ARG_APP_PACKAGE={$ARG_APP_PACKAGE}&$ARG_APP_LABEL={$ARG_APP_LABEL}"
-    fun remapControls(appPackage: String? = null, appLabel: String? = null): String =
-        if (appPackage == null) "remap_controls"
-        else "remap_controls?$ARG_APP_PACKAGE=${Uri.encode(appPackage)}" +
-            "&$ARG_APP_LABEL=${Uri.encode(appLabel ?: "")}"
+    /** Which layout (Profile id) a controls entry VIEWS. `0` is the sentinel for "follow
+     *  the active layout" — the home instance. */
+    const val ARG_PROFILE_ID = "profileId"
+    const val REMAP_CONTROLS = "remap_controls?$ARG_APP_PACKAGE={$ARG_APP_PACKAGE}" +
+        "&$ARG_APP_LABEL={$ARG_APP_LABEL}&$ARG_PROFILE_ID={$ARG_PROFILE_ID}"
+    fun remapControls(
+        appPackage: String? = null,
+        appLabel: String? = null,
+        profileId: Long = 0L,
+    ): String =
+        if (appPackage == null && profileId == 0L) "remap_controls"
+        else "remap_controls?$ARG_APP_PACKAGE=${Uri.encode(appPackage ?: "")}" +
+            "&$ARG_APP_LABEL=${Uri.encode(appLabel ?: "")}" +
+            "&$ARG_PROFILE_ID=$profileId"
     const val AUTO_SWITCH = "auto_switch"
     const val BLOCKLIST = "blocklist"
     const val THEME_STUDIO = "theme_studio"

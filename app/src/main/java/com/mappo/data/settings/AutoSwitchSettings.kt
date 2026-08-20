@@ -38,6 +38,13 @@ class AutoSwitchSettings @Inject constructor(
     )
     val ignoredPackages: StateFlow<Set<String>> = _ignoredPackages.asStateFlow()
 
+    // "Don't show again" on the activate-layout warning (manually activating a layout
+    // turns auto detection off; the dialog explains that once).
+    private val _activateWarningSuppressed = MutableStateFlow(
+        prefs.getBoolean(KEY_ACTIVATE_WARNING_SUPPRESSED, false)
+    )
+    val activateWarningSuppressed: StateFlow<Boolean> = _activateWarningSuppressed.asStateFlow()
+
     private val listener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
         when (key) {
             KEY_AUTO_SWITCH_ENABLED ->
@@ -48,6 +55,9 @@ class AutoSwitchSettings @Inject constructor(
             KEY_IGNORED_PACKAGES ->
                 _ignoredPackages.value =
                     sp.getStringSet(KEY_IGNORED_PACKAGES, emptySet())?.toSet() ?: emptySet()
+            KEY_ACTIVATE_WARNING_SUPPRESSED ->
+                _activateWarningSuppressed.value =
+                    sp.getBoolean(KEY_ACTIVATE_WARNING_SUPPRESSED, false)
         }
     }
 
@@ -81,6 +91,10 @@ class AutoSwitchSettings @Inject constructor(
         prefs.edit().putBoolean(KEY_AUTO_CREATE_PROFILES_ENABLED, enabled).apply()
     }
 
+    fun setActivateWarningSuppressed(suppressed: Boolean) {
+        prefs.edit().putBoolean(KEY_ACTIVATE_WARNING_SUPPRESSED, suppressed).apply()
+    }
+
     fun addIgnoredPackage(pkg: String) {
         val updated = _ignoredPackages.value + pkg
         prefs.edit().putStringSet(KEY_IGNORED_PACKAGES, updated).apply()
@@ -97,6 +111,7 @@ class AutoSwitchSettings @Inject constructor(
         private const val KEY_AUTO_CREATE_PROFILES_ENABLED = "auto_create_profiles_enabled"
         private const val KEY_IGNORED_PACKAGES = "ignored_packages"
         private const val KEY_BLOCKLIST_SEEDED = "blocklist_seeded_v1"
+        private const val KEY_ACTIVATE_WARNING_SUPPRESSED = "activate_warning_suppressed"
 
         /**
          * Pre-populated blocklist of stock OEM and popular custom launcher packages.

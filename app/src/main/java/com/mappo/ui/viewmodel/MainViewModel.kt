@@ -75,6 +75,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
@@ -191,6 +192,10 @@ class MainViewModel @Inject constructor(
 
     val autoSwitchEnabled: StateFlow<Boolean> = autoSwitchSettings.autoSwitchEnabled
 
+    /** "Don't show again" on the activate-layout warning dialog. */
+    val activateWarningSuppressed: StateFlow<Boolean> =
+        autoSwitchSettings.activateWarningSuppressed
+
     val autoCreateProfilesEnabled: StateFlow<Boolean> = autoSwitchSettings.autoCreateProfilesEnabled
 
     val ignoredPackages: StateFlow<Set<String>> = autoSwitchSettings.ignoredPackages
@@ -235,6 +240,35 @@ class MainViewModel @Inject constructor(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
+     * 2026-08-20 flow re-imagining: which layout (Profile) the controls screen is
+     * *viewing*. Null = follow the active layout — the home state. The layouts view sets
+     * a specific id when the user opens a layout to inspect it WITHOUT activating; the
+     * top bar's "Activate layout" then promotes it via [activateLayoutManually].
+     */
+    private val _viewingProfileId = MutableStateFlow<Long?>(null)
+
+    /** The layout the controls screen shows: the viewed one, falling back to the active
+     *  layout when nothing specific is viewed (or the viewed id disappeared). */
+    val viewedProfile: StateFlow<Profile?> =
+        combine(_viewingProfileId, activeProfile, _profiles) { viewingId, active, all ->
+            if (viewingId == null) active
+            else all.firstOrNull { it.id == viewingId } ?: active
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * The materialized binding graph the controls screen EDITS — the viewed profile's.
+     * Distinct from [activeControllerConfig], which stays pinned to the runtime-active
+     * profile and is what compiles into the input dispatcher: viewing a layout must never
+     * change what physical buttons do.
+     */
+    val viewedControllerConfig: StateFlow<ControllerConfig?> =
+        viewedProfile.filterNotNull()
+            .map { it.id }
+            .distinctUntilChanged()
+            .flatMapLatest { controllerConfigRepository.observeActiveConfig(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
      * Brick 4.3: which action set the editor is currently *viewing*. Independent of the
      * runtime active set (which lives in the evaluator and only changes via `CHANGE_PRESET`
      * bindings). Null means "follow the controller_profile's starting set (first by order)"
@@ -273,7 +307,7 @@ class MainViewModel @Inject constructor(
      * yet or the viewing set has no layers.
      */
     val availableLayers: StateFlow<List<Pair<Long, String>>> =
-        combine(activeControllerConfig, _viewingActionSetId) { config, viewingId ->
+        combine(viewedControllerConfig, _viewingActionSetId) { config, viewingId ->
             val set = config?.resolveActionSet(viewingId) ?: return@combine emptyList()
             set.layers.map { it.layer.id to it.layer.title }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -309,6 +343,8 @@ class MainViewModel @Inject constructor(
             overlayPresenter.errorMessages.collect { _toastMessage.tryEmit(it) }
         }
         viewModelScope.launch {
+            // The runtime path: the ACTIVE profile's config compiles into the dispatcher —
+            // never the viewed one (viewing a layout must not change what buttons do).
             activeControllerConfig.collect { config ->
                 val compiled = config?.toCompiled() ?: CompiledConfig.EMPTY
                 inputDispatcher.setCompiledConfig(compiled)
@@ -316,8 +352,13 @@ class MainViewModel @Inject constructor(
                     "MainViewModel",
                     "Published CompiledConfig: startingSet=${compiled.startingActionSetId} sets=${compiled.sets.size}",
                 )
-                // Stale-id cleanup: if the user deleted or migrated away from the set
-                // they were viewing, drop back to the controller_profile default.
+            }
+        }
+        viewModelScope.launch {
+            // Editor-pointer maintenance rides the VIEWED config (the one the pointers
+            // address). Stale-id cleanup: if the user deleted or migrated away from the
+            // set they were viewing, drop back to the controller_profile default.
+            viewedControllerConfig.collect { config ->
                 val currentViewing = _viewingActionSetId.value
                 if (currentViewing != null && config?.actionSets?.any { it.actionSet.id == currentViewing } != true) {
                     _viewingActionSetId.value = null
@@ -335,8 +376,10 @@ class MainViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            // Profile change → forget the previous controller's set + layer selection.
-            activeProfile.collect {
+            // Viewed-profile change → forget the previous controller's set + layer
+            // selection. Keyed on the resolved viewed id, so ACTIVATING the viewed layout
+            // (activeProfile flips to it, viewed id unchanged) keeps the selections.
+            viewedProfile.map { it?.id }.distinctUntilChanged().collect {
                 _viewingActionSetId.value = null
                 _viewingLayerId.value = null
             }
@@ -366,6 +409,38 @@ class MainViewModel @Inject constructor(
     fun selectProfile(profile: Profile) {
         profileRepository.setActiveProfile(profile)
         keyboardController.setSelectedIndex(0)
+    }
+
+    /**
+     * Point the controls screen at a specific layout WITHOUT activating it (the layouts
+     * view's tap), or back at the active layout with null (the home instance).
+     */
+    fun setViewingProfile(profileId: Long?) {
+        _viewingProfileId.value = profileId
+    }
+
+    /**
+     * The top bar's "Activate layout": promote the viewed layout to active AND turn auto
+     * detection off — the user just made an explicit choice; leaving auto-switch on would
+     * immediately fight it (the foreground app's binding re-activating over the manual
+     * pick). The Auto switch in the top-left corner re-enables it.
+     */
+    fun activateLayoutManually(profile: Profile) {
+        selectProfile(profile)
+        autoSwitchSettings.setAutoSwitchEnabled(false)
+    }
+
+    /** Sticky-dismiss the activate-layout warning dialog ("Don't show again"). */
+    fun suppressActivateWarning() {
+        autoSwitchSettings.setActivateWarningSuppressed(true)
+    }
+
+    /**
+     * Make [profileId] the default layout for [packageName] — the auto-switch binding:
+     * when that application foregrounds (with auto detection on), this layout activates.
+     */
+    fun setAppDefaultLayout(packageName: String, profileId: Long) {
+        viewModelScope.launch { appProfileBindingRepository.bind(packageName, profileId) }
     }
 
     fun addProfile(name: String) {
@@ -562,7 +637,7 @@ class MainViewModel @Inject constructor(
      * viewing pointer flips to the new set so the user lands in what they just made.
      */
     fun addControllerActionSet(name: String, title: String, inheritFromSetId: Long? = null) {
-        val cpId = activeControllerConfig.value?.controllerProfile?.id ?: return
+        val cpId = viewedControllerConfig.value?.controllerProfile?.id ?: return
         if (activeProfile.value == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.addActionSet(cpId, name, title, inheritFromSetId)

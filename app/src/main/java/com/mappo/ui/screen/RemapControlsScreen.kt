@@ -2,34 +2,51 @@ package com.mappo.ui.screen
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,17 +55,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.steam.ActivatorType
@@ -59,11 +78,17 @@ import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.requiresShizuku as outputRequiresShizuku
-import com.mappo.data.settings.TextSize
-import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
+import com.mappo.ui.compact.scaledLayout
+import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputBarStackGap
+import com.mappo.ui.minput.MinputDialog
+import com.mappo.ui.minput.MinputGlyphLabelGap
+import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.minputMiniTextStyle
+import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
 import com.mappo.ui.screen.remap.RemapOptionEntry
@@ -148,17 +173,28 @@ fun RemapControlsScreen(
     // data); default no-ops until those land — the menu items render but do nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
     onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
-    // ── The viewed application context (rides the route from the layouts view) ─────
-    // Shown in the top bar's "Viewing <application> layout:" stack; the layouts view this
-    // screen backs out to belongs to the same application.
+    // ── The viewed application context (rides the route from the layouts view; the home
+    // instance derives it from the active layout's binding) ────────────────────────
     viewedAppLabel: String? = null,
     viewedAppPackage: String? = null,
-    // ── Options panel (the top-bar summon; physical Start) ─────────────────────────
-    powerOn: Boolean = false,
-    onPowerChange: (Boolean) -> Unit = {},
-    textSize: TextSize = TextSizeSettings.DEFAULT,
-    onTextSizeChange: (TextSize) -> Unit = {},
+    // ── Layout settings panel (the top-bar summon; physical Start) ─────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
+    // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
+    // True when the layout on screen IS the runtime-active layout (the home state): the
+    // bar wears the Auto switch and drops Back/Activate. False = a layout under
+    // inspection from the layouts view.
+    isActiveLayout: Boolean = true,
+    autoSwitchEnabled: Boolean = false,
+    onAutoSwitchChange: (Boolean) -> Unit = {},
+    onActivateLayout: () -> Unit = {},
+    // Sticky "Don't show again" on the activate warning (activating turns auto off).
+    activateWarningSuppressed: Boolean = false,
+    onSuppressActivateWarning: () -> Unit = {},
+    onViewLayouts: () -> Unit = {},
+    // "Set as <application> default": shown when the viewed layout isn't its parent
+    // application's bound default. The caller owns the condition AND the bind.
+    showSetDefaultAction: Boolean = false,
+    onSetAppDefault: () -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -172,6 +208,9 @@ fun RemapControlsScreen(
     // rotation-survival isn't worth a custom Saver.
     var dialog by remember { mutableStateOf<ActionSetDialogState>(ActionSetDialogState.None) }
     var layerDialog by remember { mutableStateOf<LayerDialogState>(LayerDialogState.None) }
+    // The activate-layout warning (shown when Auto is on and the warning isn't
+    // sticky-dismissed): activating manually turns auto detection off.
+    var activateWarningOpen by remember { mutableStateOf(false) }
 
     // Stash an analog-mode pick if Shizuku isn't ready AND the explainer hasn't been
     // acknowledged. `Pair(bindingGroupId, mode)`. Once Shizuku is Granted OR the user has acked,
@@ -296,7 +335,8 @@ fun RemapControlsScreen(
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
                             openPanel = null
                         } else {
-                            Log.d(REMAP_SCREEN_TAG, "key: Select -> back to layouts view")
+                            // Layouts view when viewing; "leave Mappo" on the home.
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> back")
                             onBack()
                         }
                         true
@@ -333,23 +373,83 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
             topBar = {
-                // Back to the layouts view + the viewed application/layout context; the
-                // action-set tabs that lived here moved into RemapSimpleView's set row.
+                // The 2026-08-20 bar: Auto switch (home) ↔ Back arrow (viewing), the
+                // layout identity, Activate/View-layouts on the left; Set-default and
+                // Layout settings on the right. The action-set tabs that lived here
+                // moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    overline = if (viewedAppLabel != null) {
-                        "Viewing $viewedAppLabel layout"
-                    } else "Viewing layout",
+                    overline = if (isActiveLayout) "Active layout" else "Viewing layout",
                     title = profileName ?: "Layout",
                     appPackage = viewedAppPackage,
                     onBack = onBack,
-                    actions = {
+                    navigation = {
+                        // Activating the viewed layout completes the selection flow: the
+                        // Back arrow morphs into the Auto switch in place.
+                        AnimatedContent(targetState = isActiveLayout, label = "topBarNav") { active ->
+                            if (active) {
+                                AutoSwitchStack(
+                                    enabled = autoSwitchEnabled,
+                                    onChange = onAutoSwitchChange,
+                                )
+                            } else {
+                                MinputIconButton(
+                                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                    onClick = onBack,
+                                )
+                            }
+                        }
+                    },
+                    leadingActions = {
+                        AnimatedVisibility(
+                            visible = !isActiveLayout,
+                            enter = fadeIn() + expandHorizontally(),
+                            exit = fadeOut() + shrinkHorizontally(),
+                        ) {
+                            // Gap rides inside the visibility wrapper so it animates away
+                            // with the pill.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                MinputPillButton(
+                                    text = "Activate layout",
+                                    onClick = {
+                                        if (autoSwitchEnabled && !activateWarningSuppressed) {
+                                            activateWarningOpen = true
+                                        } else {
+                                            onActivateLayout()
+                                        }
+                                    },
+                                    leadingIcon = rememberVectorPainter(Icons.Filled.Check),
+                                    leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(TopBarPillGap))
+                            }
+                        }
                         MinputPillButton(
-                            text = "Options",
+                            text = "View layouts",
+                            onClick = onViewLayouts,
+                            leadingIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.List),
+                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    actions = {
+                        if (showSetDefaultAction && viewedAppLabel != null) {
+                            MinputPillButton(
+                                text = "Set as ${shortChromeLabel(viewedAppLabel)} default",
+                                onClick = onSetAppDefault,
+                                // The application's own icon — untinted, like the bar's
+                                // identity icon.
+                                leadingIcon = rememberAppIconPainter(viewedAppPackage),
+                            )
+                            Spacer(Modifier.width(TopBarPillGap))
+                        }
+                        MinputPillButton(
+                            text = "Layout settings",
                             onClick = {
                                 openPanel =
                                     if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
                             },
-                            leadingIcon = painterResource(R.drawable.xbox_button_menu),
+                            leadingIcon = rememberVectorPainter(Icons.Filled.Settings),
+                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.focusRequester(optionsPillFocus),
                         )
                     },
@@ -392,12 +492,19 @@ fun RemapControlsScreen(
         RemapPanelOverlay(
             openPanel = openPanel,
             onClose = { openPanel = null },
-            powerOn = powerOn,
-            onPowerChange = onPowerChange,
-            textSize = textSize,
-            onTextSizeChange = onTextSizeChange,
             optionsEntries = optionsEntries,
             modifier = Modifier.matchParentSize(),
+        )
+    }
+
+    if (activateWarningOpen) {
+        ActivateLayoutWarningDialog(
+            onCancel = { activateWarningOpen = false },
+            onConfirm = { dontShowAgain ->
+                if (dontShowAgain) onSuppressActivateWarning()
+                activateWarningOpen = false
+                onActivateLayout()
+            },
         )
     }
 
@@ -720,3 +827,115 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
         }
     }
 }
+
+/**
+ * The bar's Auto stack — the home-state occupant of the navigation slot: overline "AUTO"
+ * over the auto-detection switch (Mappo activating each foreground application's default
+ * layout). The switch is halo-stripped and scaled to bar scale, the PowerRow treatment.
+ */
+@Composable
+private fun AutoSwitchStack(
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+    ) {
+        Text(
+            text = "Auto".uppercase(),
+            style = minputOverlineTextStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            Switch(
+                checked = enabled,
+                onCheckedChange = onChange,
+                modifier = Modifier.scaledLayout(AutoSwitchScale),
+            )
+        }
+    }
+}
+
+/**
+ * The activate-layout warning ([MinputDialog]): manual activation turns auto detection
+ * off. Action row per spec — "Don't show again" checkbox, Cancel, then the filled
+ * Activate layout commit.
+ */
+@Composable
+private fun ActivateLayoutWarningDialog(
+    onCancel: () -> Unit,
+    onConfirm: (dontShowAgain: Boolean) -> Unit,
+) {
+    var dontShowAgain by remember { mutableStateOf(false) }
+    MinputDialog(onDismissRequest = onCancel) {
+        Text(
+            text = "Activate layout".uppercase(),
+            style = minputOverlineTextStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Activating a layout manually turns off auto detection. " +
+                "You can re-enable it anytime with the Auto switch in the top-left corner.",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Settings-row contract: the row owns the toggle; the checkbox itself is
+            // display-only (onCheckedChange = null) with its 48dp halo stripped.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { dontShowAgain = !dontShowAgain }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            ) {
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    Checkbox(
+                        checked = dontShowAgain,
+                        onCheckedChange = null,
+                        modifier = Modifier.scaledLayout(WarningCheckboxScale),
+                    )
+                }
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Text(
+                    text = "Don't show again",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            MinputPillButton(text = "Cancel", onClick = onCancel)
+            Spacer(Modifier.width(TopBarPillGap))
+            MinputPillButton(
+                text = "Activate layout",
+                onClick = { onConfirm(dontShowAgain) },
+                filled = true,
+                elevated = true,
+            )
+        }
+    }
+}
+
+/**
+ * Chrome cap for an application label interpolated into a pill's text ("Set as X
+ * default") — pill text is a plain string, so the NameableText width-cap rule is applied
+ * at the character level instead.
+ */
+private fun shortChromeLabel(label: String, max: Int = 14): String =
+    if (label.length <= max) label else label.take(max - 1).trimEnd() + "…"
+
+/** Gap between adjacent pills in the top bar (the filter rows' 6dp rhythm). */
+private val TopBarPillGap = 6.dp
+
+/** Bar-scale factor for the Auto switch (fits under its overline in [MinputBarHeight]). */
+private const val AutoSwitchScale = 0.35f
+
+/** Scale for the warning dialog's halo-stripped checkbox. */
+private const val WarningCheckboxScale = 0.75f

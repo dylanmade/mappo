@@ -50,12 +50,13 @@ internal enum class AppSort(val label: String, val naturalAscending: Boolean) {
 }
 
 /**
- * The Profiles view — the app's HOME (2026-08-14 flow rebuild; retitled "Profiles"
- * 2026-08-15 — each row is an application's profile; the code keeps the Applications
- * names): every launchable app on the device (games join the list when the planned library
- * scanning lands — local-folder scraping plus installed-game lists from frontends like
- * GameNative / GameHub), behind its own search + sort row. Picking a profile opens its
- * [LayoutsScreen].
+ * The Profiles view (retitled "Profiles" 2026-08-15 — each row is an application's
+ * profile; the code keeps the Applications names): every launchable app on the device
+ * (games join the list when the planned library scanning lands — local-folder scraping
+ * plus installed-game lists from frontends like GameNative / GameHub), behind its own
+ * search + sort row. Picking a profile opens its [LayoutsScreen]. No longer the home
+ * (2026-08-20 — the controls view of the active layout is): reached as the "View
+ * layouts" fallback when the viewed layout has no bound application.
  *
  * Upgraded from the layout panel's Applications modal; the "All applications" / "Global"
  * meta-filter rows died with the filter they existed to set.
@@ -65,7 +66,6 @@ fun ApplicationsScreen(
     installedApps: List<InstalledApp>,
     onLoadInstalledApps: () -> Unit,
     onPickApp: (InstalledApp) -> Unit,
-    // This view is the home: back means "leave Mappo" (the caller dismisses the frame).
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -79,7 +79,7 @@ fun ApplicationsScreen(
     // surface — the screen's content plane.
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize()) {
-            // The shared browse-chain bar: back on the home means "leave Mappo".
+            // The shared browse-chain bar.
             RemapTopBar(overline = "Profiles", onBack = onBack)
             // The filter row: search + sort + direction.
             Row(

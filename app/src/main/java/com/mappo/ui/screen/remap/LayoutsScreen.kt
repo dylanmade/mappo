@@ -71,7 +71,8 @@ private enum class LayoutsModal { ADD, OPTIONS }
  * Rebuilt on the Profiles view's anatomy: the shared browse-chain top bar (back arrow · the
  * profile's application icon · "<profile> - Layouts" · Add/Tune utilities), search + sort +
  * direction row, then the layout tiles. Only child layouts of [appPackage] (associated via auto-switch bindings)
- * are listed; selecting one activates it and opens the controls view.
+ * are listed; selecting one opens its controls view for VIEWING (2026-08-20 — activation
+ * moved to the controls bar's "Activate layout").
  */
 @Composable
 fun LayoutsScreen(
