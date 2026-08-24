@@ -49,6 +49,13 @@ import androidx.compose.ui.unit.sp
 fun minputMiniTextStyle(): TextStyle =
     MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 14.sp)
 
+/** One step below [minputMiniTextStyle] — secondary metadata riding under a mini-text
+ *  primary (a layout card's author line, its description). Same family, next size down,
+ *  no overline tracking. */
+@Composable
+fun minputMicroTextStyle(): TextStyle =
+    MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp)
+
 /** Overline treatment (uppercase callers + tracked-out small caps look) for headers. */
 @Composable
 fun minputOverlineTextStyle(): TextStyle =
@@ -304,6 +311,18 @@ val MinputPillLabelMaxWidth = 156.dp
  *  padding toward the icon side: ButtonDefaults.ButtonWithIconContentPadding (16dp icon side
  *  vs 24dp text side). NOT glyph scaling — layout-only, tune freely. */
 val MinputPillIconSideBias = 2.dp
+
+/** Track size of [MinputSwitch] — the bar-scale toggle. The height matches the mini text
+ *  line ([minputMiniTextStyle]'s 14sp line at the app's 0.85 scale ≈ 12dp), so an
+ *  overline + switch stack measures like the bar's overline + value text stacks; the
+ *  width runs WIDER than M3's 52×32 proportions (Dylan, 2026-08-21 — a uniform scale
+ *  that thin reads stubby). */
+val MinputSwitchWidth = 28.dp
+val MinputSwitchHeight = 12.dp
+
+/** Inset between the switch track edge and its thumb (the thumb diameter is
+ *  [MinputSwitchHeight] minus twice this). */
+val MinputSwitchThumbInset = 2.dp
 
 /** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows). */
 val MinputIconButtonSize = 24.dp

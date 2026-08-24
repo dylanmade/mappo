@@ -23,6 +23,7 @@ zxing = "3.5.3"
 securityCrypto = "1.1.0-alpha06"
 kotlinxCoroutines = "1.10.2"
 protobufJava = "4.28.3"
+lucideIcons = "1.1.0"
 
 # Testing
 junit = "4.13.2"
@@ -72,6 +73,12 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 # Kotlinx
 kotlinx-collections-immutable = { group = "org.jetbrains.kotlinx", name = "kotlinx-collections-immutable", version.ref = "kotlinxCollectionsImmutable" }
+
+# Lucide icons for Compose (composables.com port of lucide.dev). The go-forward concept-icon
+# set (2026-08-21): Lucide glyphs ink their full viewport (Material's live area leaves ~15%
+# padding), so mixed-source icons render at visibly different optical sizes. New UI pulls
+# from Lucide; Material icons remain on un-swept surfaces until the migration sweep.
+lucide-icons = { group = "com.composables", name = "icons-lucide", version.ref = "lucideIcons" }
 
 # Hidden API bypass (LSPosed). Installs runtime exemptions for InputEvent.setDisplayId
 # so the accessibility service can route injected key events to a specific display

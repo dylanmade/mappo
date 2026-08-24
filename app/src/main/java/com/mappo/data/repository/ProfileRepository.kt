@@ -56,14 +56,18 @@ class ProfileRepository @Inject constructor(
         return profile
     }
 
-    suspend fun addProfile(name: String): Long {
-        val newId = profileDao.insert(Profile(name = name))
+    suspend fun addProfile(name: String, packageName: String? = null): Long {
+        val newId = profileDao.insert(Profile(name = name, packageName = packageName))
         layoutRepository.seedDefaults(newId)
         return newId
     }
 
     suspend fun duplicateProfile(source: Profile, newName: String) {
-        val newId = profileDao.insert(Profile(name = newName))
+        // The copy stays in the source's application family and keeps its description;
+        // author/likes reset — a duplicate is the device owner's own layout.
+        val newId = profileDao.insert(
+            Profile(name = newName, packageName = source.packageName, description = source.description)
+        )
         val sourceLayouts = layoutDao.getByProfileOnce(source.id)
         if (sourceLayouts.isEmpty()) {
             // The Default profile may have been created via the SQL seed callback before any

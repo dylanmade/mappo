@@ -97,6 +97,9 @@ dependencies {
     // Kotlinx immutable collections (stable Compose params)
     implementation(libs.kotlinx.collections.immutable)
 
+    // Lucide concept icons — the unified go-forward icon set (see libs.versions.toml note)
+    implementation(libs.lucide.icons)
+
     // Hidden API bypass — required so InputAccessibilityService can route injected
     // KeyEvents to a non-default display (Thor's bottom screen). See onCreate in
     // MappoApplication for the exemption call.

@@ -2,7 +2,6 @@ package com.mappo.ui.screen
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,11 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -41,7 +37,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -69,7 +64,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.ArrowLeftRight
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Settings
 import com.mappo.R
+import com.mappo.data.model.Profile
 import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
@@ -87,8 +87,10 @@ import com.mappo.ui.minput.MinputDialog
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputSwitch
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
+import com.mappo.ui.screen.remap.LayoutsDrawerPane
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
 import com.mappo.ui.screen.remap.RemapOptionEntry
@@ -98,6 +100,8 @@ import com.mappo.ui.screen.remap.RemapSections
 import com.mappo.ui.screen.remap.RemapSimpleView
 import com.mappo.ui.screen.remap.RemapTopBar
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 
 private const val REMAP_SCREEN_TAG = "RemapControlsScreen"
 
@@ -180,9 +184,8 @@ fun RemapControlsScreen(
     // ── Layout settings panel (the top-bar summon; physical Start) ─────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
     // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
-    // True when the layout on screen IS the runtime-active layout (the home state): the
-    // bar wears the Auto switch and drops Back/Activate. False = a layout under
-    // inspection from the layouts view.
+    // True when the layout on screen IS the runtime-active layout (the home state);
+    // false = a layout under inspection — the bar grows the Activate pill.
     isActiveLayout: Boolean = true,
     autoSwitchEnabled: Boolean = false,
     onAutoSwitchChange: (Boolean) -> Unit = {},
@@ -190,11 +193,20 @@ fun RemapControlsScreen(
     // Sticky "Don't show again" on the activate warning (activating turns auto off).
     activateWarningSuppressed: Boolean = false,
     onSuppressActivateWarning: () -> Unit = {},
-    onViewLayouts: () -> Unit = {},
     // "Set as <application> default": shown when the viewed layout isn't its parent
     // application's bound default. The caller owns the condition AND the bind.
     showSetDefaultAction: Boolean = false,
     onSetAppDefault: () -> Unit = {},
+    // ── Layouts drawer (2026-08-21: the layouts view is a push pane over this screen;
+    // the bar's change button slides it in) ────────────────────────────────────────
+    profiles: ImmutableList<Profile> = persistentListOf(),
+    activeProfileId: Long? = null,
+    defaultLayoutId: Long? = null,
+    onPreviewLayout: (Long) -> Unit = {},
+    onActivateLayoutCard: (Profile) -> Unit = {},
+    // Fired when the drawer finishes closing — the caller re-enters "follow active"
+    // viewing mode when the previewed layout landed back on the active one.
+    onLayoutsDrawerClosed: () -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -208,9 +220,22 @@ fun RemapControlsScreen(
     // rotation-survival isn't worth a custom Saver.
     var dialog by remember { mutableStateOf<ActionSetDialogState>(ActionSetDialogState.None) }
     var layerDialog by remember { mutableStateOf<LayerDialogState>(LayerDialogState.None) }
-    // The activate-layout warning (shown when Auto is on and the warning isn't
-    // sticky-dismissed): activating manually turns auto detection off.
-    var activateWarningOpen by remember { mutableStateOf(false) }
+    // The activate-layout warning gate (shown when Auto is on and the warning isn't
+    // sticky-dismissed — activating manually turns auto detection off): both activation
+    // paths (the bar pill, a drawer card) stash their commit here and share the dialog.
+    var pendingActivate by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val requestActivate: (() -> Unit) -> Unit = { commit ->
+        if (autoSwitchEnabled && !activateWarningSuppressed) pendingActivate = commit
+        else commit()
+    }
+    // The layouts drawer (the bar's change button). Survives the sub-editor round-trips.
+    var layoutsDrawerOpen by rememberSaveable { mutableStateOf(false) }
+    var lastDrawerOpen by remember { mutableStateOf(layoutsDrawerOpen) }
+    LaunchedEffect(layoutsDrawerOpen) {
+        val was = lastDrawerOpen
+        lastDrawerOpen = layoutsDrawerOpen
+        if (was && !layoutsDrawerOpen) onLayoutsDrawerClosed()
+    }
 
     // Stash an analog-mode pick if Shizuku isn't ready AND the explainer hasn't been
     // acknowledged. `Pair(bindingGroupId, mode)`. Once Shizuku is Granted OR the user has acked,
@@ -334,8 +359,11 @@ fun RemapControlsScreen(
                             // navigating away underneath it.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
                             openPanel = null
+                        } else if (layoutsDrawerOpen) {
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close layouts drawer")
+                            layoutsDrawerOpen = false
                         } else {
-                            // Layouts view when viewing; "leave Mappo" on the home.
+                            // "Leave Mappo" on the home.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> back")
                             onBack()
                         }
@@ -357,14 +385,14 @@ fun RemapControlsScreen(
                 }
             },
     ) {
-        Scaffold(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 // While a panel is up it behaves modally: directional focus must not
-                // wander into the screen content underneath it — refuse entry into this
-                // whole subtree (the editor's containment pattern). Gated on INTENT so
-                // the block lifts the moment a close starts and the summoning pill can
-                // take the return focus.
+                // wander into the screen content underneath it (the layouts drawer
+                // included) — refuse entry into this whole subtree (the editor's
+                // containment pattern). Gated on INTENT so the block lifts the moment a
+                // close starts and the summoning pill can take the return focus.
                 .then(
                     if (openPanel != null) {
                         Modifier
@@ -372,119 +400,119 @@ fun RemapControlsScreen(
                             .focusGroup()
                     } else Modifier,
                 ),
-            topBar = {
-                // The 2026-08-20 bar: Auto switch (home) ↔ Back arrow (viewing), the
-                // layout identity, Activate/View-layouts on the left; Set-default and
-                // Layout settings on the right. The action-set tabs that lived here
-                // moved into RemapSimpleView's set row.
-                RemapTopBar(
-                    overline = if (isActiveLayout) "Active layout" else "Viewing layout",
-                    title = profileName ?: "Layout",
-                    appPackage = viewedAppPackage,
-                    onBack = onBack,
-                    navigation = {
-                        // Activating the viewed layout completes the selection flow: the
-                        // Back arrow morphs into the Auto switch in place.
-                        AnimatedContent(targetState = isActiveLayout, label = "topBarNav") { active ->
-                            if (active) {
-                                AutoSwitchStack(
-                                    enabled = autoSwitchEnabled,
-                                    onChange = onAutoSwitchChange,
-                                )
-                            } else {
-                                MinputIconButton(
-                                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    onClick = onBack,
-                                )
+        ) {
+            // The layouts drawer PUSHES the controls view (Row neighbor) rather than
+            // overlaying it — both stay interactive; the view live-previews the card
+            // the drawer is scrolled to.
+            LayoutsDrawerPane(
+                open = layoutsDrawerOpen,
+                onClose = { layoutsDrawerOpen = false },
+                appPackage = viewedAppPackage,
+                appLabel = viewedAppLabel,
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                defaultProfileId = defaultLayoutId,
+                onPreviewLayout = onPreviewLayout,
+                onActivateLayout = { profile -> requestActivate { onActivateLayoutCard(profile) } },
+            )
+            Scaffold(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                topBar = {
+                    // The 2026-08-21 bar: the change button (the layouts drawer's summon),
+                    // the layout identity, then Layout settings + the conditional Activate
+                    // pill on the left; Set-default and the Auto-detect stack on the right.
+                    // The action-set tabs that lived here moved into RemapSimpleView's set row.
+                    RemapTopBar(
+                        overline = if (isActiveLayout) "Active layout" else "Viewing layout",
+                        title = profileName ?: "Layout",
+                        appPackage = viewedAppPackage,
+                        onBack = onBack,
+                        navigation = {
+                            // The universal way into the layouts view: toggles the drawer.
+                            MinputIconButton(
+                                icon = Lucide.ArrowLeftRight,
+                                contentDescription = "Change layout",
+                                onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
+                            )
+                        },
+                        leadingActions = {
+                            MinputPillButton(
+                                text = "Layout settings",
+                                onClick = {
+                                    openPanel =
+                                        if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                                },
+                                leadingIcon = rememberVectorPainter(Lucide.Settings),
+                                leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.focusRequester(optionsPillFocus),
+                            )
+                            AnimatedVisibility(
+                                visible = !isActiveLayout,
+                                enter = fadeIn() + expandHorizontally(),
+                                exit = fadeOut() + shrinkHorizontally(),
+                            ) {
+                                // Gap rides inside the visibility wrapper so it animates away
+                                // with the pill.
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Spacer(Modifier.width(TopBarPillGap))
+                                    MinputPillButton(
+                                        text = "Activate layout",
+                                        onClick = { requestActivate(onActivateLayout) },
+                                        leadingIcon = rememberVectorPainter(Lucide.Check),
+                                        leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
-                        }
-                    },
-                    leadingActions = {
-                        AnimatedVisibility(
-                            visible = !isActiveLayout,
-                            enter = fadeIn() + expandHorizontally(),
-                            exit = fadeOut() + shrinkHorizontally(),
-                        ) {
-                            // Gap rides inside the visibility wrapper so it animates away
-                            // with the pill.
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        },
+                        actions = {
+                            if (showSetDefaultAction && viewedAppLabel != null) {
                                 MinputPillButton(
-                                    text = "Activate layout",
-                                    onClick = {
-                                        if (autoSwitchEnabled && !activateWarningSuppressed) {
-                                            activateWarningOpen = true
-                                        } else {
-                                            onActivateLayout()
-                                        }
-                                    },
-                                    leadingIcon = rememberVectorPainter(Icons.Filled.Check),
-                                    leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = "Set as ${shortChromeLabel(viewedAppLabel)} default",
+                                    onClick = onSetAppDefault,
+                                    // The application's own icon — untinted, like the bar's
+                                    // identity icon.
+                                    leadingIcon = rememberAppIconPainter(viewedAppPackage),
                                 )
                                 Spacer(Modifier.width(TopBarPillGap))
                             }
-                        }
-                        MinputPillButton(
-                            text = "View layouts",
-                            onClick = onViewLayouts,
-                            leadingIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.List),
-                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    actions = {
-                        if (showSetDefaultAction && viewedAppLabel != null) {
-                            MinputPillButton(
-                                text = "Set as ${shortChromeLabel(viewedAppLabel)} default",
-                                onClick = onSetAppDefault,
-                                // The application's own icon — untinted, like the bar's
-                                // identity icon.
-                                leadingIcon = rememberAppIconPainter(viewedAppPackage),
-                            )
-                            Spacer(Modifier.width(TopBarPillGap))
-                        }
-                        MinputPillButton(
-                            text = "Layout settings",
-                            onClick = {
-                                openPanel =
-                                    if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
-                            },
-                            leadingIcon = rememberVectorPainter(Icons.Filled.Settings),
-                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.focusRequester(optionsPillFocus),
-                        )
-                    },
-                )
-            },
-        ) { innerPadding ->
-            // surface — the screen's content plane beneath the group boxes.
-            Surface(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    if (hasAnalogModeInConfig && !shizukuReady) {
-                        ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
-                    }
-                    RemapSimpleView(
-                        viewingSet = viewingSet,
-                        viewingLayer = viewingLayer,
-                        config = config,
-                        onMap = { /* input-mapping wizard — UI-only CTA for now */ },
-                        editorCallbacks = editorCallbacks,
-                        onSelectActionSet = { id ->
-                            onSelectActionSet(id)
-                            onSelectLayer(null)
-                        },
-                        onAddSet = { dialog = ActionSetDialogState.Add },
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        bottomContent = {
-                            RemapBottomRow(
-                                viewingSet = viewingSet,
-                                viewingLayerSelected = viewingLayer != null,
-                                onSetGyroMode = gatedSetBindingGroupMode,
+                            AutoDetectStack(
+                                enabled = autoSwitchEnabled,
+                                onChange = onAutoSwitchChange,
                             )
                         },
                     )
+                },
+            ) { innerPadding ->
+                // surface — the screen's content plane beneath the group boxes.
+                Surface(
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (hasAnalogModeInConfig && !shizukuReady) {
+                            ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
+                        }
+                        RemapSimpleView(
+                            viewingSet = viewingSet,
+                            viewingLayer = viewingLayer,
+                            config = config,
+                            onMap = { /* input-mapping wizard — UI-only CTA for now */ },
+                            editorCallbacks = editorCallbacks,
+                            onSelectActionSet = { id ->
+                                onSelectActionSet(id)
+                                onSelectLayer(null)
+                            },
+                            onAddSet = { dialog = ActionSetDialogState.Add },
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            bottomContent = {
+                                RemapBottomRow(
+                                    viewingSet = viewingSet,
+                                    viewingLayerSelected = viewingLayer != null,
+                                    onSetGyroMode = gatedSetBindingGroupMode,
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -497,13 +525,13 @@ fun RemapControlsScreen(
         )
     }
 
-    if (activateWarningOpen) {
+    pendingActivate?.let { commit ->
         ActivateLayoutWarningDialog(
-            onCancel = { activateWarningOpen = false },
+            onCancel = { pendingActivate = null },
             onConfirm = { dontShowAgain ->
                 if (dontShowAgain) onSuppressActivateWarning()
-                activateWarningOpen = false
-                onActivateLayout()
+                pendingActivate = null
+                commit()
             },
         )
     }
@@ -829,12 +857,13 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
 }
 
 /**
- * The bar's Auto stack — the home-state occupant of the navigation slot: overline "AUTO"
- * over the auto-detection switch (Mappo activating each foreground application's default
- * layout). The switch is halo-stripped and scaled to bar scale, the PowerRow treatment.
+ * The bar's Auto-detect stack — the trailing corner of the top bar (2026-08-21): overline
+ * "AUTO-DETECT" over the auto-detection switch (Mappo activating each foreground
+ * application's default layout). [MinputSwitch] runs text-line tall and proportionally
+ * wide, so the stack measures like the bar's overline + value text stacks.
  */
 @Composable
-private fun AutoSwitchStack(
+private fun AutoDetectStack(
     enabled: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
@@ -843,18 +872,12 @@ private fun AutoSwitchStack(
         verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
     ) {
         Text(
-            text = "Auto".uppercase(),
+            text = "Auto-detect".uppercase(),
             style = minputOverlineTextStyle(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
         )
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            Switch(
-                checked = enabled,
-                onCheckedChange = onChange,
-                modifier = Modifier.scaledLayout(AutoSwitchScale),
-            )
-        }
+        MinputSwitch(checked = enabled, onCheckedChange = onChange)
     }
 }
 
@@ -878,7 +901,7 @@ private fun ActivateLayoutWarningDialog(
         Spacer(Modifier.height(8.dp))
         Text(
             text = "Activating a layout manually turns off auto detection. " +
-                "You can re-enable it anytime with the Auto switch in the top-left corner.",
+                "You can re-enable it anytime with the Auto-detect switch in the top-right corner.",
             style = minputMiniTextStyle(),
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -933,9 +956,6 @@ private fun shortChromeLabel(label: String, max: Int = 14): String =
 
 /** Gap between adjacent pills in the top bar (the filter rows' 6dp rhythm). */
 private val TopBarPillGap = 6.dp
-
-/** Bar-scale factor for the Auto switch (fits under its overline in [MinputBarHeight]). */
-private const val AutoSwitchScale = 0.35f
 
 /** Scale for the warning dialog's halo-stripped checkbox. */
 private const val WarningCheckboxScale = 0.75f

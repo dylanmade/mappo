@@ -54,7 +54,7 @@ import com.mappo.data.model.steam.SourceModeShift
         LayerPresetBinding::class,
         SourceModeShift::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 @TypeConverters(SteamTypeConverters::class)
@@ -85,8 +85,10 @@ abstract class AppDatabase : RoomDatabase() {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
                 db.execSQL(
-                    "INSERT INTO profiles (name, isDefault) " +
-                    "SELECT 'Profile 1', 1 " +
+                    // Raw SQL, so every NOT NULL column needs an explicit value (Room only
+                    // bakes SQL defaults in via @ColumnInfo(defaultValue), not Kotlin ones).
+                    "INSERT INTO profiles (name, isDefault, description, author, likeCount) " +
+                    "SELECT 'Profile 1', 1, '', '', 0 " +
                     "WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE isDefault = 1)"
                 )
             }

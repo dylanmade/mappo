@@ -253,12 +253,10 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     @Test
-    fun topBar_viewingLayout_hasBack_addSetLivesInSetRow() {
-        // 2026-08-20 flow re-imagining: when VIEWING a non-active layout the top bar
-        // leads with Back (returning to the layouts view) plus the Activate pill; the
-        // add-set affordance is the set row's "+" action segment in the content view
-        // (one instance).
-        var backed = false
+    fun topBar_viewingLayout_showsActivate_noBack() {
+        // 2026-08-21 bar: no Back arrow in any state — the change button (the layouts
+        // drawer's summon) leads. Viewing a non-active layout grows the Activate pill
+        // after Layout settings; the add-set affordance is the set row's "+" segment.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -270,7 +268,7 @@ class RemapControlsScreenTest {
                         viewingActionSetId = 1L,
                         onSelectActionSet = {},
                         onOpenInputEditor = { _, _, _ -> },
-                        onBack = { backed = true },
+                        onBack = {},
                         isActiveLayout = false,
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
@@ -278,18 +276,17 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(1)
+        composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Layout settings").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
-        composeRule.onNodeWithContentDescription("Back").performClick()
-        composeRule.waitForIdle()
-        assert(backed) { "Expected the top bar's Back to invoke onBack" }
     }
 
     @Test
-    fun topBar_activeLayout_showsAutoSwitch_noBack() {
-        // The home state: the viewed layout IS active — the Auto switch stack occupies
-        // the navigation slot and Back/Activate are absent.
+    fun topBar_activeLayout_showsAutoDetect_noActivate() {
+        // The home state: the viewed layout IS active — the Auto-detect stack holds the
+        // trailing corner and the Activate pill is absent.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -309,11 +306,45 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onAllNodesWithText("AUTO").assertCountEquals(1)
+        composeRule.onAllNodesWithText("AUTO-DETECT").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
-        composeRule.onAllNodesWithText("View layouts").assertCountEquals(1)
+        composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(1)
+    }
+
+    @Test
+    fun changeButton_opensLayoutsDrawer_withSectionsAndCards() {
+        // The change button slides in the layouts drawer: header ("LAYOUTS"), the three
+        // category headers, and a card per profile of the viewed application.
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = sampleConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        profiles = kotlinx.collections.immutable.persistentListOf(
+                            com.mappo.data.model.Profile(id = 1L, name = "Alpha layout"),
+                            com.mappo.data.model.Profile(id = 2L, name = "Beta layout"),
+                        ),
+                        activeProfileId = 1L,
+                        defaultLayoutId = 1L,
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Change layout").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("LAYOUTS", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("DEFAULT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("INSTALLED", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("COMMUNITY", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Beta layout", useUnmergedTree = true).assertExists()
     }
 
     @Test

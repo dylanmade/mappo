@@ -74,7 +74,16 @@ fun MinputPillButton(
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier
                 .height(MinputPillHeight)
-                .padding(horizontal = MinputPillContentPadding),
+                // A leading glyph inks less than its box (Material live area, Lucide stroke
+                // inset), so with symmetric padding the icon flank reads wider than the text
+                // flank — pull the start inset in by the family's icon-side bias to cancel it
+                // (the wrap-width sibling of MinputPillIconSideBias's fixed-width treatment).
+                .padding(
+                    start = if (leadingIcon != null) {
+                        MinputPillContentPadding - MinputPillIconSideBias
+                    } else MinputPillContentPadding,
+                    end = MinputPillContentPadding,
+                ),
         ) {
             if (leadingIcon != null) {
                 Icon(

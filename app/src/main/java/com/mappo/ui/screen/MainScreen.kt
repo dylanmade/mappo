@@ -452,14 +452,16 @@ fun MainScreen(
                 LaunchedEffect(profileIdArg) {
                     viewModel.setViewingProfile(profileIdArg.takeIf { it != 0L })
                 }
-                // The application context: from the route when reached through the layouts
-                // view; derived from the viewed layout's auto-switch binding on the home
-                // instance (bound package = the application this layout belongs to).
+                // The application context: the viewed layout's own parent application
+                // (Profile.packageName, the 2026-08-21 membership model), then the route
+                // args, then the auto-switch binding as a legacy fallback for layouts
+                // created before membership landed.
                 val boundPackage = viewedProfile?.id?.let { id ->
                     appProfileBindings.firstOrNull { it.profileId == id }?.packageName
                 }
-                val viewedAppPackage = entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)
-                    ?.ifEmpty { null } ?: boundPackage
+                val viewedAppPackage = viewedProfile?.packageName
+                    ?: entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)?.ifEmpty { null }
+                    ?: boundPackage
                 val viewedAppLabel = entry.arguments?.getString(MappoRoute.ARG_APP_LABEL)
                     ?.ifEmpty { null } ?: viewedAppPackage?.let { appLabels[it] ?: it }
                 val isActiveLayout = viewedProfile?.id == activeProfile?.id
@@ -488,23 +490,21 @@ fun MainScreen(
                     },
                     activateWarningSuppressed = activateWarningSuppressed,
                     onSuppressActivateWarning = viewModel::suppressActivateWarning,
-                    onViewLayouts = {
-                        val pkg = viewedAppPackage
-                        if (pkg != null) {
-                            // Re-entering the layouts view rebuilds the chain from the
-                            // home: any prior layouts/viewing entries pop first.
-                            navController.navigate(
-                                MappoRoute.layouts(pkg, viewedAppLabel ?: pkg),
-                            ) {
-                                popUpTo(MappoRoute.LAYOUTS) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        } else {
-                            // No bound application to scope to — browse from the
-                            // profiles list instead.
-                            navController.navigate(MappoRoute.APPLICATIONS) {
-                                launchSingleTop = true
-                            }
+                    // ── Layouts drawer (2026-08-21: the layouts view lives in the
+                    // controls screen as a push pane; the routed LayoutsScreen and the
+                    // Profiles browse chain are dormant pending the apps re-imagining) ──
+                    profiles = profiles,
+                    activeProfileId = activeProfile?.id,
+                    defaultLayoutId = viewedAppPackage?.let { pkg ->
+                        appProfileBindings.firstOrNull { it.packageName == pkg }?.profileId
+                    },
+                    onPreviewLayout = { id -> viewModel.setViewingProfile(id) },
+                    onActivateLayoutCard = { profile -> viewModel.activateLayoutManually(profile) },
+                    onLayoutsDrawerClosed = {
+                        // Landing back on the active layout re-enters "follow active"
+                        // mode, so later auto/manual switches keep the home tracking.
+                        if (viewedProfile?.id == activeProfile?.id) {
+                            viewModel.setViewingProfile(null)
                         }
                     },
                     // "Set as <application> default": the auto-switch binding IS the

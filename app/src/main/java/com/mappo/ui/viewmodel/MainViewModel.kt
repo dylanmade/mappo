@@ -390,8 +390,13 @@ class MainViewModel @Inject constructor(
             _viewingActionSetId.collect { _viewingLayerId.value = null }
         }
         viewModelScope.launch {
-            combine(appProfileBindings, ignoredPackages) { bindings, ignored ->
-                bindings.mapTo(mutableSetOf()) { it.packageName }.apply { addAll(ignored) }
+            combine(appProfileBindings, ignoredPackages, _profiles) { bindings, ignored, profs ->
+                bindings.mapTo(mutableSetOf()) { it.packageName }.apply {
+                    addAll(ignored)
+                    // Layouts carry their parent application directly now — the drawer
+                    // header and cards need those labels even for unbound packages.
+                    profs.forEach { p -> p.packageName?.let(::add) }
+                }
             }.collect { packages ->
                 val current = _appLabels.value
                 val missing = packages - current.keys
@@ -448,14 +453,19 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * The new-profile form's commit: create the profile, then bind its auto-switch apps in
-     * the same coroutine so the fresh id never leaks a half-configured profile to the UI.
+     * The new-profile form's commit: create the profile under its parent application
+     * (the first picked package — membership lives on [Profile.packageName] since the
+     * 2026-08-21 model adjustment), then claim the app's DEFAULT slot only where it's
+     * still free: the binding is the default pointer now, and creating a second layout
+     * for an app must not silently steal its existing default.
      */
     fun createProfile(name: String, packages: Set<String>) {
         viewModelScope.launch {
-            val newId = profileRepository.addProfile(name)
-            if (packages.isNotEmpty()) {
-                appProfileBindingRepository.bindMany(newId, packages)
+            val newId = profileRepository.addProfile(name, packageName = packages.firstOrNull())
+            for (pkg in packages) {
+                if (appProfileBindingRepository.getForPackageOnce(pkg) == null) {
+                    appProfileBindingRepository.bind(pkg, newId)
+                }
             }
         }
     }

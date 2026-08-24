@@ -122,7 +122,7 @@ class ProfileAutoSwitcher @Inject constructor(
     }
 
     suspend fun createProfileAndBind(pkg: String, appLabel: String) {
-        val newId = profileRepo.addProfile(appLabel)
+        val newId = profileRepo.addProfile(appLabel, packageName = pkg)
         bindingRepo.bind(packageName = pkg, profileId = newId)
         profileRepo.setActiveProfileById(newId)
         Log.i(TAG, "created profile '$appLabel' (id=$newId) bound to $pkg")

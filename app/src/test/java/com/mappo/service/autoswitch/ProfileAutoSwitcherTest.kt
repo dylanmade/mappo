@@ -161,7 +161,7 @@ class ProfileAutoSwitcherTest {
     fun autoCreatesProfile_whenAutoCreateEnabled_andNoBinding() = runTest {
         autoCreateEnabled.value = true
         val newId = 42L
-        coEvery { profileRepo.addProfile("game") } returns newId
+        coEvery { profileRepo.addProfile("game", "com.example.game") } returns newId
         coEvery { profileRepo.setActiveProfileById(newId) } returns
             Profile(id = newId, name = "game", isDefault = false)
 
@@ -222,7 +222,7 @@ class ProfileAutoSwitcherTest {
     @Test
     fun createProfileAndBind_addsProfileAndBindsAndSwitches() = runTest {
         val newId = 99L
-        coEvery { profileRepo.addProfile("Cool App") } returns newId
+        coEvery { profileRepo.addProfile("Cool App", "com.example.cool") } returns newId
         val pkgSlot = slot<String>()
         val idSlot = slot<Long>()
         coEvery {
@@ -233,7 +233,8 @@ class ProfileAutoSwitcherTest {
 
         subject.createProfileAndBind(pkg = "com.example.cool", appLabel = "Cool App")
 
-        coVerify { profileRepo.addProfile("Cool App") }
+        // The created layout is filed under its application (2026-08-21 membership model).
+        coVerify { profileRepo.addProfile("Cool App", "com.example.cool") }
         assertEquals("com.example.cool", pkgSlot.captured)
         assertEquals(newId, idSlot.captured)
         coVerify { profileRepo.setActiveProfileById(newId) }
