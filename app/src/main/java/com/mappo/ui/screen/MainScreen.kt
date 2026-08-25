@@ -503,6 +503,13 @@ fun MainScreen(
                         // active layout (2026-08-24) — scroll previews are transient.
                         viewModel.setViewingProfile(null)
                     },
+                    // ── New-layout flow (the drawer's "+ New layout" card) ──
+                    installedApps = installedApps,
+                    onLoadInstalledApps = viewModel::loadInstalledApps,
+                    appBindings = remember(appProfileBindings) {
+                        appProfileBindings.associate { it.packageName to it.profileId }
+                    },
+                    onCreateProfile = viewModel::createProfile,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->

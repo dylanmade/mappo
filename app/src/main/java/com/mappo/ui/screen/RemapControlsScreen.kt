@@ -84,10 +84,13 @@ import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputBarStackGap
 import com.mappo.ui.minput.MinputDialog
 import com.mappo.ui.minput.MinputGlyphLabelGap
+import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputSwitch
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
+import com.mappo.ui.screen.remap.AddProfileModalContent
+import com.mappo.ui.screen.remap.AddProfileModalHeight
 import com.mappo.ui.screen.remap.LayoutsDrawerPane
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
@@ -199,6 +202,12 @@ fun RemapControlsScreen(
     // Fired when the drawer finishes closing — the caller reverts the controls view to
     // the active layout (2026-08-24: always, not just when the preview landed on it).
     onLayoutsDrawerClosed: () -> Unit = {},
+    // ── New-layout flow (2026-08-25: the drawer's "+ New layout" card summons the same
+    // ADD modal the dormant layouts view hosts) ────────────────────────────────────
+    installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
+    onLoadInstalledApps: () -> Unit = {},
+    appBindings: Map<String, Long> = emptyMap(),
+    onCreateProfile: (name: String, packages: Set<String>) -> Unit = { _, _ -> },
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -220,6 +229,10 @@ fun RemapControlsScreen(
         if (autoSwitchEnabled && !activateWarningSuppressed) pendingActivate = commit
         else commit()
     }
+    // The new-layout modal (the drawer's "+ New layout" card). Plain remember — the form
+    // content resets on close by design (see AddProfileModalContent).
+    var addLayoutOpen by remember { mutableStateOf(false) }
+    val addModalCloseFocus = remember { FocusRequester() }
     // The layouts drawer (the bar's change button). Survives the sub-editor round-trips.
     var layoutsDrawerOpen by rememberSaveable { mutableStateOf(false) }
     var lastDrawerOpen by remember { mutableStateOf(layoutsDrawerOpen) }
@@ -346,7 +359,11 @@ fun RemapControlsScreen(
                 }
                 when (e.key) {
                     Key.ButtonSelect -> {
-                        if (openPanel != null) {
+                        if (addLayoutOpen) {
+                            // The modal is the topmost dismissable while open.
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close new-layout modal")
+                            addLayoutOpen = false
+                        } else if (openPanel != null) {
                             // A panel is the topmost dismissable — close it rather than
                             // navigating away underneath it.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
@@ -464,6 +481,7 @@ fun RemapControlsScreen(
                     activeProfileId = activeProfileId,
                     onPreviewLayout = onPreviewLayout,
                     onActivateLayout = { profile -> requestActivate { onActivateLayoutCard(profile) } },
+                    onNewLayout = { addLayoutOpen = true },
                 )
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
@@ -505,6 +523,29 @@ fun RemapControlsScreen(
             optionsEntries = optionsEntries,
             modifier = Modifier.matchParentSize(),
         )
+
+        // The new-layout modal — the SAME form the dormant layouts view hosts, summoned
+        // by the drawer's "+ New layout" card. Composed last so its BackHandler wins.
+        MinputModal(
+            open = addLayoutOpen,
+            onDismiss = { addLayoutOpen = false },
+            height = AddProfileModalHeight,
+            focusSeat = addModalCloseFocus,
+            testTag = "controls-modal:ADD",
+            modifier = Modifier.matchParentSize(),
+        ) {
+            AddProfileModalContent(
+                profiles = profiles,
+                installedApps = installedApps,
+                appBindings = appBindings,
+                onLoadInstalledApps = onLoadInstalledApps,
+                onCreateProfile = onCreateProfile,
+                onClose = { addLayoutOpen = false },
+                // New layouts default to children of the viewed application.
+                initialPackages = setOfNotNull(viewedAppPackage),
+                closeFocusRequester = addModalCloseFocus,
+            )
+        }
     }
 
     pendingActivate?.let { commit ->

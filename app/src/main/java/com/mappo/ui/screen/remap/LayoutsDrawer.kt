@@ -53,9 +53,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Profile
+import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputPanelDividerContentGap
@@ -80,12 +80,12 @@ import kotlinx.collections.immutable.ImmutableList
  * bars (2026-08-24): the top bar and the frame's bottom bar both keep their full width
  * above/below it.
  *
- * Anatomy: a New · Search · Sort controls row (New/Sort are unwired icon-button
- * placeholders — Dylan wants their fit reviewed before behavior lands), then the card
- * list in two categories: **Installed** (on-device layouts for this app) and **Community**
- * (published, not-yet-installed layouts — empty until community sharing lands). The
- * active layout's card wears the highlight plane — no separate default-layout concept:
- * the active layout IS its application's functional default.
+ * Anatomy: a Search · Sort controls row (the sort button opens the standard minput
+ * option menu — Recent/Likes/A to Z/Z to A), then the card list in two categories:
+ * **Installed** (on-device layouts for this app, ending with the "+ New layout" card) and
+ * **Community** (published, not-yet-installed layouts — empty until community sharing
+ * lands). The active layout's card wears the highlight plane — no separate default-layout
+ * concept: the active layout IS its application's functional default.
  *
  * Tapping a card runs the standard activate flow (the caller wraps [onActivateLayout] in
  * the auto-detection warning gate); a future submenu replaces the direct activation.
@@ -99,6 +99,7 @@ internal fun LayoutsDrawerPane(
     activeProfileId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Profile) -> Unit,
+    onNewLayout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Absolute width, specified in PHYSICAL pixels (not dp): 320px = exactly 25% of the
@@ -136,6 +137,7 @@ internal fun LayoutsDrawerPane(
                         activeProfileId = activeProfileId,
                         onPreviewLayout = onPreviewLayout,
                         onActivateLayout = onActivateLayout,
+                        onNewLayout = onNewLayout,
                     )
                 }
                 VerticalDivider()
@@ -151,16 +153,15 @@ private fun LayoutsDrawerContent(
     activeProfileId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Profile) -> Unit,
+    onNewLayout: () -> Unit,
 ) {
     // Live name filter — local so a fresh open starts clean isn't wanted here: the drawer
     // stays composed across open/close, which conveniently keeps the query while browsing.
     var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(LayoutSort.RECENT) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxWidth()) {
-        // New · Search · Sort — the pane's first row since the identity header retired
-        // (2026-08-24: the top bar above the pane already carries the context). New and
-        // Sort are icon-only so the search field gets the width; both deliberate no-ops
-        // for now.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
@@ -176,18 +177,31 @@ private fun LayoutsDrawerContent(
             MinputTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = "Search",
+                placeholder = "Search layouts",
                 leadingIcon = Lucide.Search,
                 clearable = true,
                 // Top-of-screen field — the sanctioned modal-less variant.
                 inlineEdit = true,
                 modifier = Modifier.weight(1f),
             )
-            MinputPillButton(
-                onClick = { /* sort menu — next brick */ },
-                leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
-                contentDescription = "Sort layouts",
-            )
+            Box {
+                // Wears the highlight plane while its menu is up — the design language's
+                // selected/active marking (the change button's drawer-open treatment).
+                MinputPillButton(
+                    onClick = { sortMenuOpen = true },
+                    leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
+                    contentDescription = "Sort layouts",
+                    highlighted = sortMenuOpen,
+                )
+                MinputDropdownMenu(
+                    expanded = sortMenuOpen,
+                    onDismissRequest = { sortMenuOpen = false },
+                    current = sort,
+                    options = LayoutSort.entries,
+                    optionLabel = { it.label },
+                    onPick = { sort = it },
+                )
+            }
         }
 
         // Category assembly. Membership = Profile.packageName (2026-08-21 model). No app
@@ -198,8 +212,9 @@ private fun LayoutsDrawerContent(
             profiles.filter { it.packageName == appPackage }
         } else profiles
         val trimmed = query.trim()
-        val installed = if (trimmed.isEmpty()) children
+        val filtered = if (trimmed.isEmpty()) children
         else children.filter { it.name.contains(trimmed, ignoreCase = true) }
+        val installed = filtered.sortedWith(sort.comparator)
         val community = emptyList<Profile>()
 
         val listState = rememberLazyListState()
@@ -229,6 +244,12 @@ private fun LayoutsDrawerContent(
                     onPreview = { onPreviewLayout(profile.id) },
                     onActivate = { onActivateLayout(profile) },
                 )
+            }
+            // Always the Installed section's last card — the empty "+ New layout" card
+            // routing into the create flow. Key deliberately outside CardKeyPrefix so the
+            // scroll-preview scan skips it.
+            item(key = "new-layout", contentType = "new") {
+                NewLayoutCard(onClick = onNewLayout)
             }
             drawerSection("Community", community, emptyHint = "No community layouts yet") { profile ->
                 LayoutCard(
@@ -355,7 +376,7 @@ private fun LayoutCard(
                 Text(
                     // Two lines are always reserved (minLines) so card heights stay
                     // uniform whether or not a description exists.
-                    text = profile.description,
+                    text = profile.description.ifBlank { PlaceholderDescription },
                     style = minputMicroTextStyle().copy(fontStyle = FontStyle.Italic),
                     color = secondaryContent,
                     minLines = 2,
@@ -365,6 +386,59 @@ private fun LayoutCard(
             }
         }
     }
+}
+
+/**
+ * The Installed section's permanent last card: an empty card in the layout cards' chrome,
+ * carrying only the "+ New layout" affordance and routing into the create-layout flow.
+ * The plus is a TEXT glyph, not a leading [Icon]: a single string self-centers on both
+ * axes, where an icon + gap + label row is only geometrically centered — the eye anchors
+ * on the label, which sits (icon + gap)/2 right of true center (device report,
+ * 2026-08-25).
+ */
+@Composable
+private fun NewLayoutCard(onClick: () -> Unit) {
+    val container = minputBoxContainer()
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        shape = RoundedCornerShape(MinputMorphCorner),
+        color = container,
+        border = minputBevelBorder(container, MinputMorphCorner),
+        modifier = Modifier
+            .fillMaxWidth()
+            .minputInteractiveMotion(interaction)
+            .clip(RoundedCornerShape(MinputMorphCorner))
+            .clickable(
+                interactionSource = interaction,
+                indication = minputIndication(),
+                onClickLabel = "New layout",
+                onClick = onClick,
+            ),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.fillMaxWidth().height(NewLayoutCardHeight),
+        ) {
+            Text(
+                text = "+ New layout",
+                style = minputMiniTextStyle(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Sort orders for the drawer's card list — the sort button's option menu. [RECENT] is the
+ * default; with no last-used tracking yet it approximates with creation recency (newest
+ * first — the dormant layouts view's precedent), and [LIKES] ties at zero until community
+ * sharing brings real counts, so recency breaks the tie.
+ */
+internal enum class LayoutSort(val label: String, val comparator: Comparator<Profile>) {
+    RECENT("Recent", compareByDescending<Profile> { it.id }),
+    LIKES("Likes", compareByDescending<Profile> { it.likeCount }.thenByDescending { it.id }),
+    A_TO_Z("A to Z", compareBy<Profile> { it.name.lowercase() }),
+    Z_TO_A("Z to A", compareByDescending<Profile> { it.name.lowercase() }),
 }
 
 /** The id of the topmost visible layout card whose vertical center has cleared the
@@ -425,6 +499,17 @@ private val LikeCountGap = 4.dp
 
 /** Gap above the description strip. */
 private val DescriptionGap = 2.dp
+
+/** Height of the [NewLayoutCard] — slimmer than a populated card, tall enough to read as
+ *  a card slot rather than a button. */
+private val NewLayoutCardHeight = 36.dp
+
+/** TEMPORARY (2026-08-25, Dylan): stand-in description so the drawer's card density and
+ *  typography can be judged before real descriptions exist — every card whose layout has
+ *  no description renders this. Remove once descriptions are editable. */
+private const val PlaceholderDescription =
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor " +
+        "incididunt ut labore et dolore magna aliqua."
 
 /** Secondary text on the highlight plane: onPrimary softened, since the scheme has no
  *  dedicated secondary-on-primary role. */

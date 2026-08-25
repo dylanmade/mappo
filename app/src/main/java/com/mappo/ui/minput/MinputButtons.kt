@@ -109,7 +109,13 @@ fun MinputPillButton(
                 Icon(
                     leadingIcon!!,
                     contentDescription = contentDescription,
-                    modifier = Modifier.size(MinputIconButtonIconSize),
+                    // Chromed circles are PILLS and use the pill family's icon scale; only
+                    // the bare (chrome-less) form keeps the utility-glyph scale — a 16dp
+                    // glyph floating in an invisible target reads right, but fills a
+                    // visible 24dp circle to bursting.
+                    modifier = Modifier.size(
+                        if (bare) MinputIconButtonIconSize else MinputPillIconSize,
+                    ),
                     tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                 )
             }

@@ -117,18 +117,46 @@ fun <T> MinputPillDropdown(
                 )
             }
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            options.forEach { option ->
-                val menuIcon = optionIcon?.invoke(option)
-                DropdownMenuItem(
-                    leadingIcon = menuIcon?.let { { Icon(it, contentDescription = null) } },
-                    text = { Text(optionLabel(option)) },
-                    trailingIcon = if (option == current) {
-                        { Icon(Icons.Filled.Check, contentDescription = null) }
-                    } else null,
-                    onClick = { open = false; if (option != current) onPick(option) },
-                )
-            }
+        MinputDropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            current = current,
+            options = options,
+            optionLabel = optionLabel,
+            onPick = onPick,
+            optionIcon = optionIcon,
+        )
+    }
+}
+
+/**
+ * The minput option menu on its own — [MinputPillDropdown]'s menu half, detached from the
+ * label-pill anchor so any control can summon it (an icon-only sort button, a card's
+ * overflow). Place it in a [Box] beside its anchor, exactly like M3's `DropdownMenu`
+ * (which it wraps): options with a check on the current one; picking dismisses first,
+ * then commits only on an actual change.
+ */
+@Composable
+fun <T> MinputDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    current: T,
+    options: List<T>,
+    optionLabel: (T) -> String,
+    onPick: (T) -> Unit,
+    optionIcon: (@Composable (T) -> Painter?)? = null,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest) {
+        options.forEach { option ->
+            val menuIcon = optionIcon?.invoke(option)
+            DropdownMenuItem(
+                leadingIcon = menuIcon?.let { { Icon(it, contentDescription = null) } },
+                text = { Text(optionLabel(option)) },
+                trailingIcon = if (option == current) {
+                    { Icon(Icons.Filled.Check, contentDescription = null) }
+                } else null,
+                onClick = { onDismissRequest(); if (option != current) onPick(option) },
+            )
         }
     }
 }
