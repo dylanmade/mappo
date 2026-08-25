@@ -56,13 +56,13 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Profile
-import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputHighlightContainer
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -173,11 +173,6 @@ private fun LayoutsDrawerContent(
                     bottom = MinputPanelDividerContentGap,
                 ),
         ) {
-            MinputPillButton(
-                onClick = { /* new-layout form — next brick */ },
-                leadingIcon = rememberVectorPainter(Lucide.Plus),
-                contentDescription = "New layout",
-            )
             MinputTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -295,7 +290,7 @@ private fun LayoutCard(
 ) {
     // surface 2 resting / highlight when active — the selection plane's content is
     // onPrimary, its secondary text the same role softened (no onPrimaryVariant exists).
-    val container = if (active) minputHighlightContainer() else MinputElevatedContainer
+    val container = if (active) minputHighlightContainer() else minputBoxContainer()
     val primaryContent = if (active) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurface
     val secondaryContent = if (active) {

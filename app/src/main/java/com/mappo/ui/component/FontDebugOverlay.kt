@@ -1,5 +1,6 @@
 package com.mappo.ui.component
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -10,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,12 +19,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,16 +36,26 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.ArrowUpToLine
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.Star
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
+import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillHeight
 import com.mappo.ui.minput.MinputTextField
@@ -59,13 +73,15 @@ import com.themestudio.core.LocalThemeStudioController
 import com.themestudio.core.UmbrellaRoles
 import com.themestudio.core.rememberGoogleFontsCatalog
 import com.themestudio.core.rememberThemeFontResolver
+import kotlinx.coroutines.launch
 
 /**
  * Floating font-debug widget (dev tooling): a collapsed chip pinned wherever the caller
  * aligns it (bottom-right by convention) that expands UPWARD into a minput-styled font
- * list — search field, "(Theme default)", free-text apply, local fonts pinned above the
- * Google Fonts catalog, every row's sample rendered in its own family. The panel opens
- * SCROLLED TO the currently applied font.
+ * list — search field + jump-to-top, "(Theme default)", free-text apply, then starred
+ * favorites pinned above local fonts above the Google Fonts catalog, every row's sample
+ * rendered in its own family. The panel opens SCROLLED TO the currently applied font;
+ * favorites persist in SharedPreferences.
  *
  * Data + application ride the Theme Studio plumbing ([LocalThemeStudioController],
  * [rememberGoogleFontsCatalog]); the chrome is minput's (the widget floats over Mappo
@@ -90,6 +106,21 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
     val resolve = rememberThemeFontResolver()
     val catalog = rememberGoogleFontsCatalog()
     val locals = remember { LocalFontRegistry.all }
+
+    // Favorites survive process death (font hunts span sessions) — plain prefs, matching
+    // the studio's own SharedPrefs persistence weight class for dev tooling.
+    val context = LocalContext.current
+    val prefs = remember(context) {
+        context.getSharedPreferences(PrefsName, Context.MODE_PRIVATE)
+    }
+    var favorites by remember {
+        mutableStateOf(prefs.getStringSet(FavoritesKey, emptySet()).orEmpty().toSet())
+    }
+    val toggleFavorite: (String) -> Unit = { name ->
+        val next = if (name in favorites) favorites - name else favorites + name
+        favorites = next
+        prefs.edit().putStringSet(FavoritesKey, next).apply()
+    }
 
     val applyFont: (String) -> Unit = { name ->
         // One tap = pick Display + "Copy Display → Body": read the display umbrella
@@ -127,19 +158,36 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                     .padding(PanelPadding),
             ) {
                 CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                    // High-on-screen field (the panel top): the sanctioned modal-less
-                    // variant, so filtering is keystroke-live under the IME overlay.
-                    MinputTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = "Search fonts",
-                        leadingIcon = Lucide.Search,
-                        clearable = true,
-                        inlineEdit = true,
+                    val listState = rememberLazyListState()
+                    val scope = rememberCoroutineScope()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
-                    )
+                    ) {
+                        // High-on-screen field (the panel top): the sanctioned modal-less
+                        // variant, so filtering is keystroke-live under the IME overlay.
+                        MinputTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            placeholder = "Search fonts",
+                            leadingIcon = Lucide.Search,
+                            clearable = true,
+                            inlineEdit = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(SearchRowGap))
+                        // Back to the list head — where favorites live.
+                        MinputPillButton(
+                            onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                            leadingIcon = rememberVectorPainter(Lucide.ArrowUpToLine),
+                            contentDescription = "Jump to top",
+                        )
+                    }
 
                     val trimmed = query.trim()
+                    val favoriteNames = remember(favorites) { favorites.sorted() }
+                    val filteredFavorites = if (trimmed.isEmpty()) favoriteNames
+                    else favoriteNames.filter { it.contains(trimmed, ignoreCase = true) }
                     val filteredLocals = if (trimmed.isEmpty()) locals
                     else locals.filter { it.displayName.contains(trimmed, ignoreCase = true) }
                     val filteredCatalog = if (trimmed.isEmpty()) catalog
@@ -148,24 +196,30 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                         locals.any { it.displayName.equals(trimmed, ignoreCase = true) }
                     val customRow = trimmed.isNotEmpty() && !exactMatch
 
-                    val listState = rememberLazyListState()
                     // Open scrolled to the applied font, not the list top. Runs on every
                     // panel entrance (the content leaves composition while collapsed).
                     LaunchedEffect(Unit) {
+                        val favoriteHit = filteredFavorites.indexOfFirst {
+                            it.equals(displayName, ignoreCase = true)
+                        }
                         val localHit = filteredLocals.indexOfFirst {
                             it.displayName.equals(displayName, ignoreCase = true)
                         }
                         val catalogHit = filteredCatalog.indexOfFirst {
                             it.equals(displayName, ignoreCase = true)
                         }
-                        // Emission order: default row · custom row? · local header+rows ·
-                        // catalog header+rows — indices must mirror the LazyColumn below.
+                        // Emission order: default row · custom row? · favorites header+rows ·
+                        // local header+rows · catalog header+rows — indices must mirror the
+                        // LazyColumn below.
                         val prefix = 1 + (if (customRow) 1 else 0)
+                        val favoriteBlock =
+                            if (filteredFavorites.isEmpty()) 0 else 1 + filteredFavorites.size
                         val localBlock = if (filteredLocals.isEmpty()) 0 else 1 + filteredLocals.size
                         val target = when {
                             displayName == null -> 0
-                            localHit >= 0 -> prefix + 1 + localHit
-                            catalogHit >= 0 -> prefix + localBlock + 1 + catalogHit
+                            favoriteHit >= 0 -> prefix + 1 + favoriteHit
+                            localHit >= 0 -> prefix + favoriteBlock + 1 + localHit
+                            catalogHit >= 0 -> prefix + favoriteBlock + localBlock + 1 + catalogHit
                             else -> return@LaunchedEffect // filtered out — stay put
                         }
                         listState.scrollToItem(target)
@@ -200,6 +254,20 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                                 )
                             }
                         }
+                        if (filteredFavorites.isNotEmpty()) {
+                            item(key = "header:favorites", contentType = "header") { FontSectionHeader("Favorites") }
+                            items(filteredFavorites, key = { "favorite:$it" }, contentType = { "row" }) { name ->
+                                FontOptionRow(
+                                    name = name,
+                                    sampleFamilyName = name,
+                                    resolve = { resolve(it) },
+                                    selected = name.equals(displayName, ignoreCase = true),
+                                    onClick = { applyFont(name) },
+                                    favorited = true,
+                                    onToggleFavorite = { toggleFavorite(name) },
+                                )
+                            }
+                        }
                         if (filteredLocals.isNotEmpty()) {
                             item(key = "header:local", contentType = "header") { FontSectionHeader("Local") }
                             items(filteredLocals, key = { "local:${it.displayName}" }, contentType = { "row" }) { spec ->
@@ -209,6 +277,8 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                                     resolve = { resolve(it) },
                                     selected = spec.displayName.equals(displayName, ignoreCase = true),
                                     onClick = { applyFont(spec.displayName) },
+                                    favorited = spec.displayName in favorites,
+                                    onToggleFavorite = { toggleFavorite(spec.displayName) },
                                 )
                             }
                         }
@@ -221,6 +291,8 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                                     resolve = { resolve(it) },
                                     selected = name.equals(displayName, ignoreCase = true),
                                     onClick = { applyFont(name) },
+                                    favorited = name in favorites,
+                                    onToggleFavorite = { toggleFavorite(name) },
                                 )
                             }
                         }
@@ -284,7 +356,9 @@ private fun FontSectionHeader(label: String) {
  * One pickable font: name over a sample line rendered in the family itself (resolving is
  * what triggers the on-demand GMS download for catalog entries; only visible rows
  * compose, so the list never requests everything). Selection wears the highlight plane —
- * the design language's selected marking.
+ * the design language's selected marking. When [onToggleFavorite] is non-null, a star
+ * rides the row's right edge (filled = favorited) with its own tap target, separate from
+ * the row's apply tap.
  */
 @Composable
 private fun FontOptionRow(
@@ -293,13 +367,16 @@ private fun FontOptionRow(
     resolve: (String) -> androidx.compose.ui.text.font.FontFamily?,
     selected: Boolean,
     onClick: () -> Unit,
+    favorited: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
 ) {
     val family = sampleFamilyName?.let { remember(it) { resolve(it) } }
     val nameColor = if (selected) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurfaceVariant
     val sampleColor = if (selected) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurface
-    Column(
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RowCorner))
@@ -313,27 +390,80 @@ private fun FontOptionRow(
             )
             .padding(horizontal = RowPadding, vertical = RowPadding / 2),
     ) {
-        Text(
-            text = name,
-            style = minputMicroTextStyle(),
-            color = nameColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (sampleFamilyName != null) {
+        Column(Modifier.weight(1f)) {
             Text(
-                // bodyLarge, not a minput mini style: judging a font needs real text size.
-                text = SAMPLE,
-                style = MaterialTheme.typography.bodyLarge.copy(fontFamily = family),
-                color = sampleColor,
+                text = name,
+                style = minputMicroTextStyle(),
+                color = nameColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (sampleFamilyName != null) {
+                Text(
+                    // bodyLarge, not a minput mini style: judging a font needs real text size.
+                    text = SAMPLE,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontFamily = family),
+                    color = sampleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onToggleFavorite != null) {
+            val starTint = when {
+                selected -> MaterialTheme.colorScheme.onPrimary
+                favorited -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(FavoriteHitSize)
+                    .clip(RoundedCornerShape(50))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = minputIndication(),
+                        onClickLabel =
+                            if (favorited) "Remove from favorites" else "Add to favorites",
+                        onClick = onToggleFavorite,
+                    ),
+            ) {
+                Icon(
+                    imageVector = if (favorited) FilledStarIcon else Lucide.Star,
+                    contentDescription = null,
+                    tint = starTint,
+                    modifier = Modifier.size(FavoriteIconSize),
+                )
+            }
         }
     }
 }
 
+/** Lucide's star polygon, filled — the shipped glyph set is stroke-only; the fill paints
+ *  with the Icon tint (same trick as the layouts drawer's FilledHeart). */
+private val FilledStarIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "FilledStar",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = addPathNodes(
+            "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25" +
+                "L7 14.14 2 9.27l6.91-1.01L12 2z",
+        ),
+        fill = SolidColor(Color.Black),
+    ).build()
+}
+
 private const val SAMPLE = "The quick brown fox jumps over 0123"
+
+/** Prefs file for the widget's own state (favorites). */
+private const val PrefsName = "font_debug_overlay"
+
+/** Prefs key: the favorited font names, verbatim catalog/local display names. */
+private const val FavoritesKey = "favorites"
 
 /** Margin between the widget and the screen edges. */
 private val EdgeMargin = 12.dp
@@ -362,6 +492,16 @@ private val RowPadding = 8.dp
 
 /** Gap between rows / above section headers (the filter rows' rhythm, halved). */
 private val RowGap = 3.dp
+
+/** Gap between the search field and the jump-to-top button (the layouts drawer's
+ *  controls-row rhythm). */
+private val SearchRowGap = 6.dp
+
+/** Tap target of a row's favorite star. */
+private val FavoriteHitSize = 24.dp
+
+/** Glyph size of a row's favorite star. */
+private val FavoriteIconSize = 14.dp
 
 /** Extra breathing room above a section overline. */
 private val SectionHeaderGap = 4.dp

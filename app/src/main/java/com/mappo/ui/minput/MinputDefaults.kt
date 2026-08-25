@@ -133,7 +133,7 @@ val MinputBoxStroke = 0.75.dp
 
 /** How far the bevel's highlights deviate from the base fill — "ever so slightly". */
 private const val BevelTopHighlightStrength = 0.10f
-private const val BevelBottomHighlightStrength = 0.05f
+private const val BevelBottomHighlightStrength = 0.10f
 
 /** Luminance floor below which the bevel strengths apply untouched — every dark plane
  *  (well, surface 1, surface 2) sits under it, so their tuned look never shifts. */

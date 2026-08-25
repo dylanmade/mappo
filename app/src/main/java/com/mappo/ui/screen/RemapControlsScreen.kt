@@ -398,7 +398,7 @@ fun RemapControlsScreen(
                 // pill on the left; the Auto-detect stack on the right. The action-set
                 // tabs that lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    overline = if (isActiveLayout) "Active layout" else "Viewing layout",
+                    overline = if (isActiveLayout) "Current layout" else "Previewing layout",
                     title = profileName ?: "Layout",
                     appPackage = viewedAppPackage,
                     onBack = onBack,
@@ -410,7 +410,6 @@ fun RemapControlsScreen(
                             onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
                             leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
                             contentDescription = "Change layout",
-                            elevated = true,
                             highlighted = layoutsDrawerOpen,
                         )
                     },
