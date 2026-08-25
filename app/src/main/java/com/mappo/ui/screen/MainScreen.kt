@@ -198,9 +198,6 @@ fun MainScreen(
         }
     }
     val context = LocalContext.current
-    var pendingPrompt by remember {
-        mutableStateOf<ProfileAutoSwitcher.UiEvent.PromptCreate?>(null)
-    }
     LaunchedEffect(Unit) {
         viewModel.autoSwitchEvents.collect { event ->
             // Defensive fallback only: when the overlay permission is granted, the
@@ -212,9 +209,6 @@ fun MainScreen(
                     snackbarHostState.showSnackbar(
                         context.getString(R.string.auto_switch_snackbar_switched, event.profileName, event.appLabel)
                     )
-                }
-                is ProfileAutoSwitcher.UiEvent.PromptCreate -> {
-                    pendingPrompt = event
                 }
             }
         }
@@ -463,6 +457,11 @@ fun MainScreen(
                 val boundPackage = viewedProfile?.id?.let { id ->
                     appProfileBindings.firstOrNull { it.profileId == id }?.packageName
                 }
+                // Package → active-layout id, for the applications drawer's previews and
+                // the new-layout form.
+                val bindingsByPackage = remember(appProfileBindings) {
+                    appProfileBindings.associate { it.packageName to it.profileId }
+                }
                 val viewedAppPackage = viewedProfile?.packageName
                     ?: entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)?.ifEmpty { null }
                     ?: boundPackage
@@ -491,24 +490,27 @@ fun MainScreen(
                     },
                     activateWarningSuppressed = activateWarningSuppressed,
                     onSuppressActivateWarning = viewModel::suppressActivateWarning,
-                    // ── Layouts drawer (2026-08-21: the layouts view lives in the
-                    // controls screen as a push pane; the routed LayoutsScreen and the
-                    // Profiles browse chain are dormant pending the apps re-imagining) ──
+                    // ── Side drawers (layouts left 2026-08-21, applications right
+                    // 2026-08-25 — both push panes in the controls screen; the routed
+                    // LayoutsScreen and the Profiles browse chain are dormant) ──
                     profiles = profiles,
                     activeProfileId = activeProfile?.id,
                     onPreviewLayout = { id -> viewModel.setViewingProfile(id) },
                     onActivateLayoutCard = { profile -> viewModel.activateLayoutManually(profile) },
-                    onLayoutsDrawerClosed = {
-                        // Closing the drawer ALWAYS reverts the controls view to the
-                        // active layout (2026-08-24) — scroll previews are transient.
+                    onDrawersClosed = {
+                        // The drawers finished closing — revert the controls view to the
+                        // active layout/application; scroll previews are transient.
                         viewModel.setViewingProfile(null)
+                    },
+                    onPreviewApplication = { pkg ->
+                        // Preview the application's ACTIVE layout (its binding). Apps
+                        // with no layouts leave the current preview in place.
+                        bindingsByPackage[pkg]?.let(viewModel::setViewingProfile)
                     },
                     // ── New-layout flow (the drawer's "+ New layout" card) ──
                     installedApps = installedApps,
                     onLoadInstalledApps = viewModel::loadInstalledApps,
-                    appBindings = remember(appProfileBindings) {
-                        appProfileBindings.associate { it.packageName to it.profileId }
-                    },
+                    appBindings = bindingsByPackage,
                     onCreateProfile = viewModel::createProfile,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
@@ -1095,73 +1097,23 @@ fun MainScreen(
             screenContent = screenContent,
         )
 
-        // Auto-switch prompt banner + toast host — the old home Scaffold's snackbarHost slot,
-        // rehomed to the window's bottom edge when the d-pad flower home was retired. Only a
-        // defensive fallback: with the overlay permission granted these render on the primary
-        // screen instead (see the autoSwitchEvents collector above).
+        // Toast host — the old home Scaffold's snackbarHost slot, rehomed to the
+        // window's bottom edge when the d-pad flower home was retired. Only a defensive
+        // fallback: with the overlay permission granted these render on the primary
+        // screen instead (see the autoSwitchEvents collector above). The create-profile
+        // prompt banner that shared this slot retired 2026-08-26 — profiles auto-create.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(),
         ) {
-            val prompt = pendingPrompt
-            if (prompt != null) {
-                // Non-blocking inline banner (Card) instead of a Snackbar — the 3-action
-                // prompt violates Snackbar's single-action contract, and a banner-shaped card
-                // communicates "decision required" without pretending to be a passive toast.
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = stringResource(R.string.auto_switch_prompt_title, prompt.appLabel),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    viewModel.ignorePackageForever(prompt.pkg)
-                                    pendingPrompt = null
-                                },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.error
-                                )
-                            ) { Text(stringResource(R.string.auto_switch_prompt_never)) }
-                            TextButton(
-                                onClick = { pendingPrompt = null },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            ) { Text(stringResource(R.string.auto_switch_prompt_no)) }
-                            TextButton(
-                                onClick = {
-                                    viewModel.acceptCreateProfilePrompt(prompt.pkg, prompt.appLabel)
-                                    pendingPrompt = null
-                                }
-                            ) { Text(stringResource(R.string.auto_switch_prompt_yes)) }
-                        }
-                    }
-                }
-            } else {
-                SnackbarHost(snackbarHostState) { data ->
-                    Snackbar(
-                        snackbarData = data,
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        actionColor = MaterialTheme.colorScheme.primary
-                    )
-                }
+            SnackbarHost(snackbarHostState) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    actionColor = MaterialTheme.colorScheme.primary
+                )
             }
         }
 

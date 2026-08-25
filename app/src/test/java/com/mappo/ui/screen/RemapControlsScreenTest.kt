@@ -306,7 +306,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onAllNodesWithText("AUTO-DETECT").assertCountEquals(1)
+        composeRule.onAllNodesWithText("AUTO").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
@@ -344,6 +344,62 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("COMMUNITY", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Beta layout", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun applicationsButton_opensApplicationsDrawer_withAppCards() {
+        // The applications button (the change button's right-corner mirror) slides in the
+        // applications drawer: same category headers, a card per detected app with its
+        // active layout named on bound apps.
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = sampleConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        profiles = kotlinx.collections.immutable.persistentListOf(
+                            com.mappo.data.model.Profile(
+                                id = 1L,
+                                name = "Alpha layout",
+                                packageName = "com.example.alpha",
+                            ),
+                        ),
+                        activeProfileId = 1L,
+                        installedApps = listOf(
+                            com.mappo.data.repository.InstalledAppsRepository.InstalledApp(
+                                packageName = "com.example.alpha",
+                                label = "Alpha Game",
+                            ),
+                            com.mappo.data.repository.InstalledAppsRepository.InstalledApp(
+                                packageName = "com.example.beta",
+                                label = "Beta Game",
+                            ),
+                        ),
+                        appBindings = mapOf("com.example.alpha" to 1L),
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Change application").performClick()
+        composeRule.waitForIdle()
+
+        // Cards are name-only (2026-08-26: the active-layout subtitle retired), and
+        // merely OPENING the drawer previews nothing (scroll-position preview retired
+        // the same day — "Alpha Game" appears once, on its card, not in the bar).
+        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(1)
+        composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
+
+        // Picking the unbound app pins its context: the content plane swaps to the
+        // no-layout state with the two route tiles.
+        composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("No layout assigned for Beta Game", useUnmergedTree = true)
+            .assertExists()
+        composeRule.onNodeWithText("Create a layout", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Browse layouts", useUnmergedTree = true).assertExists()
     }
 
     @Test

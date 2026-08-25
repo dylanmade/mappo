@@ -86,18 +86,23 @@ internal fun RemapTopBar(
                     )
                 }
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                val icon = rememberAppIconPainter(appPackage)
-                if (icon != null) {
-                    AppIconImage(icon, size = MinputBarWidgetIconSize)
-                } else {
-                    Icon(
-                        Icons.Filled.Apps,
-                        contentDescription = null,
-                        modifier = Modifier.size(MinputBarWidgetIconSize),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // No [appPackage] = no icon at all (2026-08-25: the controls bar moved
+                // the application identity — icon included — to its right corner; the
+                // dormant browse-chain views still pass one and keep the old anatomy).
+                if (appPackage != null) {
+                    val icon = rememberAppIconPainter(appPackage)
+                    if (icon != null) {
+                        AppIconImage(icon, size = MinputBarWidgetIconSize)
+                    } else {
+                        Icon(
+                            Icons.Filled.Apps,
+                            contentDescription = null,
+                            modifier = Modifier.size(MinputBarWidgetIconSize),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(MinputBarIconTextGap))
                 }
-                Spacer(Modifier.width(MinputBarIconTextGap))
                 // Intrinsic width under a chrome cap (names are unbounded — the
                 // NameableText rule), so leading actions can sit WITH the identity
                 // cluster instead of being pushed to the far edge.

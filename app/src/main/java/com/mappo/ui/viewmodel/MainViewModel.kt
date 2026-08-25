@@ -425,18 +425,25 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * "Activate layout" (the bar pill or a drawer card): promote the layout to active AND
-     * turn auto detection off — the user just made an explicit choice; leaving auto-switch
-     * on would immediately fight it (the foreground app's binding re-activating over the
-     * manual pick). The Auto-detect switch in the top-right corner re-enables it.
+     * "Activate layout" (the bar pill or a drawer card): promote the layout to active,
+     * and turn auto detection off only for CROSS-application picks (2026-08-25; matching
+     * the warning dialog's cross-app gate) — leaving auto-switch on there would
+     * immediately fight the choice (the foreground app's binding re-activating over it).
+     * A same-app switch stays compatible with detection: the binding below just repoints
+     * the app's functional default, so auto detection returns the user's latest pick.
+     * The Auto-detect switch in the top-right corner re-enables it.
      *
      * Also points the layout's parent application binding at it: there is no separate
      * default-layout concept (2026-08-24) — the activated layout IS the app's functional
-     * default, so auto detection returns to the user's latest pick.
+     * default.
      */
     fun activateLayoutManually(profile: Profile) {
+        // Read the detected app BEFORE selecting — selection moves the active pointer.
+        val detectedPackage = activeProfile.value?.packageName
+        if (profile.packageName != detectedPackage) {
+            autoSwitchSettings.setAutoSwitchEnabled(false)
+        }
         selectProfile(profile)
-        autoSwitchSettings.setAutoSwitchEnabled(false)
         profile.packageName?.let { pkg ->
             viewModelScope.launch { appProfileBindingRepository.bind(pkg, profile.id) }
         }
@@ -467,6 +474,10 @@ class MainViewModel @Inject constructor(
                     appProfileBindingRepository.bind(pkg, newId)
                 }
             }
+            // Jump the controls view to the fresh layout (2026-08-25) — creating from
+            // the no-layout state / "+ New layout" card should land the user IN their
+            // new layout, not back on the previously previewed one.
+            _viewingProfileId.value = newId
         }
     }
 
@@ -533,14 +544,6 @@ class MainViewModel @Inject constructor(
         autoSwitcher.reevaluate()
     }
 
-    fun acceptCreateProfilePrompt(pkg: String, appLabel: String) {
-        viewModelScope.launch { autoSwitcher.createProfileAndBind(pkg, appLabel) }
-    }
-
-    fun ignorePackageForever(pkg: String) {
-        autoSwitcher.ignorePackage(pkg)
-    }
-
     fun unignorePackage(pkg: String) {
         autoSwitchSettings.removeIgnoredPackage(pkg)
     }
@@ -567,6 +570,9 @@ class MainViewModel @Inject constructor(
      * dispatcher. Called when the sheet opens.
      */
     fun loadInstalledApps() {
+        // Detection alone makes an app an application entry (2026-08-26 correction: NO
+        // layout auto-provisioning here — an app without layouts shows the no-layout
+        // state, whose Create/Browse tiles are the layout-acquisition paths).
         viewModelScope.launch {
             _installedApps.value = installedAppsRepository.launchableApps()
         }

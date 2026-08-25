@@ -1,6 +1,5 @@
 package com.mappo.ui.screen.remap
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,8 +28,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,8 +71,9 @@ import kotlinx.collections.immutable.ImmutableList
  * The layouts drawer (2026-08-21) — the layouts view rebuilt as a push pane in the
  * controls home: the top bar's change button slides it in from the left, COMPRESSING the
  * controls content beside it (no scrim, no modality — the controls view stays fully
- * interactive) so scrolling the layout cards live-previews each one in the controls view
- * behind (via [onPreviewLayout] → the VM viewing pointer). The pane opens BETWEEN the
+ * interactive). Focusing a card (d-pad) or tapping previews it in the controls view
+ * behind (via [onPreviewLayout] → the VM viewing pointer; scroll-position-driven preview
+ * retired 2026-08-26). The pane opens BETWEEN the
  * bars (2026-08-24): the top bar and the frame's bottom bar both keep their full width
  * above/below it.
  *
@@ -89,58 +86,97 @@ import kotlinx.collections.immutable.ImmutableList
  *
  * Tapping a card runs the standard activate flow (the caller wraps [onActivateLayout] in
  * the auto-detection warning gate); a future submenu replaces the direct activation.
+ *
+ * Back handling is HOISTED to the caller (2026-08-25): one back press dismisses this
+ * drawer AND the applications drawer together.
  */
 @Composable
 internal fun LayoutsDrawerPane(
     open: Boolean,
-    onClose: () -> Unit,
     appPackage: String?,
     profiles: ImmutableList<Profile>,
     activeProfileId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Profile) -> Unit,
     onNewLayout: () -> Unit,
+    onFullyClosed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    SideDrawerShell(
+        open = open,
+        fromEnd = false,
+        onFullyClosed = onFullyClosed,
+        modifier = modifier,
+    ) {
+        LayoutsDrawerContent(
+            appPackage = appPackage,
+            profiles = profiles,
+            activeProfileId = activeProfileId,
+            onPreviewLayout = onPreviewLayout,
+            onActivateLayout = onActivateLayout,
+            onNewLayout = onNewLayout,
+        )
+    }
+}
+
+/**
+ * The shared side-pane skeleton behind BOTH drawers (layouts left, applications right):
+ * an animated-width clipping box whose fixed-width sheet slides in from the pane's own
+ * screen edge, on the chrome plane with a divider on its content-facing side. The
+ * neighbor in the parent Row resizes as the pane animates — a push pane, not an overlay.
+ *
+ * [onFullyClosed] fires when the CLOSE animation completes (not at close intent): callers
+ * revert transient preview state there, so the drawer's content stays scoped and stable
+ * while it slides away (reverting at intent time re-filtered the still-visible list —
+ * the 2026-08-25 close-flash bug). A reopen mid-close retargets the animation and the
+ * callback never fires.
+ */
+@Composable
+internal fun SideDrawerShell(
+    open: Boolean,
+    fromEnd: Boolean,
+    onFullyClosed: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
     // Absolute width, specified in PHYSICAL pixels (not dp): 320px = exactly 25% of the
-    // 1280×960 test device, pushing the controls view there into a perfect 1:1 square.
+    // 1280×960 test device, pushing the controls view there into a perfect 1:1 square
+    // (a perfect 1:2 with both drawers open).
     val drawerWidth = with(LocalDensity.current) { LayoutsDrawerWidthPx.toDp() }
     val animatedWidth by animateDpAsState(
         targetValue = if (open) drawerWidth else 0.dp,
         animationSpec = tween(DrawerSlideMillis, easing = FastOutSlowInEasing),
-        label = "layoutsDrawer",
+        label = "sideDrawer",
+        finishedListener = { landed -> if (landed == 0.dp) onFullyClosed() },
     )
-    // Physical/gesture back closes the drawer. Registered here — after the screen's base
-    // BackHandler, before the content's own dismissables (group editor, panels), which
-    // compose later and rightly win while open.
-    BackHandler(enabled = open) { onClose() }
-
-    // The pane clips a fixed-width sheet whose right edge rides the animated width — the
-    // conventional drawer slide, while the Row neighbor (the controls view) resizes.
+    // The pane clips a fixed-width sheet anchored to its screen edge — the conventional
+    // drawer slide, while the Row neighbor (the controls view) resizes. A start pane's
+    // sheet pins its right edge to the pane's right edge (sliding in from the left); an
+    // end pane's sheet pins its left edge to the pane's left edge, which itself rides
+    // leftward as the pane widens (sliding in from the right).
     Box(modifier.fillMaxHeight().width(animatedWidth).clipToBounds()) {
         if (animatedWidth > 0.dp) {
             Row(
                 Modifier
                     .fillMaxHeight()
                     .width(drawerWidth)
-                    .offset { IntOffset((animatedWidth - drawerWidth).roundToPx(), 0) },
+                    .offset {
+                        IntOffset(
+                            if (fromEnd) 0 else (animatedWidth - drawerWidth).roundToPx(),
+                            0,
+                        )
+                    },
             ) {
+                if (fromEnd) VerticalDivider()
                 // surfaceContainer — chrome pane, the bars' plane (a non-modal side panel,
                 // not an M3 modal drawer — no scrim, content beside it stays live).
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 ) {
-                    LayoutsDrawerContent(
-                        appPackage = appPackage,
-                        profiles = profiles,
-                        activeProfileId = activeProfileId,
-                        onPreviewLayout = onPreviewLayout,
-                        onActivateLayout = onActivateLayout,
-                        onNewLayout = onNewLayout,
-                    )
+                    content()
                 }
-                VerticalDivider()
+                if (!fromEnd) VerticalDivider()
             }
         }
     }
@@ -191,6 +227,8 @@ private fun LayoutsDrawerContent(
                     onClick = { sortMenuOpen = true },
                     leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
                     contentDescription = "Sort layouts",
+                    // Invisible at rest (2026-08-26 trial, matching the drawer summons).
+                    bare = true,
                     highlighted = sortMenuOpen,
                 )
                 MinputDropdownMenu(
@@ -217,15 +255,11 @@ private fun LayoutsDrawerContent(
         val installed = filtered.sortedWith(sort.comparator)
         val community = emptyList<Profile>()
 
+        // Preview triggers are DELIBERATE only (2026-08-26): card focus (d-pad, via
+        // each card's focus observer) or tap — the scroll-position-driven preview
+        // (topmost visible card = previewed) is retired; merely scrolling past cards
+        // churned the controls view and read as phantom focus.
         val listState = rememberLazyListState()
-        // Scroll-driven live preview: the topmost card whose center has cleared the
-        // viewport top is "current" — as cards scroll past, the controls view behind the
-        // drawer re-renders each layout in turn. Card focus (d-pad) previews too, via
-        // each card's own focus observer.
-        val previewedId by remember {
-            derivedStateOf { listState.topmostCardId() }
-        }
-        LaunchedEffect(previewedId) { previewedId?.let(onPreviewLayout) }
 
         LazyColumn(
             state = listState,
@@ -441,18 +475,6 @@ internal enum class LayoutSort(val label: String, val comparator: Comparator<Pro
     Z_TO_A("Z to A", compareByDescending<Profile> { it.name.lowercase() }),
 }
 
-/** The id of the topmost visible layout card whose vertical center has cleared the
- *  viewport top — the scroll-preview's "current" card (null while no cards are visible). */
-private fun LazyListState.topmostCardId(): Long? {
-    val info = layoutInfo
-    val cards = info.visibleItemsInfo.filter {
-        (it.key as? String)?.startsWith(CardKeyPrefix) == true
-    }
-    val topmost = cards.firstOrNull { it.offset + it.size / 2 >= info.viewportStartOffset }
-        ?: cards.lastOrNull()
-    return (topmost?.key as? String)?.removePrefix(CardKeyPrefix)?.toLongOrNull()
-}
-
 /** Lucide's heart, FILLED: the lucide-icons port ships stroke-only glyphs, so the filled
  *  variant is authored here from the same lucide.dev path data. Fill color is a
  *  placeholder — `Icon` tint paints it. */
@@ -486,10 +508,10 @@ private const val DrawerSlideMillis = 300
 
 /** Gap between the drawer's control-row members and between list cards (the filter rows'
  *  6dp rhythm). */
-private val DrawerControlGap = 6.dp
+internal val DrawerControlGap = 6.dp
 
 /** Interior padding of a layout card. */
-private val CardPadding = 8.dp
+internal val CardPadding = 8.dp
 
 /** The like heart, sized to the micro text line beside it. */
 private val LikeIconSize = 10.dp
@@ -513,4 +535,4 @@ private const val PlaceholderDescription =
 
 /** Secondary text on the highlight plane: onPrimary softened, since the scheme has no
  *  dedicated secondary-on-primary role. */
-private const val SecondaryOnHighlightAlpha = 0.8f
+internal const val SecondaryOnHighlightAlpha = 0.8f

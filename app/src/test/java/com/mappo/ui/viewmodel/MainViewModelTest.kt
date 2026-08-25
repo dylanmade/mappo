@@ -421,19 +421,6 @@ class MainViewModelTest {
     }
 
     @Test
-    fun acceptCreateProfilePrompt_delegatesToAutoSwitcher() = runTest(testDispatcher) {
-        subject.acceptCreateProfilePrompt(pkg = "com.example", appLabel = "Example")
-        advanceUntilIdle()
-        coVerify { autoSwitcher.createProfileAndBind("com.example", "Example") }
-    }
-
-    @Test
-    fun ignorePackageForever_delegatesToAutoSwitcher() {
-        subject.ignorePackageForever("com.example")
-        verify { autoSwitcher.ignorePackage("com.example") }
-    }
-
-    @Test
     fun unignorePackage_delegatesToSettings() {
         subject.unignorePackage("com.example")
         verify { settings.removeIgnoredPackage("com.example") }

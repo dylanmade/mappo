@@ -21,7 +21,10 @@ import javax.inject.Singleton
 
 /**
  * Listens to foreground-app changes and auto-switches the active profile when a binding
- * exists. Emits UI events for both the switched-profile case and the create-profile prompt.
+ * exists. An unbound app is simply skipped (2026-08-26: the create-profile PROMPT flow —
+ * banner, overlay prompt, throttle, ignore-list gate — is retired, and NOTHING is
+ * auto-created either: an application without layouts is a first-class state, served by
+ * the controls screen's no-layout view).
  */
 @Singleton
 class ProfileAutoSwitcher @Inject constructor(
@@ -36,13 +39,10 @@ class ProfileAutoSwitcher @Inject constructor(
 
     sealed class UiEvent {
         data class Switched(val pkg: String, val appLabel: String, val profileName: String) : UiEvent()
-        data class PromptCreate(val pkg: String, val appLabel: String) : UiEvent()
     }
 
     private val _events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 8)
     val events: SharedFlow<UiEvent> = _events.asSharedFlow()
-
-    private val lastPromptedAt: MutableMap<String, Long> = mutableMapOf()
 
     @Volatile private var startJob: Job? = null
 
@@ -62,10 +62,6 @@ class ProfileAutoSwitcher @Inject constructor(
         if (!filter.isInteresting(pkg)) return
 
         val binding = bindingRepo.getForPackageOnce(pkg)
-        if (binding == null && pkg in settings.ignoredPackages.value) {
-            Log.d(TAG, "$pkg is in ignored list; skipping prompt")
-            return
-        }
         if (binding != null) {
             val current = profileRepo.activeProfile.value
             if (current?.id == binding.profileId) {
@@ -82,24 +78,9 @@ class ProfileAutoSwitcher @Inject constructor(
             return
         }
 
-        val appLabel = filter.appLabel(pkg)
-
-        if (settings.autoCreateProfilesEnabled.value) {
-            Log.d(TAG, "no binding for $pkg → auto-creating profile (auto-create enabled)")
-            createProfileAndBind(pkg, appLabel)
-            _events.tryEmit(UiEvent.Switched(pkg, appLabel, appLabel))
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        val last = lastPromptedAt[pkg] ?: 0L
-        if (now - last < PROMPT_THROTTLE_MS) {
-            Log.d(TAG, "prompt for $pkg throttled (${now - last}ms since last)")
-            return
-        }
-        lastPromptedAt[pkg] = now
-        Log.d(TAG, "no binding for $pkg → emitting create-profile prompt")
-        _events.tryEmit(UiEvent.PromptCreate(pkg, appLabel))
+        // No binding → nothing to switch to; leave the active layout alone. (No prompt,
+        // no auto-create — an app without layouts is a first-class state.)
+        Log.d(TAG, "no binding for $pkg; skipping")
     }
 
     /**
@@ -121,20 +102,7 @@ class ProfileAutoSwitcher @Inject constructor(
         scope.launch { handleForegroundChange(pkg) }
     }
 
-    suspend fun createProfileAndBind(pkg: String, appLabel: String) {
-        val newId = profileRepo.addProfile(appLabel, packageName = pkg)
-        bindingRepo.bind(packageName = pkg, profileId = newId)
-        profileRepo.setActiveProfileById(newId)
-        Log.i(TAG, "created profile '$appLabel' (id=$newId) bound to $pkg")
-    }
-
-    fun ignorePackage(pkg: String) {
-        settings.addIgnoredPackage(pkg)
-        Log.i(TAG, "added $pkg to ignored list")
-    }
-
     companion object {
         private const val TAG = "ProfileAutoSwitcher"
-        private const val PROMPT_THROTTLE_MS = 60_000L
     }
 }

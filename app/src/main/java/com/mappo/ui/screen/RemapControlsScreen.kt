@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,9 +20,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ButtonDefaults
@@ -37,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -62,11 +67,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Settings
 import com.mappo.R
 import com.mappo.data.model.Profile
@@ -81,16 +89,25 @@ import com.mappo.data.model.steam.requiresShizuku as outputRequiresShizuku
 import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.compact.scaledLayout
+import com.mappo.ui.component.AppIconImage
+import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputBarIconTextGap
 import com.mappo.ui.minput.MinputBarStackGap
+import com.mappo.ui.minput.MinputBarWidgetIconSize
 import com.mappo.ui.minput.MinputDialog
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputModal
+import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputPillButton
-import com.mappo.ui.minput.MinputSwitch
+import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.minputIndication
+import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.remap.AddProfileModalContent
 import com.mappo.ui.screen.remap.AddProfileModalHeight
+import com.mappo.ui.screen.remap.ApplicationsDrawerPane
 import com.mappo.ui.screen.remap.LayoutsDrawerPane
 import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
@@ -199,9 +216,15 @@ fun RemapControlsScreen(
     activeProfileId: Long? = null,
     onPreviewLayout: (Long) -> Unit = {},
     onActivateLayoutCard: (Profile) -> Unit = {},
-    // Fired when the drawer finishes closing — the caller reverts the controls view to
-    // the active layout (2026-08-24: always, not just when the preview landed on it).
-    onLayoutsDrawerClosed: () -> Unit = {},
+    // Fired when the LAST open drawer finishes its close animation — the caller reverts
+    // the controls view to the active layout/application (2026-08-25: at animation END,
+    // not close intent, so the sliding-away drawer's content stays scoped — reverting
+    // early re-filtered the still-visible list, the close-flash bug).
+    onDrawersClosed: () -> Unit = {},
+    // ── Applications drawer (2026-08-25: the layouts drawer's right-side mirror) ────
+    // Previews the application's ACTIVE layout in the controls view (the caller resolves
+    // the app's binding to a layout id).
+    onPreviewApplication: (String) -> Unit = {},
     // ── New-layout flow (2026-08-25: the drawer's "+ New layout" card summons the same
     // ADD modal the dormant layouts view hosts) ────────────────────────────────────
     installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
@@ -221,26 +244,52 @@ fun RemapControlsScreen(
     // rotation-survival isn't worth a custom Saver.
     var dialog by remember { mutableStateOf<ActionSetDialogState>(ActionSetDialogState.None) }
     var layerDialog by remember { mutableStateOf<LayerDialogState>(LayerDialogState.None) }
-    // The activate-layout warning gate (shown when Auto is on and the warning isn't
-    // sticky-dismissed — activating manually turns auto detection off): both activation
-    // paths (the bar pill, a drawer card) stash their commit here and share the dialog.
+    // The activate warning gate (2026-08-25 refinement): the dialog shows only for
+    // CROSS-application selections — picking an app (or a layout belonging to an app)
+    // other than the auto-detected one is what conflicts with auto detection. Same-app
+    // layout switches just repoint the app's functional default, so they commit silently
+    // (and keep auto detection on — see MainViewModel.activateLayoutManually). All
+    // activation paths (the bar pill, either drawer's cards) stash their commit here and
+    // share the dialog. The auto-detected application = the active layout's parent.
+    val detectedAppPackage = profiles.firstOrNull { it.id == activeProfileId }?.packageName
     var pendingActivate by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val requestActivate: (() -> Unit) -> Unit = { commit ->
-        if (autoSwitchEnabled && !activateWarningSuppressed) pendingActivate = commit
-        else commit()
-    }
+    val requestActivate: (targetPackage: String?, commit: () -> Unit) -> Unit =
+        { targetPackage, commit ->
+            val crossApp = targetPackage != detectedAppPackage
+            if (autoSwitchEnabled && !activateWarningSuppressed && crossApp) {
+                pendingActivate = commit
+            } else commit()
+        }
     // The new-layout modal (the drawer's "+ New layout" card). Plain remember — the form
     // content resets on close by design (see AddProfileModalContent).
     var addLayoutOpen by remember { mutableStateOf(false) }
     val addModalCloseFocus = remember { FocusRequester() }
-    // The layouts drawer (the bar's change button). Survives the sub-editor round-trips.
+    // The side drawers (the bar's corner buttons). Survive the sub-editor round-trips.
     var layoutsDrawerOpen by rememberSaveable { mutableStateOf(false) }
-    var lastDrawerOpen by remember { mutableStateOf(layoutsDrawerOpen) }
-    LaunchedEffect(layoutsDrawerOpen) {
-        val was = lastDrawerOpen
-        lastDrawerOpen = layoutsDrawerOpen
-        if (was && !layoutsDrawerOpen) onLayoutsDrawerClosed()
+    var appsDrawerOpen by rememberSaveable { mutableStateOf(false) }
+    // The application the user is browsing via the applications drawer — overrides the
+    // viewed layout's own application for the top-bar identity, the layouts drawer's
+    // scope, and new-layout association. Cleared when the drawers finish closing.
+    var viewingAppOverride by rememberSaveable { mutableStateOf<String?>(null) }
+    val effectiveAppPackage = viewingAppOverride ?: viewedAppPackage
+    // Revert fires when the LAST drawer's close animation completes (both panes report
+    // through here; the guard makes the pair idempotent). Closing one drawer while the
+    // other stays open reverts nothing — the surviving drawer's preview context holds.
+    val onDrawerFullyClosed = {
+        if (!layoutsDrawerOpen && !appsDrawerOpen) {
+            viewingAppOverride = null
+            onDrawersClosed()
+        }
     }
+    // One back press dismisses BOTH drawers (registered after the screen's base
+    // BackHandler, before the group editor/panels, which compose later and win).
+    BackHandler(enabled = layoutsDrawerOpen || appsDrawerOpen) {
+        layoutsDrawerOpen = false
+        appsDrawerOpen = false
+    }
+    // The device app list loads at entry — the bar's application widget needs labels
+    // (and the applications drawer its cards) from the first frame.
+    LaunchedEffect(Unit) { onLoadInstalledApps() }
 
     // Stash an analog-mode pick if Shizuku isn't ready AND the explainer hasn't been
     // acknowledged. `Pair(bindingGroupId, mode)`. Once Shizuku is Granted OR the user has acked,
@@ -368,9 +417,11 @@ fun RemapControlsScreen(
                             // navigating away underneath it.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
                             openPanel = null
-                        } else if (layoutsDrawerOpen) {
-                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close layouts drawer")
+                        } else if (layoutsDrawerOpen || appsDrawerOpen) {
+                            // Mirrors back: one press dismisses both drawers.
+                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close drawers")
                             layoutsDrawerOpen = false
+                            appsDrawerOpen = false
                         } else {
                             // "Leave Mappo" on the home.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> back")
@@ -417,7 +468,9 @@ fun RemapControlsScreen(
                 RemapTopBar(
                     overline = if (isActiveLayout) "Current layout" else "Previewing layout",
                     title = profileName ?: "Layout",
-                    appPackage = viewedAppPackage,
+                    // Null on purpose (2026-08-25): the application identity — icon
+                    // included — lives in the bar's RIGHT corner now.
+                    appPackage = null,
                     onBack = onBack,
                     navigation = {
                         // The universal way into the layouts view: toggles the drawer.
@@ -427,6 +480,9 @@ fun RemapControlsScreen(
                             onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
                             leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
                             contentDescription = "Change layout",
+                            // Invisible at rest (2026-08-26 trial vs the box variant's
+                            // bevel highlights); the highlight plane still marks open.
+                            bare = true,
                             highlighted = layoutsDrawerOpen,
                         )
                     },
@@ -452,7 +508,7 @@ fun RemapControlsScreen(
                                 Spacer(Modifier.width(TopBarPillGap))
                                 MinputPillButton(
                                     text = "Activate layout",
-                                    onClick = { requestActivate(onActivateLayout) },
+                                    onClick = { requestActivate(viewedAppPackage, onActivateLayout) },
                                     leadingIcon = rememberVectorPainter(Lucide.Check),
                                     leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -460,9 +516,62 @@ fun RemapControlsScreen(
                         }
                     },
                     actions = {
-                        AutoDetectStack(
+                        // The right corner mirrors the left (2026-08-25): the
+                        // application identity — overline+title stack then icon — beside
+                        // the applications drawer's summon, with the compact Auto row
+                        // leading in.
+                        AutoDetectRow(
                             enabled = autoSwitchEnabled,
                             onChange = onAutoSwitchChange,
+                        )
+                        Spacer(Modifier.width(MinputBarIconTextGap))
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+                            modifier = Modifier.widthIn(max = AppStackMaxWidth),
+                        ) {
+                            Text(
+                                text = (
+                                    if (effectiveAppPackage == detectedAppPackage) {
+                                        "Current app"
+                                    } else "Previewing app"
+                                    ).uppercase(),
+                                style = minputOverlineTextStyle(),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = effectiveAppPackage?.let { pkg ->
+                                    installedApps.firstOrNull { it.packageName == pkg }?.label
+                                        ?: pkg
+                                } ?: "No application",
+                                style = minputMiniTextStyle(),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(MinputBarIconTextGap))
+                        val appIcon = rememberAppIconPainter(effectiveAppPackage)
+                        if (appIcon != null) {
+                            AppIconImage(appIcon, size = MinputBarWidgetIconSize)
+                        } else {
+                            Icon(
+                                Icons.Filled.Apps,
+                                contentDescription = null,
+                                modifier = Modifier.size(MinputBarWidgetIconSize),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(MinputGlyphLabelGap))
+                        // The applications drawer's summon — the change button's mirror
+                        // (same glyph); highlight plane while its drawer is open.
+                        MinputPillButton(
+                            onClick = { appsDrawerOpen = !appsDrawerOpen },
+                            leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
+                            contentDescription = "Change application",
+                            bare = true,
+                            highlighted = appsDrawerOpen,
                         )
                     },
                 )
@@ -475,20 +584,38 @@ fun RemapControlsScreen(
             Row(Modifier.fillMaxSize().padding(innerPadding)) {
                 LayoutsDrawerPane(
                     open = layoutsDrawerOpen,
-                    onClose = { layoutsDrawerOpen = false },
-                    appPackage = viewedAppPackage,
+                    appPackage = effectiveAppPackage,
                     profiles = profiles,
                     activeProfileId = activeProfileId,
                     onPreviewLayout = onPreviewLayout,
-                    onActivateLayout = { profile -> requestActivate { onActivateLayoutCard(profile) } },
+                    onActivateLayout = { profile ->
+                        requestActivate(profile.packageName) { onActivateLayoutCard(profile) }
+                    },
                     onNewLayout = { addLayoutOpen = true },
+                    onFullyClosed = onDrawerFullyClosed,
                 )
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    // The viewed application has no layout (an apps-drawer preview/pick of
+                    // an unbound app, or one whose bound layout was deleted): the content
+                    // plane shows the no-layout state instead of another app's controls —
+                    // tiles route into layout creation and the layouts drawer (which
+                    // holds the Community section once sharing lands).
+                    val overrideBoundProfile = viewingAppOverride?.let { pkg ->
+                        appBindings[pkg]?.let { id -> profiles.firstOrNull { it.id == id } }
+                    }
+                    if (viewingAppOverride != null && overrideBoundProfile == null) {
+                        NoLayoutAssignedView(
+                            appLabel = installedApps
+                                .firstOrNull { it.packageName == viewingAppOverride }?.label
+                                ?: viewingAppOverride.orEmpty(),
+                            onCreateLayout = { addLayoutOpen = true },
+                            onBrowseLayouts = { layoutsDrawerOpen = true },
+                        )
+                    } else Column(modifier = Modifier.fillMaxSize()) {
                         if (hasAnalogModeInConfig && !shizukuReady) {
                             ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
                         }
@@ -514,6 +641,31 @@ fun RemapControlsScreen(
                         )
                     }
                 }
+                ApplicationsDrawerPane(
+                    open = appsDrawerOpen,
+                    apps = installedApps,
+                    activeAppPackage = detectedAppPackage,
+                    onPreviewApplication = { pkg ->
+                        viewingAppOverride = pkg
+                        onPreviewApplication(pkg)
+                    },
+                    onSelectApplication = { app ->
+                        requestActivate(app.packageName) {
+                            val boundProfile = appBindings[app.packageName]?.let { id ->
+                                profiles.firstOrNull { it.id == id }
+                            }
+                            if (boundProfile != null) {
+                                onActivateLayoutCard(boundProfile)
+                            } else {
+                                // No layout to activate yet — pin the application
+                                // context so the layouts drawer (and its "+ New layout"
+                                // card) scope to this app.
+                                viewingAppOverride = app.packageName
+                            }
+                        }
+                    },
+                    onFullyClosed = onDrawerFullyClosed,
+                )
             }
         }
 
@@ -541,8 +693,9 @@ fun RemapControlsScreen(
                 onLoadInstalledApps = onLoadInstalledApps,
                 onCreateProfile = onCreateProfile,
                 onClose = { addLayoutOpen = false },
-                // New layouts default to children of the viewed application.
-                initialPackages = setOfNotNull(viewedAppPackage),
+                // New layouts default to children of the viewed application (the
+                // apps-drawer override wins while browsing).
+                initialPackages = setOfNotNull(effectiveAppPackage),
                 closeFocusRequester = addModalCloseFocus,
             )
         }
@@ -880,27 +1033,118 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
 }
 
 /**
- * The bar's Auto-detect stack — the trailing corner of the top bar (2026-08-21): overline
- * "AUTO-DETECT" over the auto-detection switch (Mappo activating each foreground
- * application's default layout). [MinputSwitch] runs text-line tall and proportionally
- * wide, so the stack measures like the bar's overline + value text stacks.
+ * The bar's Auto row (2026-08-25, replacing the 2026-08-21 stacked "AUTO-DETECT" +
+ * hand-rolled [com.mappo.ui.minput.MinputSwitch], which never sat right): a compact
+ * horizontal overline "AUTO" beside a stock M3 switch — the drawer settings rows'
+ * halo-stripped scaled-switch treatment, at bar scale.
  */
 @Composable
-private fun AutoDetectStack(
+private fun AutoDetectRow(
     enabled: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
     ) {
         Text(
-            text = "Auto-detect".uppercase(),
+            text = "Auto".uppercase(),
             style = minputOverlineTextStyle(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
         )
-        MinputSwitch(checked = enabled, onCheckedChange = onChange)
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            Switch(
+                checked = enabled,
+                onCheckedChange = onChange,
+                modifier = Modifier.scaledLayout(AutoSwitchScale),
+            )
+        }
+    }
+}
+
+/**
+ * The content plane's empty state for an application with no layout (2026-08-25): shown
+ * while the apps drawer previews or picks an app whose binding resolves to nothing.
+ * Two tile routes out: create a layout (the "+ New layout" modal, pre-associated with
+ * the app) or browse the layouts drawer (whose Community section carries shared layouts
+ * once sharing lands — later this tile may gate on Mappo-server reachability).
+ */
+@Composable
+private fun NoLayoutAssignedView(
+    appLabel: String,
+    onCreateLayout: () -> Unit,
+    onBrowseLayouts: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "No layout assigned for $appLabel",
+                style = minputMiniTextStyle(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                modifier = Modifier.padding(horizontal = NoLayoutMessagePadding),
+            )
+            Spacer(Modifier.height(NoLayoutMessageTileGap))
+            Row(horizontalArrangement = Arrangement.spacedBy(NoLayoutTileGap)) {
+                NoLayoutTile(
+                    icon = Lucide.Plus,
+                    label = "Create a layout",
+                    onClick = onCreateLayout,
+                )
+                NoLayoutTile(
+                    // The change button's glyph — this tile IS "change layout" for an
+                    // app that has none yet.
+                    icon = Lucide.ArrowLeftRight,
+                    label = "Browse layouts",
+                    onClick = onBrowseLayouts,
+                )
+            }
+        }
+    }
+}
+
+/** One route tile of [NoLayoutAssignedView]: glyph over label on the card chrome. */
+@Composable
+private fun NoLayoutTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val container = minputBoxContainer()
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        shape = RoundedCornerShape(MinputMorphCorner),
+        color = container,
+        border = minputBevelBorder(container, MinputMorphCorner),
+        modifier = Modifier
+            .minputInteractiveMotion(interaction)
+            .clip(RoundedCornerShape(MinputMorphCorner))
+            .clickable(
+                interactionSource = interaction,
+                indication = minputIndication(),
+                onClick = onClick,
+            ),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.size(NoLayoutTileWidth, NoLayoutTileHeight),
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(NoLayoutTileIconSize),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(MinputGlyphLabelGap))
+            Text(
+                text = label,
+                style = minputMiniTextStyle(),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
     }
 }
 
@@ -972,5 +1216,29 @@ private fun ActivateLayoutWarningDialog(
 /** Gap between adjacent pills in the top bar (the filter rows' 6dp rhythm). */
 private val TopBarPillGap = 6.dp
 
+/** No-layout state: route-tile footprint (glyph over label with air around both). */
+private val NoLayoutTileWidth = 132.dp
+private val NoLayoutTileHeight = 76.dp
+
+/** No-layout state: gap between the two route tiles. */
+private val NoLayoutTileGap = 8.dp
+
+/** No-layout state: glyph edge inside a route tile. */
+private val NoLayoutTileIconSize = 16.dp
+
+/** No-layout state: air between the message line and the tile row. */
+private val NoLayoutMessageTileGap = 12.dp
+
+/** No-layout state: side padding keeping a long app name off the pane edges. */
+private val NoLayoutMessagePadding = 16.dp
+
 /** Scale for the warning dialog's halo-stripped checkbox. */
 private const val WarningCheckboxScale = 0.75f
+
+/** Scale for the bar's halo-stripped Auto switch (M3's 52×32 shrunk well under the bar
+ *  height — Dylan sized it down from 0.8, 2026-08-26). */
+private const val AutoSwitchScale = 0.5f
+
+/** Width cap for the bar's application title (app names are unbounded — the
+ *  NameableText rule; mirrors the left stack's cap). */
+private val AppStackMaxWidth = 200.dp

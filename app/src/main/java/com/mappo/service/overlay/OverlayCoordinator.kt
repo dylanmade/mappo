@@ -38,18 +38,6 @@ class OverlayCoordinator @Inject constructor(
                     is ProfileAutoSwitcher.UiEvent.Switched -> {
                         overlayManager.showToast("Loaded profile “${event.profileName}” for ${event.appLabel}")
                     }
-                    is ProfileAutoSwitcher.UiEvent.PromptCreate -> {
-                        overlayManager.showCreatePrompt(
-                            appLabel = event.appLabel,
-                            onYes = {
-                                scope.launch {
-                                    autoSwitcher.createProfileAndBind(event.pkg, event.appLabel)
-                                }
-                            },
-                            onNo = { /* dismiss only */ },
-                            onNever = { autoSwitcher.ignorePackage(event.pkg) }
-                        )
-                    }
                 }
             }
         }

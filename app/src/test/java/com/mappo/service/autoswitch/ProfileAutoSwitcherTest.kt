@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -95,16 +94,6 @@ class ProfileAutoSwitcherTest {
     }
 
     @Test
-    fun emitsNothing_whenPackageIgnored_andNoBinding() = runTest {
-        ignoredPackages.value = setOf("com.example.ignored")
-
-        subject.events.test {
-            subject.handleForegroundChange("com.example.ignored")
-            expectNoEvents()
-        }
-    }
-
-    @Test
     fun emitsNothing_whenBindingMatchesActiveProfile() = runTest {
         coEvery { bindingRepo.getForPackageOnce("com.example.game", any()) } returns
             com.mappo.data.model.AppProfileBinding(
@@ -158,92 +147,15 @@ class ProfileAutoSwitcherTest {
     }
 
     @Test
-    fun autoCreatesProfile_whenAutoCreateEnabled_andNoBinding() = runTest {
-        autoCreateEnabled.value = true
-        val newId = 42L
-        coEvery { profileRepo.addProfile("game", "com.example.game") } returns newId
-        coEvery { profileRepo.setActiveProfileById(newId) } returns
-            Profile(id = newId, name = "game", isDefault = false)
-
+    fun emitsNothing_andCreatesNothing_whenNoBinding() = runTest {
+        // 2026-08-26: an unbound app is skipped outright — no prompt, no auto-create;
+        // "no layouts yet" is a first-class state served by the controls screen.
         subject.events.test {
             subject.handleForegroundChange("com.example.game")
-            assertEquals(
-                ProfileAutoSwitcher.UiEvent.Switched(
-                    pkg = "com.example.game",
-                    appLabel = "game",
-                    profileName = "game",
-                ),
-                awaitItem(),
-            )
+            expectNoEvents()
         }
-        coVerify { bindingRepo.bind(packageName = "com.example.game", profileId = newId) }
-    }
-
-    @Test
-    fun emitsPromptCreate_whenNoBinding_andAutoCreateOff() = runTest {
-        autoCreateEnabled.value = false
-
-        subject.events.test {
-            subject.handleForegroundChange("com.example.game")
-            assertEquals(
-                ProfileAutoSwitcher.UiEvent.PromptCreate(
-                    pkg = "com.example.game",
-                    appLabel = "game",
-                ),
-                awaitItem(),
-            )
-        }
-    }
-
-    @Test
-    fun throttlesSecondPromptForSamePackage() = runTest {
-        autoCreateEnabled.value = false
-
-        subject.events.test {
-            subject.handleForegroundChange("com.example.game")
-            awaitItem() // first PromptCreate
-            subject.handleForegroundChange("com.example.game")
-            expectNoEvents() // second within 60s throttled
-        }
-    }
-
-    @Test
-    fun doesNotThrottle_differentPackages() = runTest {
-        autoCreateEnabled.value = false
-
-        subject.events.test {
-            subject.handleForegroundChange("com.example.alpha")
-            assertTrue(awaitItem() is ProfileAutoSwitcher.UiEvent.PromptCreate)
-            subject.handleForegroundChange("com.example.beta")
-            assertTrue(awaitItem() is ProfileAutoSwitcher.UiEvent.PromptCreate)
-        }
-    }
-
-    @Test
-    fun createProfileAndBind_addsProfileAndBindsAndSwitches() = runTest {
-        val newId = 99L
-        coEvery { profileRepo.addProfile("Cool App", "com.example.cool") } returns newId
-        val pkgSlot = slot<String>()
-        val idSlot = slot<Long>()
-        coEvery {
-            bindingRepo.bind(packageName = capture(pkgSlot), profileId = capture(idSlot))
-        } returns Unit
-        coEvery { profileRepo.setActiveProfileById(newId) } returns
-            Profile(id = newId, name = "Cool App", isDefault = false)
-
-        subject.createProfileAndBind(pkg = "com.example.cool", appLabel = "Cool App")
-
-        // The created layout is filed under its application (2026-08-21 membership model).
-        coVerify { profileRepo.addProfile("Cool App", "com.example.cool") }
-        assertEquals("com.example.cool", pkgSlot.captured)
-        assertEquals(newId, idSlot.captured)
-        coVerify { profileRepo.setActiveProfileById(newId) }
-    }
-
-    @Test
-    fun ignorePackage_delegatesToSettings() {
-        subject.ignorePackage("com.example.ignored")
-        io.mockk.verify { settings.addIgnoredPackage("com.example.ignored") }
+        coVerify(exactly = 0) { profileRepo.addProfile(any(), any()) }
+        coVerify(exactly = 0) { bindingRepo.bind(any(), any(), any()) }
     }
 
     @Test

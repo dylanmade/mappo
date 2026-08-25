@@ -74,9 +74,12 @@ fun MinputPillButton(
         filled -> MaterialTheme.colorScheme.onSurface
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
+    // Highlighted beats bare (2026-08-26): the highlight plane marks SELECTED/ACTIVE
+    // state, which must read even on a chrome-less button (a bare drawer summon while
+    // its drawer is open). At rest, bare stays transparent and borderless.
     val container = when {
-        bare -> Color.Transparent
         highlighted -> minputHighlightContainer()
+        bare -> Color.Transparent
         elevated -> MinputElevatedContainer
         else -> minputBoxContainer()
     }
@@ -85,7 +88,7 @@ fun MinputPillButton(
     Surface(
         shape = shape,
         color = container,
-        border = if (bare) null else minputBevelBorder(container, MinputPillHeight / 2),
+        border = if (bare && !highlighted) null else minputBevelBorder(container, MinputPillHeight / 2),
         modifier = modifier
             .minputInteractiveMotion(interaction)
             .height(MinputPillHeight)
