@@ -425,27 +425,26 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * The top bar's "Activate layout": promote the viewed layout to active AND turn auto
-     * detection off — the user just made an explicit choice; leaving auto-switch on would
-     * immediately fight it (the foreground app's binding re-activating over the manual
-     * pick). The Auto switch in the top-left corner re-enables it.
+     * "Activate layout" (the bar pill or a drawer card): promote the layout to active AND
+     * turn auto detection off — the user just made an explicit choice; leaving auto-switch
+     * on would immediately fight it (the foreground app's binding re-activating over the
+     * manual pick). The Auto-detect switch in the top-right corner re-enables it.
+     *
+     * Also points the layout's parent application binding at it: there is no separate
+     * default-layout concept (2026-08-24) — the activated layout IS the app's functional
+     * default, so auto detection returns to the user's latest pick.
      */
     fun activateLayoutManually(profile: Profile) {
         selectProfile(profile)
         autoSwitchSettings.setAutoSwitchEnabled(false)
+        profile.packageName?.let { pkg ->
+            viewModelScope.launch { appProfileBindingRepository.bind(pkg, profile.id) }
+        }
     }
 
     /** Sticky-dismiss the activate-layout warning dialog ("Don't show again"). */
     fun suppressActivateWarning() {
         autoSwitchSettings.setActivateWarningSuppressed(true)
-    }
-
-    /**
-     * Make [profileId] the default layout for [packageName] — the auto-switch binding:
-     * when that application foregrounds (with auto detection on), this layout activates.
-     */
-    fun setAppDefaultLayout(packageName: String, profileId: Long) {
-        viewModelScope.launch { appProfileBindingRepository.bind(packageName, profileId) }
     }
 
     fun addProfile(name: String) {
@@ -455,9 +454,10 @@ class MainViewModel @Inject constructor(
     /**
      * The new-profile form's commit: create the profile under its parent application
      * (the first picked package — membership lives on [Profile.packageName] since the
-     * 2026-08-21 model adjustment), then claim the app's DEFAULT slot only where it's
-     * still free: the binding is the default pointer now, and creating a second layout
-     * for an app must not silently steal its existing default.
+     * 2026-08-21 model adjustment), then claim the app's auto-switch binding only where
+     * it's still free: the binding is the app's functional-default pointer (its last
+     * activated layout — 2026-08-24), and creating a second layout for an app must not
+     * silently steal it.
      */
     fun createProfile(name: String, packages: Set<String>) {
         viewModelScope.launch {

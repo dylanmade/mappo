@@ -315,8 +315,10 @@ class RemapControlsScreenTest {
 
     @Test
     fun changeButton_opensLayoutsDrawer_withSectionsAndCards() {
-        // The change button slides in the layouts drawer: header ("LAYOUTS"), the three
-        // category headers, and a card per profile of the viewed application.
+        // The change button slides in the layouts drawer: the two category headers
+        // (Default retired with the default-layout concept, 2026-08-24; the identity
+        // header retired when the drawer moved between the bars) and a card per profile
+        // of the viewed application.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -329,7 +331,6 @@ class RemapControlsScreenTest {
                             com.mappo.data.model.Profile(id = 2L, name = "Beta layout"),
                         ),
                         activeProfileId = 1L,
-                        defaultLayoutId = 1L,
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
                 }
@@ -339,8 +340,6 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithContentDescription("Change layout").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("LAYOUTS", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("DEFAULT", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("INSTALLED", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("COMMUNITY", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()

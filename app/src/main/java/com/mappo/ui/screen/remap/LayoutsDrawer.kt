@@ -24,8 +24,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,39 +38,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.ArrowUpDown
-import com.composables.icons.lucide.Heart
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Profile
-import com.mappo.ui.component.AppIconImage
-import com.mappo.ui.component.rememberAppIconPainter
-import com.mappo.ui.minput.MinputBarEdgePadding
-import com.mappo.ui.minput.MinputBarHeight
-import com.mappo.ui.minput.MinputBarIconTextGap
-import com.mappo.ui.minput.MinputBarStackGap
-import com.mappo.ui.minput.MinputBarWidgetIconSize
+import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPillButton
-import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.minputHighlightContainer
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMicroTextStyle
@@ -81,19 +72,20 @@ import com.mappo.ui.minput.minputOverlineTextStyle
 import kotlinx.collections.immutable.ImmutableList
 
 /**
- * The layouts drawer (2026-08-21) — the layouts view rebuilt as a push pane over the
+ * The layouts drawer (2026-08-21) — the layouts view rebuilt as a push pane in the
  * controls home: the top bar's change button slides it in from the left, COMPRESSING the
- * controls view beside it (no scrim, no modality — the controls view stays fully
+ * controls content beside it (no scrim, no modality — the controls view stays fully
  * interactive) so scrolling the layout cards live-previews each one in the controls view
- * behind (via [onPreviewLayout] → the VM viewing pointer). The frame's bottom bar sits
- * outside the route content, so it keeps its full width underneath.
+ * behind (via [onPreviewLayout] → the VM viewing pointer). The pane opens BETWEEN the
+ * bars (2026-08-24): the top bar and the frame's bottom bar both keep their full width
+ * above/below it.
  *
- * Anatomy: a header row reusing the top bar's identity cluster (change button · app icon ·
- * overline "Layouts" / app name), a New · Search · Sort controls row (New/Sort are
- * unwired placeholders — Dylan wants their fit reviewed before behavior lands), then the
- * card list in three categories: **Default** (the app's bound default layout), **Installed**
- * (on-device layouts for this app), **Community** (published, not-yet-installed layouts —
- * empty until community sharing lands).
+ * Anatomy: a New · Search · Sort controls row (New/Sort are unwired icon-button
+ * placeholders — Dylan wants their fit reviewed before behavior lands), then the card
+ * list in two categories: **Installed** (on-device layouts for this app) and **Community**
+ * (published, not-yet-installed layouts — empty until community sharing lands). The
+ * active layout's card wears the highlight plane — no separate default-layout concept:
+ * the active layout IS its application's functional default.
  *
  * Tapping a card runs the standard activate flow (the caller wraps [onActivateLayout] in
  * the auto-detection warning gate); a future submenu replaces the direct activation.
@@ -103,10 +95,8 @@ internal fun LayoutsDrawerPane(
     open: Boolean,
     onClose: () -> Unit,
     appPackage: String?,
-    appLabel: String?,
     profiles: ImmutableList<Profile>,
     activeProfileId: Long?,
-    defaultProfileId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Profile) -> Unit,
     modifier: Modifier = Modifier,
@@ -141,12 +131,9 @@ internal fun LayoutsDrawerPane(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 ) {
                     LayoutsDrawerContent(
-                        onClose = onClose,
                         appPackage = appPackage,
-                        appLabel = appLabel,
                         profiles = profiles,
                         activeProfileId = activeProfileId,
-                        defaultProfileId = defaultProfileId,
                         onPreviewLayout = onPreviewLayout,
                         onActivateLayout = onActivateLayout,
                     )
@@ -159,12 +146,9 @@ internal fun LayoutsDrawerPane(
 
 @Composable
 private fun LayoutsDrawerContent(
-    onClose: () -> Unit,
     appPackage: String?,
-    appLabel: String?,
     profiles: ImmutableList<Profile>,
     activeProfileId: Long?,
-    defaultProfileId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Profile) -> Unit,
 ) {
@@ -173,52 +157,10 @@ private fun LayoutsDrawerContent(
     var query by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxWidth()) {
-        // The header: the top bar's identity-cluster anatomy verbatim (change button ·
-        // app icon · overline/value stack), no divider beneath (per spec).
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(MinputBarHeight)
-                .padding(horizontal = MinputBarEdgePadding),
-        ) {
-            MinputIconButton(
-                icon = Lucide.ArrowLeftRight,
-                contentDescription = "Close layouts",
-                onClick = onClose,
-            )
-            Spacer(Modifier.width(MinputGlyphLabelGap))
-            val icon = rememberAppIconPainter(appPackage)
-            if (icon != null) {
-                AppIconImage(icon, size = MinputBarWidgetIconSize)
-            } else {
-                Icon(
-                    Icons.Filled.Apps,
-                    contentDescription = null,
-                    modifier = Modifier.size(MinputBarWidgetIconSize),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(MinputBarIconTextGap))
-            Column(verticalArrangement = Arrangement.spacedBy(MinputBarStackGap)) {
-                Text(
-                    text = "Layouts".uppercase(),
-                    style = minputOverlineTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Text(
-                    text = appLabel ?: "All layouts",
-                    style = minputMiniTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
-        // New · Search · Sort. New and Sort are deliberate no-ops for now — placed to
-        // review how the trio fits the pane width before wiring behavior.
+        // New · Search · Sort — the pane's first row since the identity header retired
+        // (2026-08-24: the top bar above the pane already carries the context). New and
+        // Sort are icon-only so the search field gets the width; both deliberate no-ops
+        // for now.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
@@ -226,15 +168,15 @@ private fun LayoutsDrawerContent(
                 .fillMaxWidth()
                 .padding(
                     start = PanelContentPadding,
+                    top = PanelContentPadding,
                     end = PanelContentPadding,
                     bottom = MinputPanelDividerContentGap,
                 ),
         ) {
             MinputPillButton(
-                text = "New",
                 onClick = { /* new-layout form — next brick */ },
                 leadingIcon = rememberVectorPainter(Lucide.Plus),
-                leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentDescription = "New layout",
             )
             MinputTextField(
                 value = query,
@@ -247,24 +189,22 @@ private fun LayoutsDrawerContent(
                 modifier = Modifier.weight(1f),
             )
             MinputPillButton(
-                text = "Sort",
                 onClick = { /* sort menu — next brick */ },
                 leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
-                leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentDescription = "Sort layouts",
             )
         }
 
-        // Category assembly. Membership = Profile.packageName (2026-08-21 model);
-        // the app's default = its auto-switch binding. No app context → every layout
-        // under Installed. Community stays empty until sharing lands.
+        // Category assembly. Membership = Profile.packageName (2026-08-21 model). No app
+        // context → every layout under Installed. Community stays empty until sharing
+        // lands. (The Default category retired with the default-layout concept —
+        // 2026-08-24: the active layout IS the app's functional default.)
         val children = if (appPackage != null) {
             profiles.filter { it.packageName == appPackage }
         } else profiles
         val trimmed = query.trim()
-        val filtered = if (trimmed.isEmpty()) children
+        val installed = if (trimmed.isEmpty()) children
         else children.filter { it.name.contains(trimmed, ignoreCase = true) }
-        val default = filtered.filter { it.id == defaultProfileId }
-        val installed = filtered.filterNot { it.id == defaultProfileId }
         val community = emptyList<Profile>()
 
         val listState = rememberLazyListState()
@@ -287,14 +227,6 @@ private fun LayoutsDrawerContent(
                 bottom = PanelContentPadding,
             ),
         ) {
-            drawerSection("Default", default, emptyHint = "No default layout") { profile ->
-                LayoutCard(
-                    profile = profile,
-                    active = profile.id == activeProfileId,
-                    onPreview = { onPreviewLayout(profile.id) },
-                    onActivate = { onActivateLayout(profile) },
-                )
-            }
             drawerSection("Installed", installed, emptyHint = "No layouts yet") { profile ->
                 LayoutCard(
                     profile = profile,
@@ -345,10 +277,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
 }
 
 /**
- * One layout card: name over author on the left; the right stack reserves the width of
- * its "ACTIVE" overline (shown only on the active layout, in the highlight color) above
- * the heart + like count; then the two-line description strip. [showDescription] is the
- * seam for a future compact/full drawer density setting — compact hides the strip.
+ * One layout card: name over author on the left; the like count alone in the top-right
+ * corner (filled heart + count, right edge pinned to the card padding so a growing count
+ * expands LEFT while the icon→digit gap stays fixed); then the two-line description
+ * strip. Cards are ELEVATED by default; the ACTIVE layout's card wears the highlight
+ * plane — the design language's selected/active marking (which replaced the old "ACTIVE"
+ * overline). [showDescription] is the seam for a future compact/full drawer density
+ * setting — compact hides the strip.
  */
 @Composable
 private fun LayoutCard(
@@ -358,9 +293,15 @@ private fun LayoutCard(
     onActivate: () -> Unit,
     showDescription: Boolean = true,
 ) {
-    val container = minputBoxContainer()
+    // surface 2 resting / highlight when active — the selection plane's content is
+    // onPrimary, its secondary text the same role softened (no onPrimaryVariant exists).
+    val container = if (active) minputHighlightContainer() else MinputElevatedContainer
+    val primaryContent = if (active) MaterialTheme.colorScheme.onPrimary
+    else MaterialTheme.colorScheme.onSurface
+    val secondaryContent = if (active) {
+        MaterialTheme.colorScheme.onPrimary.copy(alpha = SecondaryOnHighlightAlpha)
+    } else MaterialTheme.colorScheme.onSurfaceVariant
     val interaction = remember { MutableInteractionSource() }
-    // surface 1 — a control tile on the pane, wearing the family box treatment.
     Surface(
         shape = RoundedCornerShape(MinputMorphCorner),
         color = container,
@@ -384,55 +325,44 @@ private fun LayoutCard(
                     Text(
                         text = profile.name,
                         style = minputMiniTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = primaryContent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = profile.author.ifEmpty { "You" },
                         style = minputMicroTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = secondaryContent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    // Always composed so the stack's width (and the row's height rhythm)
-                    // never changes with activation — invisible when inactive.
-                    Text(
-                        text = "Active".uppercase(),
-                        style = minputOverlineTextStyle(),
-                        // Highlight plane color — selection marking.
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        modifier = Modifier.alpha(if (active) 1f else 0f),
+                // Right edge rides the card padding; the count digits grow leftward.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        FilledHeartIcon,
+                        contentDescription = "Likes",
+                        modifier = Modifier.size(LikeIconSize),
+                        tint = secondaryContent,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Lucide.Heart,
-                            contentDescription = "Likes",
-                            modifier = Modifier.size(MinputPillIconSize),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.width(MinputBarStackGap * 2))
-                        Text(
-                            text = profile.likeCount.toString(),
-                            style = minputMicroTextStyle(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
+                    Spacer(Modifier.width(LikeCountGap))
+                    Text(
+                        text = profile.likeCount.toString(),
+                        style = minputMicroTextStyle(),
+                        color = secondaryContent,
+                        maxLines = 1,
+                    )
                 }
             }
             if (showDescription) {
-                Spacer(Modifier.height(MinputBarStackGap * 2))
+                Spacer(Modifier.height(DescriptionGap))
                 Text(
                     // Two lines are always reserved (minLines) so card heights stay
                     // uniform whether or not a description exists.
                     text = profile.description,
                     style = minputMicroTextStyle().copy(fontStyle = FontStyle.Italic),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = secondaryContent,
                     minLines = 2,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -454,6 +384,25 @@ private fun LazyListState.topmostCardId(): Long? {
     return (topmost?.key as? String)?.removePrefix(CardKeyPrefix)?.toLongOrNull()
 }
 
+/** Lucide's heart, FILLED: the lucide-icons port ships stroke-only glyphs, so the filled
+ *  variant is authored here from the same lucide.dev path data. Fill color is a
+ *  placeholder — `Icon` tint paints it. */
+private val FilledHeartIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "FilledHeart",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = addPathNodes(
+            "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2" +
+                "-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
+        ),
+        fill = SolidColor(Color.Black),
+    ).build()
+}
+
 /** LazyColumn key prefix distinguishing layout cards from header/hint rows for the
  *  scroll-preview scan. */
 private const val CardKeyPrefix = "layout:"
@@ -472,3 +421,16 @@ private val DrawerControlGap = 6.dp
 
 /** Interior padding of a layout card. */
 private val CardPadding = 8.dp
+
+/** The like heart, sized to the micro text line beside it. */
+private val LikeIconSize = 10.dp
+
+/** Fixed gap between the heart and the count's first digit. */
+private val LikeCountGap = 4.dp
+
+/** Gap above the description strip. */
+private val DescriptionGap = 2.dp
+
+/** Secondary text on the highlight plane: onPrimary softened, since the scheme has no
+ *  dedicated secondary-on-primary role. */
+private const val SecondaryOnHighlightAlpha = 0.8f

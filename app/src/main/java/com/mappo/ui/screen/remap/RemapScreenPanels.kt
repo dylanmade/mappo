@@ -57,6 +57,8 @@ import com.mappo.R
 import com.mappo.data.model.Profile
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.TextSize
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Type
 import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputElevatedContainer
@@ -398,6 +400,48 @@ internal fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
             onPick = onPick,
             onClickLabel = "Change text size",
         )
+    }
+}
+
+/**
+ * Font-debug overlay toggle (dev tooling): shows/hides the floating font picker
+ * ([com.mappo.ui.component.FontDebugOverlay]) in the window corner for live font
+ * testing. Same switch treatment as [PowerRow] — the drawer's two switch rows must read
+ * as siblings.
+ */
+@Composable
+internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onEnabledChange(!enabled) }
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            Lucide.Type,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Font debug overlay",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        // Strip the 48dp interactive halo + scale down so the switch fits the compact row.
+        // The row owns the tap target; the switch itself stays interactive for thumb drags.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.scaledLayout(0.8f),
+            )
+        }
     }
 }
 

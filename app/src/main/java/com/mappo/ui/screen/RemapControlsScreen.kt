@@ -81,11 +81,9 @@ import com.mappo.data.model.steam.requiresShizuku as outputRequiresShizuku
 import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.compact.scaledLayout
-import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputBarStackGap
 import com.mappo.ui.minput.MinputDialog
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputSwitch
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -179,7 +177,6 @@ fun RemapControlsScreen(
     onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
     // ── The viewed application context (rides the route from the layouts view; the home
     // instance derives it from the active layout's binding) ────────────────────────
-    viewedAppLabel: String? = null,
     viewedAppPackage: String? = null,
     // ── Layout settings panel (the top-bar summon; physical Start) ─────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
@@ -193,19 +190,14 @@ fun RemapControlsScreen(
     // Sticky "Don't show again" on the activate warning (activating turns auto off).
     activateWarningSuppressed: Boolean = false,
     onSuppressActivateWarning: () -> Unit = {},
-    // "Set as <application> default": shown when the viewed layout isn't its parent
-    // application's bound default. The caller owns the condition AND the bind.
-    showSetDefaultAction: Boolean = false,
-    onSetAppDefault: () -> Unit = {},
-    // ── Layouts drawer (2026-08-21: the layouts view is a push pane over this screen;
+    // ── Layouts drawer (2026-08-21: the layouts view is a push pane in this screen;
     // the bar's change button slides it in) ────────────────────────────────────────
     profiles: ImmutableList<Profile> = persistentListOf(),
     activeProfileId: Long? = null,
-    defaultLayoutId: Long? = null,
     onPreviewLayout: (Long) -> Unit = {},
     onActivateLayoutCard: (Profile) -> Unit = {},
-    // Fired when the drawer finishes closing — the caller re-enters "follow active"
-    // viewing mode when the previewed layout landed back on the active one.
+    // Fired when the drawer finishes closing — the caller reverts the controls view to
+    // the active layout (2026-08-24: always, not just when the preview landed on it).
     onLayoutsDrawerClosed: () -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
@@ -385,14 +377,14 @@ fun RemapControlsScreen(
                 }
             },
     ) {
-        Row(
+        Scaffold(
             modifier = Modifier
                 .fillMaxSize()
                 // While a panel is up it behaves modally: directional focus must not
-                // wander into the screen content underneath it (the layouts drawer
-                // included) — refuse entry into this whole subtree (the editor's
-                // containment pattern). Gated on INTENT so the block lifts the moment a
-                // close starts and the summoning pill can take the return focus.
+                // wander into the screen underneath it (bar, drawer, and content alike)
+                // — refuse entry into this whole subtree (the editor's containment
+                // pattern). Gated on INTENT so the block lifts the moment a close starts
+                // and the summoning pill can take the return focus.
                 .then(
                     if (openPanel != null) {
                         Modifier
@@ -400,92 +392,83 @@ fun RemapControlsScreen(
                             .focusGroup()
                     } else Modifier,
                 ),
-        ) {
-            // The layouts drawer PUSHES the controls view (Row neighbor) rather than
-            // overlaying it — both stay interactive; the view live-previews the card
-            // the drawer is scrolled to.
-            LayoutsDrawerPane(
-                open = layoutsDrawerOpen,
-                onClose = { layoutsDrawerOpen = false },
-                appPackage = viewedAppPackage,
-                appLabel = viewedAppLabel,
-                profiles = profiles,
-                activeProfileId = activeProfileId,
-                defaultProfileId = defaultLayoutId,
-                onPreviewLayout = onPreviewLayout,
-                onActivateLayout = { profile -> requestActivate { onActivateLayoutCard(profile) } },
-            )
-            Scaffold(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                topBar = {
-                    // The 2026-08-21 bar: the change button (the layouts drawer's summon),
-                    // the layout identity, then Layout settings + the conditional Activate
-                    // pill on the left; Set-default and the Auto-detect stack on the right.
-                    // The action-set tabs that lived here moved into RemapSimpleView's set row.
-                    RemapTopBar(
-                        overline = if (isActiveLayout) "Active layout" else "Viewing layout",
-                        title = profileName ?: "Layout",
-                        appPackage = viewedAppPackage,
-                        onBack = onBack,
-                        navigation = {
-                            // The universal way into the layouts view: toggles the drawer.
-                            MinputIconButton(
-                                icon = Lucide.ArrowLeftRight,
-                                contentDescription = "Change layout",
-                                onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
-                            )
-                        },
-                        leadingActions = {
-                            MinputPillButton(
-                                text = "Layout settings",
-                                onClick = {
-                                    openPanel =
-                                        if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
-                                },
-                                leadingIcon = rememberVectorPainter(Lucide.Settings),
-                                leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.focusRequester(optionsPillFocus),
-                            )
-                            AnimatedVisibility(
-                                visible = !isActiveLayout,
-                                enter = fadeIn() + expandHorizontally(),
-                                exit = fadeOut() + shrinkHorizontally(),
-                            ) {
-                                // Gap rides inside the visibility wrapper so it animates away
-                                // with the pill.
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Spacer(Modifier.width(TopBarPillGap))
-                                    MinputPillButton(
-                                        text = "Activate layout",
-                                        onClick = { requestActivate(onActivateLayout) },
-                                        leadingIcon = rememberVectorPainter(Lucide.Check),
-                                        leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        },
-                        actions = {
-                            if (showSetDefaultAction && viewedAppLabel != null) {
-                                MinputPillButton(
-                                    text = "Set as ${shortChromeLabel(viewedAppLabel)} default",
-                                    onClick = onSetAppDefault,
-                                    // The application's own icon — untinted, like the bar's
-                                    // identity icon.
-                                    leadingIcon = rememberAppIconPainter(viewedAppPackage),
-                                )
+            topBar = {
+                // The 2026-08-21 bar: the change button (the layouts drawer's summon),
+                // the layout identity, then Layout settings + the conditional Activate
+                // pill on the left; the Auto-detect stack on the right. The action-set
+                // tabs that lived here moved into RemapSimpleView's set row.
+                RemapTopBar(
+                    overline = if (isActiveLayout) "Active layout" else "Viewing layout",
+                    title = profileName ?: "Layout",
+                    appPackage = viewedAppPackage,
+                    onBack = onBack,
+                    navigation = {
+                        // The universal way into the layouts view: toggles the drawer.
+                        // Elevated at rest; wears the highlight plane while its drawer
+                        // is open — the design language's selected/active marking.
+                        MinputPillButton(
+                            onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
+                            leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
+                            contentDescription = "Change layout",
+                            elevated = true,
+                            highlighted = layoutsDrawerOpen,
+                        )
+                    },
+                    leadingActions = {
+                        MinputPillButton(
+                            text = "Layout settings",
+                            onClick = {
+                                openPanel =
+                                    if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
+                            },
+                            leadingIcon = rememberVectorPainter(Lucide.Settings),
+                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.focusRequester(optionsPillFocus),
+                        )
+                        AnimatedVisibility(
+                            visible = !isActiveLayout,
+                            enter = fadeIn() + expandHorizontally(),
+                            exit = fadeOut() + shrinkHorizontally(),
+                        ) {
+                            // Gap rides inside the visibility wrapper so it animates away
+                            // with the pill.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Spacer(Modifier.width(TopBarPillGap))
+                                MinputPillButton(
+                                    text = "Activate layout",
+                                    onClick = { requestActivate(onActivateLayout) },
+                                    leadingIcon = rememberVectorPainter(Lucide.Check),
+                                    leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
-                            AutoDetectStack(
-                                enabled = autoSwitchEnabled,
-                                onChange = onAutoSwitchChange,
-                            )
-                        },
-                    )
-                },
-            ) { innerPadding ->
+                        }
+                    },
+                    actions = {
+                        AutoDetectStack(
+                            enabled = autoSwitchEnabled,
+                            onChange = onAutoSwitchChange,
+                        )
+                    },
+                )
+            },
+        ) { innerPadding ->
+            // The drawer opens BETWEEN the bars (2026-08-24): the full-width top bar sits
+            // above it, the frame's bottom bar below. It PUSHES the controls content (its
+            // Row neighbor) rather than overlaying it — both stay interactive, and the
+            // content live-previews the card the drawer is scrolled to.
+            Row(Modifier.fillMaxSize().padding(innerPadding)) {
+                LayoutsDrawerPane(
+                    open = layoutsDrawerOpen,
+                    onClose = { layoutsDrawerOpen = false },
+                    appPackage = viewedAppPackage,
+                    profiles = profiles,
+                    activeProfileId = activeProfileId,
+                    onPreviewLayout = onPreviewLayout,
+                    onActivateLayout = { profile -> requestActivate { onActivateLayoutCard(profile) } },
+                )
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
-                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
                     Column(modifier = Modifier.fillMaxSize()) {
@@ -945,14 +928,6 @@ private fun ActivateLayoutWarningDialog(
         }
     }
 }
-
-/**
- * Chrome cap for an application label interpolated into a pill's text ("Set as X
- * default") — pill text is a plain string, so the NameableText width-cap rule is applied
- * at the character level instead.
- */
-private fun shortChromeLabel(label: String, max: Int = 14): String =
-    if (label.length <= max) label else label.take(max - 1).trimEnd() + "…"
 
 /** Gap between adjacent pills in the top bar (the filter rows' 6dp rhythm). */
 private val TopBarPillGap = 6.dp

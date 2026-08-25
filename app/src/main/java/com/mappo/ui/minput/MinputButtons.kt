@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,43 +24,76 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.style.TextOverflow
 
 /**
- * Mappo's hand-rolled miniature pill button, in the shared box treatment. [filled] (a
- * primary/commit action) keeps its emphasis through the stronger text color only. [elevated]
- * uses the topmost button plane for buttons sitting on a box/card background. Disabled =
- * dimmed + inert.
+ * Mappo's hand-rolled miniature button — the library's ONE button component (2026-08-24:
+ * the former standalone icon button folded in so every variant/color option lives here).
  *
- * [leadingIcon] renders a small glyph before the label. [leadingIconTint] defaults to
- * Unspecified because the primary use is hardware button prompts (Kenney glyphs carry fixed
- * colors that must not re-tint); pass a theme role for tintable concept icons.
+ * [text] is optional: with a [leadingIcon] and no text the button renders as a perfectly
+ * CIRCULAR icon button ([MinputPillHeight] diameter) wearing the same container variants
+ * as the pill form — pass a [contentDescription] since no label carries the semantics.
+ *
+ * Container variants, lowest plane to highest:
+ *  - [bare] — no container chrome at all (transparent, borderless): the utility-glyph
+ *    look for header cogs, kebabs, and steppers ([MinputIconButton] delegates here).
+ *  - default — the surface-1 box treatment, for buttons sitting on the background plane.
+ *  - [elevated] — the topmost button plane, for buttons sitting on a box/card background.
+ *  - [highlighted] — the highlight plane. RESERVED in the design language for marking
+ *    SELECTED/ACTIVE state (the open drawer's summon, the active member of a set) — never
+ *    idle emphasis; an idle button wants [elevated] or [filled] instead.
+ *
+ * [filled] (a primary/commit action) keeps its emphasis through the stronger text color
+ * only. Disabled = dimmed + inert.
+ *
+ * [leadingIcon] renders a small glyph before the label (or alone, icon-only mode).
+ * [leadingIconTint] defaults to Unspecified because the primary use is hardware button
+ * prompts (Kenney glyphs carry fixed colors that must not re-tint); pass a theme role for
+ * tintable concept icons. Icon-only mode treats Unspecified as "follow the button's
+ * content color" instead — an icon-only button has no text to carry the variant's color,
+ * so the glyph must (fixed-color art in icon-only form isn't a real case yet).
  */
 @Composable
 fun MinputPillButton(
-    text: String,
+    text: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     filled: Boolean = false,
     elevated: Boolean = false,
+    highlighted: Boolean = false,
+    bare: Boolean = false,
     leadingIcon: Painter? = null,
     leadingIconTint: Color = Color.Unspecified,
+    contentDescription: String? = null,
 ) {
-    val content = if (filled) MaterialTheme.colorScheme.onSurface
-    else MaterialTheme.colorScheme.onSurfaceVariant
-    val container = if (elevated) MinputElevatedContainer else minputBoxContainer()
+    val iconOnly = text == null && leadingIcon != null
+    val content = when {
+        highlighted -> MaterialTheme.colorScheme.onPrimary
+        filled -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val container = when {
+        bare -> Color.Transparent
+        highlighted -> minputHighlightContainer()
+        elevated -> MinputElevatedContainer
+        else -> minputBoxContainer()
+    }
     val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(50)
     Surface(
-        shape = RoundedCornerShape(50),
+        shape = shape,
         color = container,
-        border = minputBevelBorder(container, MinputPillHeight / 2),
+        border = if (bare) null else minputBevelBorder(container, MinputPillHeight / 2),
         modifier = modifier
             .minputInteractiveMotion(interaction)
             .height(MinputPillHeight)
+            // Icon-only = a perfect circle: width pinned to the height.
+            .then(if (iconOnly) Modifier.width(MinputPillHeight) else Modifier)
             .then(
                 if (enabled) {
-                    Modifier.clip(RoundedCornerShape(50)).clickable(
+                    Modifier.clip(shape).clickable(
                         interactionSource = interaction,
                         indication = minputIndication(),
                         onClick = onClick,
@@ -69,43 +101,62 @@ fun MinputPillButton(
                 } else Modifier.alpha(0.55f),
             ),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier
-                .height(MinputPillHeight)
-                // A leading glyph inks less than its box (Material live area, Lucide stroke
-                // inset), so with symmetric padding the icon flank reads wider than the text
-                // flank — pull the start inset in by the family's icon-side bias to cancel it
-                // (the wrap-width sibling of MinputPillIconSideBias's fixed-width treatment).
-                .padding(
-                    start = if (leadingIcon != null) {
-                        MinputPillContentPadding - MinputPillIconSideBias
-                    } else MinputPillContentPadding,
-                    end = MinputPillContentPadding,
-                ),
-        ) {
-            if (leadingIcon != null) {
+        if (iconOnly) {
+            Box(
+                modifier = Modifier.size(MinputPillHeight),
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
-                    leadingIcon,
-                    contentDescription = null,
-                    modifier = Modifier.size(MinputPillIconSize),
-                    tint = leadingIconTint,
+                    leadingIcon!!,
+                    contentDescription = contentDescription,
+                    modifier = Modifier.size(MinputIconButtonIconSize),
+                    tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                 )
-                Spacer(Modifier.width(MinputGlyphLabelGap))
             }
-            Text(
-                text = text,
-                style = minputMiniTextStyle(),
-                color = content,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .height(MinputPillHeight)
+                    // A leading glyph inks less than its box (Material live area, Lucide
+                    // stroke inset), so with symmetric padding the icon flank reads wider
+                    // than the text flank — pull the start inset in by the family's
+                    // icon-side bias to cancel it (the wrap-width sibling of
+                    // MinputPillIconSideBias's fixed-width treatment).
+                    .padding(
+                        start = if (leadingIcon != null) {
+                            MinputPillContentPadding - MinputPillIconSideBias
+                        } else MinputPillContentPadding,
+                        end = MinputPillContentPadding,
+                    ),
+            ) {
+                if (leadingIcon != null) {
+                    Icon(
+                        leadingIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(MinputPillIconSize),
+                        tint = leadingIconTint,
+                    )
+                    Spacer(Modifier.width(MinputGlyphLabelGap))
+                }
+                Text(
+                    text = text.orEmpty(),
+                    style = minputMiniTextStyle(),
+                    color = content,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
-/** Mappo's hand-rolled miniature icon button (cogs etc.) — ripple-clipped circle, no 48dp halo. */
+/**
+ * Convenience form of the chrome-less utility icon button (header cogs, kebabs, slider
+ * steppers): delegates to [MinputPillButton]'s icon-only `bare` mode, so
+ * there is exactly ONE button implementation to maintain (2026-08-24 fold).
+ */
 @Composable
 fun MinputIconButton(
     icon: ImageVector,
@@ -113,29 +164,11 @@ fun MinputIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = modifier
-            .minputInteractiveMotion(interaction)
-            .size(MinputIconButtonSize)
-            .clip(CircleShape)
-            .then(
-                if (enabled) {
-                    Modifier.clickable(
-                        interactionSource = interaction,
-                        indication = minputIndication(),
-                        onClick = onClick,
-                    )
-                } else Modifier.alpha(0.45f),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(MinputIconButtonIconSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
+) = MinputPillButton(
+    onClick = onClick,
+    modifier = modifier,
+    enabled = enabled,
+    bare = true,
+    leadingIcon = rememberVectorPainter(icon),
+    contentDescription = contentDescription,
+)

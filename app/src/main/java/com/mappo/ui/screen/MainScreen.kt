@@ -79,6 +79,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -259,6 +260,9 @@ fun MainScreen(
     // on launch. `frameVisible` drives its fade-in entrance / fade-out exit; dismissing it on
     // MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
     var frameVisible by remember { mutableStateOf(true) }
+    // Dev tooling: the floating Theme Studio font picker (wordmark-drawer toggle).
+    // Saveable so the text-size recreate doesn't drop it mid-test session.
+    var fontDebugEnabled by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
 
@@ -462,14 +466,11 @@ fun MainScreen(
                 val viewedAppPackage = viewedProfile?.packageName
                     ?: entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)?.ifEmpty { null }
                     ?: boundPackage
-                val viewedAppLabel = entry.arguments?.getString(MappoRoute.ARG_APP_LABEL)
-                    ?.ifEmpty { null } ?: viewedAppPackage?.let { appLabels[it] ?: it }
                 val isActiveLayout = viewedProfile?.id == activeProfile?.id
                 RemapControlsScreen(
                     config = viewedControllerConfig,
                     profileName = viewedProfile?.name,
                     viewedAppPackage = viewedAppPackage,
-                    viewedAppLabel = viewedAppLabel,
                     // ── Layout settings panel: the layout-scoped entries (the global
                     // options moved to the wordmark drawer) ──
                     optionsEntries = listOf(
@@ -495,29 +496,12 @@ fun MainScreen(
                     // Profiles browse chain are dormant pending the apps re-imagining) ──
                     profiles = profiles,
                     activeProfileId = activeProfile?.id,
-                    defaultLayoutId = viewedAppPackage?.let { pkg ->
-                        appProfileBindings.firstOrNull { it.packageName == pkg }?.profileId
-                    },
                     onPreviewLayout = { id -> viewModel.setViewingProfile(id) },
                     onActivateLayoutCard = { profile -> viewModel.activateLayoutManually(profile) },
                     onLayoutsDrawerClosed = {
-                        // Landing back on the active layout re-enters "follow active"
-                        // mode, so later auto/manual switches keep the home tracking.
-                        if (viewedProfile?.id == activeProfile?.id) {
-                            viewModel.setViewingProfile(null)
-                        }
-                    },
-                    // "Set as <application> default": the auto-switch binding IS the
-                    // default; offer it when the viewed layout isn't the bound one.
-                    showSetDefaultAction = viewedAppPackage != null && viewedProfile != null &&
-                        appProfileBindings.firstOrNull { it.packageName == viewedAppPackage }
-                            ?.profileId != viewedProfile?.id,
-                    onSetAppDefault = {
-                        val pkg = viewedAppPackage
-                        val profileId = viewedProfile?.id
-                        if (pkg != null && profileId != null) {
-                            viewModel.setAppDefaultLayout(pkg, profileId)
-                        }
+                        // Closing the drawer ALWAYS reverts the controls view to the
+                        // active layout (2026-08-24) — scroll previews are transient.
+                        viewModel.setViewingProfile(null)
                     },
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
@@ -1063,6 +1047,8 @@ fun MainScreen(
                             context.findActivity()?.recreate()
                         }
                     },
+                    fontDebugEnabled = fontDebugEnabled,
+                    onFontDebugChange = { fontDebugEnabled = it },
                     entries = listOf(
                         RemapOptionEntry("auto_switch", "Auto switch", Icons.Filled.SwapHoriz) {
                             navController.navigate(MappoRoute.AUTO_SWITCH)
@@ -1170,6 +1156,12 @@ fun MainScreen(
                     )
                 }
             }
+        }
+
+        // Dev tooling: the floating font picker (Theme Studio typography, condensed) —
+        // topmost in the window so font changes preview over every surface live.
+        if (fontDebugEnabled) {
+            com.mappo.ui.component.FontDebugOverlay(Modifier.align(Alignment.BottomEnd))
         }
 
     TabActionDialogHost(

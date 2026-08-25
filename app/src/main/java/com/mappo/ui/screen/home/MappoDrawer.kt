@@ -23,6 +23,7 @@ import com.mappo.data.settings.TextSize
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
+import com.mappo.ui.screen.remap.FontDebugRow
 import com.mappo.ui.screen.remap.OptionEntryRow
 import com.mappo.ui.screen.remap.PanelContentPadding
 import com.mappo.ui.screen.remap.PanelDivider
@@ -43,6 +44,9 @@ fun MappoDrawerContent(
     onPowerChange: (Boolean) -> Unit,
     textSize: TextSize,
     onTextSizeChange: (TextSize) -> Unit,
+    // Dev tooling: the floating Theme Studio font picker in the window corner.
+    fontDebugEnabled: Boolean,
+    onFontDebugChange: (Boolean) -> Unit,
     entries: List<RemapOptionEntry>,
     // Close the drawer; destination rows close before navigating.
     onClose: () -> Unit,
@@ -85,6 +89,9 @@ fun MappoDrawerContent(
                 }
                 item(key = "text_size") {
                     TextSizeRow(current = textSize, onPick = onTextSizeChange)
+                }
+                item(key = "font_debug") {
+                    FontDebugRow(enabled = fontDebugEnabled, onEnabledChange = onFontDebugChange)
                 }
                 items(entries, key = { it.id }) { entry ->
                     OptionEntryRow(entry = entry, onClose = onClose)
