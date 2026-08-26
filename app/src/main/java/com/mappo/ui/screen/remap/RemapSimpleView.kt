@@ -114,6 +114,12 @@ internal fun RemapSimpleView(
     // Rendered directly beneath the three-column band (the Gyro/Overlay strip); band + strip
     // center vertically on the view as one unit.
     bottomContent: @Composable () -> Unit = {},
+    // Gates the controller-focus seat below. While a side drawer is open, focus belongs to
+    // the drawer cards — but browsing can swap this view in and out of composition (the
+    // no-layout state ↔ controls flip), and an ungated entry-seat on remount stole focus
+    // from the drawer mid-scroll. The pending seat is NOT consumed while gated, so it still
+    // fires once the drawers close and the screen becomes controller-ready then.
+    focusSeatEnabled: Boolean = true,
 ) {
     // The group whose editor should be open (user intent — survives the command-picker
     // round-trip) vs. the group currently on screen mid-animation.
@@ -181,8 +187,11 @@ internal fun RemapSimpleView(
     // Move controller focus into the editor as it opens (see editorFocus above) — it lands on
     // the first command row's input button (Close when that isn't focusable), and the d-pad
     // walks the rows and header controls from there.
-    LaunchedEffect(visibleGroup) {
-        if (visibleGroup != null) runCatching { editorFocus.requestFocus() }
+    // focusSeatEnabled is a key (not just a guard) so a seat deferred while a drawer held
+    // focus fires when the drawers close — expandedGroup is saveable state, so a drawer-scroll
+    // remount can land here with the editor already open.
+    LaunchedEffect(visibleGroup, focusSeatEnabled) {
+        if (visibleGroup != null && focusSeatEnabled) runCatching { editorFocus.requestFocus() }
     }
 
     Box(
@@ -249,7 +258,7 @@ internal fun RemapSimpleView(
                                 rootCoords?.let { root -> boxBounds[group] = root.localBoundingBoxOf(coords) }
                             },
                             onOpenGroup = { expandedGroup = it },
-                            requestFocus = group == returnFocusGroup,
+                            requestFocus = focusSeatEnabled && group == returnFocusGroup,
                             onFocusHandled = { returnFocusGroup = null },
                             modifier = boxModifier,
                         )

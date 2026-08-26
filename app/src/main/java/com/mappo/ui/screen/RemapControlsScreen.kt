@@ -647,6 +647,10 @@ fun RemapControlsScreen(
                                 onSelectLayer(null)
                             },
                             onAddSet = { dialog = ActionSetDialogState.Add },
+                            // While a drawer is open, controller focus lives on its cards;
+                            // browsing can remount this view (no-layout ↔ controls flip),
+                            // and an ungated entry-seat stole focus from the drawer.
+                            focusSeatEnabled = !layoutsDrawerOpen && !appsDrawerOpen,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             bottomContent = {
                                 RemapBottomRow(
