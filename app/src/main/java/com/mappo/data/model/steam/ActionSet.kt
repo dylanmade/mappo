@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 
 /**
  * A mutually-exclusive grouping of bindings within a [ControllerProfile].
- * At any moment, exactly one action set is "active" per controller profile.
+ * At any moment, exactly one action set is "active" per controller layout.
  * Switching action sets (via a `CHANGE_PRESET` binding — Phase 4) clears all active layers.
  */
 @Entity(

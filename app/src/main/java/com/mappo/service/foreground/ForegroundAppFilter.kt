@@ -11,7 +11,7 @@ import javax.inject.Singleton
 
 /**
  * Decides whether a foreground package is "interesting" enough to trigger auto-switch
- * or a create-profile prompt. Excludes Mappo itself, the system launcher, system UI,
+ * or a create-layout prompt. Excludes Mappo itself, the system launcher, system UI,
  * and any enabled IME. Also resolves a human-readable label for a package.
  */
 @Singleton

@@ -317,7 +317,7 @@ class RemapControlsScreenTest {
     fun changeButton_opensLayoutsDrawer_withSectionsAndCards() {
         // The change button slides in the layouts drawer: the two category headers
         // (Default retired with the default-layout concept, 2026-08-24; the identity
-        // header retired when the drawer moved between the bars) and a card per profile
+        // header retired when the drawer moved between the bars) and a card per layout
         // of the viewed application.
         composeRule.setContent {
             MaterialTheme {
@@ -326,11 +326,11 @@ class RemapControlsScreenTest {
                         config = sampleConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
-                        profiles = kotlinx.collections.immutable.persistentListOf(
-                            com.mappo.data.model.Profile(id = 1L, name = "Alpha layout"),
-                            com.mappo.data.model.Profile(id = 2L, name = "Beta layout"),
+                        layouts = kotlinx.collections.immutable.persistentListOf(
+                            com.mappo.data.model.Layout(id = 1L, name = "Alpha layout"),
+                            com.mappo.data.model.Layout(id = 2L, name = "Beta layout"),
                         ),
-                        activeProfileId = 1L,
+                        activeLayoutId = 1L,
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
                 }
@@ -358,14 +358,14 @@ class RemapControlsScreenTest {
                         config = sampleConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
-                        profiles = kotlinx.collections.immutable.persistentListOf(
-                            com.mappo.data.model.Profile(
+                        layouts = kotlinx.collections.immutable.persistentListOf(
+                            com.mappo.data.model.Layout(
                                 id = 1L,
                                 name = "Alpha layout",
                                 packageName = "com.example.alpha",
                             ),
                         ),
-                        activeProfileId = 1L,
+                        activeLayoutId = 1L,
                         installedApps = listOf(
                             com.mappo.data.repository.InstalledAppsRepository.InstalledApp(
                                 packageName = "com.example.alpha",
@@ -386,10 +386,11 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithContentDescription("Change application").performClick()
         composeRule.waitForIdle()
 
-        // Cards are name-only (2026-08-26: the active-layout subtitle retired), and
-        // merely OPENING the drawer previews nothing (scroll-position preview retired
-        // the same day — "Alpha Game" appears once, on its card, not in the bar).
-        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(1)
+        // Cards are name-only (2026-08-26: the active-layout subtitle retired).
+        // "Alpha Game" appears twice: its drawer card AND the bar's application
+        // identity — the bar always shows the ACTIVE APPLICATION (falling back to the
+        // active layout's app), independent of any preview.
+        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
 
         // Picking the unbound app pins its context: the content plane swaps to the
@@ -769,7 +770,7 @@ class RemapControlsScreenTest {
         )
         return ControllerConfig(
             controllerProfile = ControllerProfile(
-                id = 1L, profileId = 1L,
+                id = 1L, layoutId = 1L,
                 controllerType = ControllerType.GENERIC_ANDROID, name = "Default",
             ),
             actionSets = listOf(setA, setB),
@@ -839,8 +840,8 @@ class RemapControlsScreenTest {
             controllerProfile = ControllerProfile(
                 // Distinct from the "Default" set title so app-bar subtitle text doesn't
                 // collide with the set row in onNodeWithText lookups.
-                id = 1L, profileId = 1L,
-                controllerType = ControllerType.GENERIC_ANDROID, name = "Test profile",
+                id = 1L, layoutId = 1L,
+                controllerType = ControllerType.GENERIC_ANDROID, name = "Test layout",
             ),
             actionSets = listOf(actionSet),
         )

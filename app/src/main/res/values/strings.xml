@@ -10,40 +10,13 @@
     <string name="permission_accessibility_label">Accessibility</string>
     <string name="permission_accessibility_description">Required to remap physical buttons and inject input events.</string>
     <string name="permission_overlay_label">Display over other apps</string>
-    <string name="permission_overlay_description">Required to show profile prompts on the active screen instead of Mappo\'s screen.</string>
+    <string name="permission_overlay_description">Required to show layout toasts and run-mode overlays on the active screen.</string>
     <string name="permission_grant_button">Open Settings</string>
     <string name="permission_granted_indicator">Granted</string>
 
-    <string name="auto_switch_drawer_label">Auto-switch</string>
-    <string name="auto_switch_screen_title">Auto-switch</string>
-    <string name="auto_switch_setting_label">Auto-switch profiles based on foreground app</string>
-    <string name="auto_create_profiles_setting_label">Auto-create profiles for new apps (skip prompt)</string>
-    <string name="auto_switch_bindings_header">App → Profile bindings</string>
-    <string name="auto_switch_bindings_empty">No bindings yet. Launch an app and tap “Create” when prompted to bind it to a new profile.</string>
-    <string name="auto_switch_back">Back</string>
-    <string name="auto_switch_delete_binding">Delete binding</string>
-    <string name="auto_switch_unknown_profile">(missing profile)</string>
-    <string name="auto_switch_snackbar_switched">Loaded profile “%1$s” for %2$s</string>
-    <string name="auto_switch_prompt_title">Create profile for %1$s?</string>
-    <string name="auto_switch_prompt_yes">Yes</string>
-    <string name="auto_switch_prompt_no">No</string>
-    <string name="auto_switch_prompt_never">Never for this app</string>
+    <string name="auto_switch_snackbar_switched">Loaded layout “%1$s” for %2$s</string>
 
-    <!-- Brick 2 multi-binding editor (per-profile app picker). -->
-    <string name="auto_switch_add_app">Add app</string>
-    <string name="auto_switch_add_app_to_profile">Add app to “%1$s”</string>
-    <string name="auto_switch_picker_title">Pick apps</string>
-    <string name="auto_switch_picker_subtitle">Selected apps will be bound to “%1$s”.</string>
-    <string name="auto_switch_picker_search_hint">Search apps</string>
-    <string name="auto_switch_picker_confirm">Bind %1$d apps</string>
-    <string name="auto_switch_picker_confirm_one">Bind 1 app</string>
-    <string name="auto_switch_picker_loading">Loading installed apps…</string>
-    <string name="auto_switch_picker_empty">No apps found.</string>
-    <string name="auto_switch_picker_already_bound">Already bound here</string>
-    <string name="auto_switch_picker_bound_elsewhere">Currently bound to “%1$s” — will switch</string>
-    <string name="auto_switch_profile_section_empty">No apps bound to this profile yet.</string>
-
-    <string name="blocklist_drawer_label">Edit blocklist</string>
+    
     <string name="theme_studio_drawer_label">Theme Studio</string>
     <string name="overlay_edit_drawer_label">Edit overlay</string>
     <string name="shizuku_drawer_label">Shizuku setup</string>
@@ -207,7 +180,7 @@
     <string name="tab_dialog_reset_confirm">Reset “%1$s”</string>
 
     <string name="tab_dialog_remove_title">Remove “%1$s”?</string>
-    <string name="tab_dialog_remove_text">The “%1$s” keyboard will be removed from the “%2$s” profile. This cannot be undone.</string>
+    <string name="tab_dialog_remove_text">The “%1$s” keyboard will be removed from the “%2$s” layout. This cannot be undone.</string>
     <string name="tab_dialog_remove_confirm">Remove “%1$s”</string>
 
     <string name="tab_dialog_resize_conflict_title">New keyboard size won\'t fit some buttons</string>
@@ -239,13 +212,13 @@
     <string name="tab_dialog_add_keyboard_title">Add keyboard</string>
     <string name="tab_dialog_add_blank">Add a blank keyboard</string>
     <string name="tab_dialog_add_from_template">Copy a keyboard from templates</string>
-    <string name="tab_dialog_add_from_profile">Copy a keyboard from another profile</string>
+    <string name="tab_dialog_add_from_profile">Copy a keyboard from another layout</string>
 
     <string name="tab_dialog_add_from_template_title">Add from template</string>
     <string name="tab_dialog_no_templates_available">No templates available.</string>
 
-    <string name="tab_dialog_pick_profile_title">Pick a profile</string>
-    <string name="tab_dialog_no_other_profiles">No other profiles available.</string>
+    <string name="tab_dialog_pick_profile_title">Pick a layout</string>
+    <string name="tab_dialog_no_other_profiles">No other layouts available.</string>
 
     <string name="tab_dialog_remove_button_title">Delete button?</string>
     <string name="tab_dialog_remove_button_fallback">this button</string>
@@ -253,7 +226,7 @@
     <string name="tab_dialog_remove_button_confirm">Delete</string>
 
     <string name="tab_dialog_pick_keyboard_title">Pick a keyboard from “%1$s”</string>
-    <string name="tab_dialog_no_keyboards_in_profile">No keyboards in this profile.</string>
+    <string name="tab_dialog_no_keyboards_in_profile">No keyboards in this layout.</string>
 
     <string name="tab_dialog_configure_title">Configure keyboard</string>
     <string name="tab_dialog_configure_name_label">Name</string>

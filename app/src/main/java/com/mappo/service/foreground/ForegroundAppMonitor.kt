@@ -10,7 +10,7 @@ import javax.inject.Singleton
 
 /**
  * Process-wide observable for the current foreground app's package name.
- * Written by InputAccessibilityService on TYPE_WINDOW_STATE_CHANGED, read by ProfileAutoSwitcher.
+ * Written by InputAccessibilityService on TYPE_WINDOW_STATE_CHANGED, read by ApplicationAutoSwitcher.
  *
  * Mappo's own package is dropped at write time so [currentPackage] reflects the most recent
  * *other* foreground app. This matters for the run-mode overlay flow on every device:

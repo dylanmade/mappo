@@ -1,8 +1,9 @@
 package com.mappo.service.autoswitch
 
 import android.util.Log
-import com.mappo.data.repository.AppProfileBindingRepository
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.AppLayoutBindingRepository
+import com.mappo.data.repository.LayoutRepository
+import com.mappo.data.settings.ActiveApplicationStore
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.di.ApplicationScope
 import com.mappo.service.foreground.ForegroundAppFilter
@@ -20,25 +21,26 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Listens to foreground-app changes and auto-switches the active profile when a binding
- * exists. An unbound app is simply skipped (2026-08-26: the create-profile PROMPT flow —
+ * Listens to foreground-app changes and auto-switches the active layout when a binding
+ * exists. An unbound app is simply skipped (2026-08-26: the create-layout PROMPT flow —
  * banner, overlay prompt, throttle, ignore-list gate — is retired, and NOTHING is
  * auto-created either: an application without layouts is a first-class state, served by
  * the controls screen's no-layout view).
  */
 @Singleton
-class ProfileAutoSwitcher @Inject constructor(
+class ApplicationAutoSwitcher @Inject constructor(
     private val foregroundAppMonitor: ForegroundAppMonitor,
-    private val bindingRepo: AppProfileBindingRepository,
-    private val profileRepo: ProfileRepository,
+    private val bindingRepo: AppLayoutBindingRepository,
+    private val layoutRepo: LayoutRepository,
     private val settings: AutoSwitchSettings,
+    private val activeApplicationStore: ActiveApplicationStore,
     private val filter: ForegroundAppFilter,
     private val inputDispatcher: InputDispatcher,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
 
     sealed class UiEvent {
-        data class Switched(val pkg: String, val appLabel: String, val profileName: String) : UiEvent()
+        data class Switched(val pkg: String, val appLabel: String, val layoutName: String) : UiEvent()
     }
 
     private val _events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 8)
@@ -54,26 +56,36 @@ class ProfileAutoSwitcher @Inject constructor(
                 .distinctUntilChanged()
                 .collect { pkg -> handleForegroundChange(pkg) }
         }
-        Log.i(TAG, "ProfileAutoSwitcher started")
+        Log.i(TAG, "ApplicationAutoSwitcher started")
     }
 
     internal suspend fun handleForegroundChange(pkg: String) {
         if (!settings.autoSwitchEnabled.value) return
         if (!filter.isInteresting(pkg)) return
+        if (pkg in settings.ignoredPackages.value) {
+            // The detection blocklist (seeded launchers): never the active application.
+            Log.d(TAG, "$pkg is blocklisted; ignoring")
+            return
+        }
+
+        // Detection moves the ACTIVE APPLICATION pointer regardless of layouts
+        // (2026-08-26): shortcut-opening Mappo over a fresh game must land on that
+        // game's context — its no-layout state when nothing exists yet.
+        activeApplicationStore.setActiveApplication(pkg)
 
         val binding = bindingRepo.getForPackageOnce(pkg)
         if (binding != null) {
-            val current = profileRepo.activeProfile.value
-            if (current?.id == binding.profileId) {
-                Log.d(TAG, "binding for $pkg already matches active profile; no switch")
+            val current = layoutRepo.activeLayout.value
+            if (current?.id == binding.layoutId) {
+                Log.d(TAG, "binding for $pkg already matches active layout; no switch")
                 return
             }
-            val switched = profileRepo.setActiveProfileById(binding.profileId)
+            val switched = layoutRepo.setActiveLayoutById(binding.layoutId)
             if (switched != null) {
-                Log.i(TAG, "auto-switched profile to '${switched.name}' for $pkg")
+                Log.i(TAG, "auto-switched layout to '${switched.name}' for $pkg")
                 _events.tryEmit(UiEvent.Switched(pkg, filter.appLabel(pkg), switched.name))
             } else {
-                Log.w(TAG, "binding for $pkg references missing profile id=${binding.profileId}")
+                Log.w(TAG, "binding for $pkg references missing layout id=${binding.layoutId}")
             }
             return
         }
@@ -86,7 +98,7 @@ class ProfileAutoSwitcher @Inject constructor(
     /**
      * Force a re-check against the foreground package, bypassing `distinctUntilChanged`.
      * Called from the activity on `ON_RESUME` so opening Mappo while a bound app is already
-     * running on another display switches the profile, even though no fresh
+     * running on another display switches the layout, even though no fresh
      * `WINDOW_STATE_CHANGED` arrives. Prefers the live primary-display query (handles the
      * dual-screen case where Mappo on the bottom screen never causes the top screen's
      * active window to change), falls back to the cached package.
@@ -103,6 +115,6 @@ class ProfileAutoSwitcher @Inject constructor(
     }
 
     companion object {
-        private const val TAG = "ProfileAutoSwitcher"
+        private const val TAG = "ApplicationAutoSwitcher"
     }
 }

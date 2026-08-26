@@ -9,7 +9,7 @@ import com.mappo.data.settings.OverlaySettings
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.OverlayRepository
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.LayoutRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,27 +50,27 @@ data class ScopeOption(
  * source of truth that the run-mode [OverlayPresenter] also observes.
  *
  * Operations target the **current [editingScope]** — a single action set or layer of the
- * active profile, chosen via the editor's scope dropdown. [availableScopes] enumerates the
- * profile's sets + layers for that dropdown.
+ * active layout, chosen via the editor's scope dropdown. [availableScopes] enumerates the
+ * layout's sets + layers for that dropdown.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class OverlayEditor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val overlayRepository: OverlayRepository,
-    private val profileRepository: ProfileRepository,
+    private val layoutRepository: LayoutRepository,
     private val controllerConfigRepository: ControllerConfigRepository,
     private val overlaySettings: OverlaySettings,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private val activeProfileId: StateFlow<Long?> = profileRepository.activeProfile
+    private val activeLayoutId: StateFlow<Long?> = layoutRepository.activeLayout
         .map { it?.id }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
-    /** The active profile's action sets + their layers, flattened for the scope dropdown. */
-    val availableScopes: StateFlow<List<ScopeOption>> = activeProfileId
+    /** The active layout's action sets + their layers, flattened for the scope dropdown. */
+    val availableScopes: StateFlow<List<ScopeOption>> = activeLayoutId
         .flatMapLatest { id ->
             if (id == null) flowOf(emptyList())
             else controllerConfigRepository.observeActiveConfig(id).map { config ->
@@ -107,7 +107,7 @@ class OverlayEditor @Inject constructor(
 
     init {
         // Default to the first available scope (the active/first set), and reset whenever the
-        // current scope disappears (profile switch, or its set/layer was deleted).
+        // current scope disappears (layout switch, or its set/layer was deleted).
         scope.launch {
             availableScopes.collect { options ->
                 val current = _editingScope.value
@@ -183,7 +183,7 @@ class OverlayEditor @Inject constructor(
      * in pixels.
      */
     fun addDefaultElement() {
-        val profileId = activeProfileId.value ?: return
+        val layoutId = activeLayoutId.value ?: return
         val current = _editingScope.value ?: return
         scope.launch {
             val n = elements.value.size
@@ -195,7 +195,7 @@ class OverlayEditor @Inject constructor(
             overlayRepository.add(
                 clampGeometry(
                     OverlayElement(
-                        profileId = profileId,
+                        layoutId = layoutId,
                         actionSetId = (current as? OverlayScope.Set)?.actionSetId,
                         actionLayerId = (current as? OverlayScope.Layer)?.actionLayerId,
                         label = "",
@@ -303,7 +303,7 @@ class OverlayEditor @Inject constructor(
      * (e.g. so the caller can select the pastes); it may run on a background thread.
      */
     fun duplicate(sources: List<OverlayElement>, onDone: (List<Long>) -> Unit = {}) {
-        val profileId = activeProfileId.value ?: return
+        val layoutId = activeLayoutId.value ?: return
         val current = _editingScope.value ?: return
         if (sources.isEmpty()) return
         scope.launch {
@@ -315,7 +315,7 @@ class OverlayEditor @Inject constructor(
                 clampGeometry(
                     src.copy(
                         id = 0,
-                        profileId = profileId,
+                        layoutId = layoutId,
                         actionSetId = (current as? OverlayScope.Set)?.actionSetId,
                         actionLayerId = (current as? OverlayScope.Layer)?.actionLayerId,
                         x = src.x + PASTE_OFFSET,
@@ -338,9 +338,9 @@ class OverlayEditor @Inject constructor(
      * (so the caller can switch the editor to it). The new set appears in [availableScopes] reactively.
      */
     fun addActionSet(onDone: (OverlayScope) -> Unit = {}) {
-        val profileId = activeProfileId.value ?: return
+        val layoutId = activeLayoutId.value ?: return
         scope.launch {
-            val config = controllerConfigRepository.getActiveConfigOnce(profileId) ?: return@launch
+            val config = controllerConfigRepository.getActiveConfigOnce(layoutId) ?: return@launch
             val n = config.actionSets.size + 1
             val id = controllerConfigRepository.addActionSet(
                 controllerProfileId = config.controllerProfile.id,
@@ -353,9 +353,9 @@ class OverlayEditor @Inject constructor(
 
     /** Create a new empty layer under [actionSetId] and report its scope. */
     fun addLayer(actionSetId: Long, onDone: (OverlayScope) -> Unit = {}) {
-        val profileId = activeProfileId.value ?: return
+        val layoutId = activeLayoutId.value ?: return
         scope.launch {
-            val config = controllerConfigRepository.getActiveConfigOnce(profileId) ?: return@launch
+            val config = controllerConfigRepository.getActiveConfigOnce(layoutId) ?: return@launch
             val set = config.actionSets.firstOrNull { it.actionSet.id == actionSetId } ?: return@launch
             val n = set.layers.size + 1
             val id = controllerConfigRepository.addLayer(actionSetId, name = "layer_$n", title = "Layer $n")

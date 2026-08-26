@@ -61,7 +61,7 @@ class ShizukuHealthNotificationTest {
     @Test
     fun shouldShow_false_whenNotWanted() {
         // No analog binding is in scope for the foreground app (digital-only
-        // profile, or foreground app isn't bound). Shizuku readiness is
+        // layout, or foreground app isn't bound). Shizuku readiness is
         // irrelevant — don't nag.
         val notif = makeNotif()
         assertFalse(notif.shouldShow(wanted = false, shizukuReady = false))

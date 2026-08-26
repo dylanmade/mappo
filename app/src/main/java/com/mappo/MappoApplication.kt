@@ -3,7 +3,7 @@ package com.mappo
 import android.app.Application
 import android.os.Build
 import android.util.Log
-import com.mappo.service.autoswitch.ProfileAutoSwitcher
+import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.service.input.GyroLifecycleCoordinator
 import com.mappo.service.overlay.OverlayCoordinator
 import com.mappo.service.shizuku.ShizukuConnection
@@ -16,7 +16,7 @@ import javax.inject.Inject
 @HiltAndroidApp
 class MappoApplication : Application() {
 
-    @Inject lateinit var autoSwitcher: ProfileAutoSwitcher
+    @Inject lateinit var autoSwitcher: ApplicationAutoSwitcher
     @Inject lateinit var overlayCoordinator: OverlayCoordinator
 
     /**
@@ -46,7 +46,7 @@ class MappoApplication : Application() {
      * Brick D.2: gyro lifecycle coordinator. Watches compiled config + active
      * set / layers and registers the gyro sensor listener only when a real
      * gyro mode is configured for the active scope. Started from
-     * `onCreate` so the sensor stays unregistered (battery) when no profile
+     * `onCreate` so the sensor stays unregistered (battery) when no layout
      * uses gyro, and lights up the moment one does.
      */
     @Inject lateinit var gyroLifecycleCoordinator: GyroLifecycleCoordinator

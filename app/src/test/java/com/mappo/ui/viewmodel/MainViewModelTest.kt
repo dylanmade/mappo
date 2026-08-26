@@ -1,30 +1,31 @@
 package com.mappo.ui.viewmodel
 
-import com.mappo.data.model.AppProfileBinding
+import com.mappo.data.model.AppLayoutBinding
 import com.mappo.data.model.GridButton
 import com.mappo.data.model.GridLayout
 import com.mappo.data.model.onTapTarget
 import com.mappo.data.model.KeyLayout
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.RemapTarget
 import com.mappo.data.model.TemplateRef
 import com.mappo.data.model.toKeyLayout
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
-import com.mappo.data.repository.AppProfileBindingRepository
+import com.mappo.data.repository.AppLayoutBindingRepository
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.InstalledAppsRepository
 import com.mappo.data.repository.KeyboardTemplateRepository
+import com.mappo.data.repository.KeyLayoutRepository
 import com.mappo.data.repository.LayoutRepository
-import com.mappo.data.repository.ProfileRepository
 import com.mappo.data.settings.ShizukuRequiredPreferences
 import com.mappo.service.shizuku.ShizukuConnection
+import com.mappo.data.settings.ActiveApplicationStore
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.TextSize
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.settings.FrameStyle
-import com.mappo.service.autoswitch.ProfileAutoSwitcher
+import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
 import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.InputDispatcher
@@ -63,17 +64,18 @@ class MainViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
 
+    private lateinit var keyLayoutRepo: KeyLayoutRepository
     private lateinit var layoutRepo: LayoutRepository
-    private lateinit var profileRepo: ProfileRepository
     private lateinit var controllerConfigRepo: ControllerConfigRepository
-    private lateinit var bindingRepo: AppProfileBindingRepository
+    private lateinit var bindingRepo: AppLayoutBindingRepository
     private lateinit var installedAppsRepo: InstalledAppsRepository
     private lateinit var settings: AutoSwitchSettings
+    private lateinit var activeAppStore: ActiveApplicationStore
     private lateinit var frameSettings: FrameSettings
     private lateinit var textSizeSettings: TextSizeSettings
     private lateinit var shizukuRequiredPrefs: ShizukuRequiredPreferences
     private lateinit var shizukuConnection: ShizukuConnection
-    private lateinit var autoSwitcher: ProfileAutoSwitcher
+    private lateinit var autoSwitcher: ApplicationAutoSwitcher
     private lateinit var filter: ForegroundAppFilter
     private lateinit var foregroundAppMonitor: ForegroundAppMonitor
     private lateinit var templateRepo: KeyboardTemplateRepository
@@ -84,16 +86,15 @@ class MainViewModelTest {
     private lateinit var steamCredentialStore: SteamCredentialStore
     private lateinit var keyboardController: KeyboardController
 
-    private val activeProfile = MutableStateFlow<Profile?>(null)
-    private val allProfiles = MutableStateFlow<List<Profile>>(emptyList())
-    private val allBindings = MutableStateFlow<List<AppProfileBinding>>(emptyList())
+    private val activeLayout = MutableStateFlow<Layout?>(null)
+    private val allProfiles = MutableStateFlow<List<Layout>>(emptyList())
+    private val allBindings = MutableStateFlow<List<AppLayoutBinding>>(emptyList())
     private val allLayouts = MutableStateFlow<List<KeyLayout>>(emptyList())
     private val allTemplates = MutableStateFlow<List<TemplateRef>>(emptyList())
-    private val autoSwitchEvents = MutableSharedFlow<ProfileAutoSwitcher.UiEvent>(
+    private val autoSwitchEvents = MutableSharedFlow<ApplicationAutoSwitcher.UiEvent>(
         replay = 0, extraBufferCapacity = 4,
     )
     private val autoSwitchEnabled = MutableStateFlow(true)
-    private val autoCreateEnabled = MutableStateFlow(false)
     private val ignoredPackages = MutableStateFlow<Set<String>>(emptySet())
 
     private lateinit var subject: MainViewModel
@@ -102,8 +103,8 @@ class MainViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
 
+        keyLayoutRepo = mockk(relaxed = true)
         layoutRepo = mockk(relaxed = true)
-        profileRepo = mockk(relaxed = true)
         controllerConfigRepo = mockk(relaxed = true)
         bindingRepo = mockk(relaxed = true)
         installedAppsRepo = mockk(relaxed = true)
@@ -130,32 +131,34 @@ class MainViewModelTest {
         // `remapEnabled`, etc., so tests need a working instance, not a relaxed mock.
         keyboardController = KeyboardController(
             inputDispatcher = inputDispatcher,
+            keyLayoutRepository = keyLayoutRepo,
             layoutRepository = layoutRepo,
-            profileRepository = profileRepo,
             ioDispatcher = testDispatcher,
         )
 
-        every { profileRepo.activeProfile } returns activeProfile
-        every { profileRepo.getAllProfiles() } returns allProfiles
+        every { layoutRepo.activeLayout } returns activeLayout
+        every { layoutRepo.getAllLayouts() } returns allProfiles
         every { bindingRepo.getAll() } returns allBindings
-        every { layoutRepo.getLayoutsByProfile(any()) } returns allLayouts
+        every { keyLayoutRepo.getKeyLayoutsByLayout(any()) } returns allLayouts
         every { frameSettings.style } returns MutableStateFlow(FrameStyle())
         every { textSizeSettings.size } returns MutableStateFlow(TextSize.SMALL)
         every { settings.autoSwitchEnabled } returns autoSwitchEnabled
-        every { settings.autoCreateProfilesEnabled } returns autoCreateEnabled
         every { settings.ignoredPackages } returns ignoredPackages
+        activeAppStore = mockk(relaxed = true)
+        every { activeAppStore.activeAppPackage } returns MutableStateFlow<String?>(null)
         every { autoSwitcher.events } returns autoSwitchEvents
         every { templateRepo.builtIns } returns emptyList()
         every { templateRepo.allTemplates } returns allTemplates
         every { controllerConfigRepo.observeActiveConfig(any()) } returns MutableStateFlow<ControllerConfig?>(null)
 
         subject = MainViewModel(
+            keyLayoutRepository = keyLayoutRepo,
             layoutRepository = layoutRepo,
-            profileRepository = profileRepo,
             controllerConfigRepository = controllerConfigRepo,
-            appProfileBindingRepository = bindingRepo,
+            appLayoutBindingRepository = bindingRepo,
             installedAppsRepository = installedAppsRepo,
             autoSwitchSettings = settings,
+            activeApplicationStore = activeAppStore,
             frameSettings = frameSettings,
             textSizeSettings = textSizeSettings,
             shizukuRequiredPreferences = shizukuRequiredPrefs,
@@ -256,65 +259,64 @@ class MainViewModelTest {
         assertEquals(emptyList<GridButton>(), subject.autoFitButtons(source, cols = 5, rows = 0))
     }
 
-    // ── Profile management ────────────────────────────────────────────────────
+    // ── Layout management ────────────────────────────────────────────────────
 
     @Test
     fun selectProfile_setsActiveAndResetsSelectedIndex() = runTest(testDispatcher) {
         // Set up a non-zero selectedIndex to verify it resets.
         subject.selectLayout(3)
-        val profile = Profile(id = 7L, name = "Game", isDefault = false)
+        val layout = Layout(id = 7L, name = "Game")
 
-        subject.selectProfile(profile)
+        subject.selectLayout(layout)
 
-        verify { profileRepo.setActiveProfile(profile) }
+        verify { layoutRepo.setActiveLayout(layout) }
         assertEquals(0, subject.selectedIndex.value)
     }
 
     @Test
-    fun deleteProfile_whenActive_fallsBackToDefault() = runTest(testDispatcher) {
-        val toDelete = Profile(id = 7L, name = "Game", isDefault = false)
-        val default = Profile(id = 1L, name = "Default", isDefault = true)
-        allProfiles.value = listOf(default, toDelete)
-        activeProfile.value = toDelete
-        advanceUntilIdle() // let init's collector populate the VM's _profiles snapshot
-
-        subject.deleteProfile(toDelete)
+    fun deleteLayout_whenActive_clearsActive() = runTest(testDispatcher) {
+        // 2026-08-26: no default-layout fallback — deleting the active layout leaves
+        // nothing active (the application's no-layout state is first-class).
+        val toDelete = Layout(id = 7L, name = "Game")
+        allProfiles.value = listOf(toDelete)
+        activeLayout.value = toDelete
         advanceUntilIdle()
 
-        coVerify { profileRepo.deleteProfile(toDelete) }
-        verify { profileRepo.setActiveProfile(default) }
-        assertEquals(0, subject.selectedIndex.value)
+        subject.deleteLayout(toDelete)
+        advanceUntilIdle()
+
+        coVerify { layoutRepo.deleteLayout(toDelete) }
+        verify { layoutRepo.clearActiveLayout() }
     }
 
     @Test
-    fun deleteProfile_whenInactive_keepsCurrentActive() = runTest(testDispatcher) {
-        val toDelete = Profile(id = 7L, name = "Game", isDefault = false)
-        val other = Profile(id = 9L, name = "Other", isDefault = false)
-        val default = Profile(id = 1L, name = "Default", isDefault = true)
-        allProfiles.value = listOf(default, toDelete, other)
-        activeProfile.value = other
+    fun deleteLayout_whenInactive_keepsCurrentActive() = runTest(testDispatcher) {
+        val toDelete = Layout(id = 7L, name = "Game")
+        val other = Layout(id = 9L, name = "Other")
+        allProfiles.value = listOf(toDelete, other)
+        activeLayout.value = other
         advanceUntilIdle()
 
-        subject.deleteProfile(toDelete)
+        subject.deleteLayout(toDelete)
         advanceUntilIdle()
 
-        coVerify { profileRepo.deleteProfile(toDelete) }
-        verify(exactly = 0) { profileRepo.setActiveProfile(default) }
+        coVerify { layoutRepo.deleteLayout(toDelete) }
+        verify(exactly = 0) { layoutRepo.clearActiveLayout() }
     }
 
     @Test
     fun addProfile_delegatesToRepo() = runTest(testDispatcher) {
-        subject.addProfile("New")
+        subject.addLayout("New")
         advanceUntilIdle()
-        coVerify { profileRepo.addProfile("New") }
+        coVerify { layoutRepo.addLayout("New") }
     }
 
     @Test
     fun duplicateProfile_namesCopyOfSource() = runTest(testDispatcher) {
-        val source = Profile(id = 7L, name = "Game", isDefault = false)
-        subject.duplicateProfile(source)
+        val source = Layout(id = 7L, name = "Game")
+        subject.duplicateLayout(source)
         advanceUntilIdle()
-        coVerify { profileRepo.duplicateProfile(source, "Copy of Game") }
+        coVerify { layoutRepo.duplicateLayout(source, "Copy of Game") }
     }
 
     // ── Edit mode + tab navigation ────────────────────────────────────────────
@@ -415,28 +417,9 @@ class MainViewModelTest {
     }
 
     @Test
-    fun setAutoCreateProfilesEnabled_delegatesToSettings() {
-        subject.setAutoCreateProfilesEnabled(true)
-        verify { settings.setAutoCreateProfilesEnabled(true) }
-    }
-
-    @Test
-    fun unignorePackage_delegatesToSettings() {
-        subject.unignorePackage("com.example")
-        verify { settings.removeIgnoredPackage("com.example") }
-    }
-
-    @Test
     fun reevaluateAutoSwitch_delegatesToAutoSwitcher() {
         subject.reevaluateAutoSwitch()
         verify { autoSwitcher.reevaluate() }
-    }
-
-    @Test
-    fun deleteBinding_delegatesToBindingRepo() = runTest(testDispatcher) {
-        subject.deleteBinding(packageName = "com.example", subId = "guest")
-        advanceUntilIdle()
-        coVerify { bindingRepo.unbind("com.example", "guest") }
     }
 
     @Test
@@ -445,8 +428,8 @@ class MainViewModelTest {
         every { filter.appLabel("com.foo") } returns "Foo"
 
         allBindings.value = listOf(
-            AppProfileBinding(packageName = "com.example", subId = "", profileId = 1L),
-            AppProfileBinding(packageName = "com.foo", subId = "", profileId = 1L),
+            AppLayoutBinding(packageName = "com.example", layoutId = 1L),
+            AppLayoutBinding(packageName = "com.foo", layoutId = 1L),
         )
         advanceUntilIdle()
 
@@ -457,26 +440,18 @@ class MainViewModelTest {
     }
 
     @Test
-    fun appLabels_resolvesLabelsForIgnoredPackages() = runTest(testDispatcher) {
-        every { filter.appLabel("com.blocked") } returns "Blocked App"
-
-        ignoredPackages.value = setOf("com.blocked")
-        advanceUntilIdle()
-
-        assertEquals("Blocked App", subject.appLabels.value["com.blocked"])
-    }
-
-    @Test
     fun appLabels_doesNotReResolveAlreadyCachedPackages() = runTest(testDispatcher) {
         every { filter.appLabel("com.example") } returns "Example"
 
         allBindings.value = listOf(
-            AppProfileBinding(packageName = "com.example", subId = "", profileId = 1L)
+            AppLayoutBinding(packageName = "com.example", layoutId = 1L)
         )
         advanceUntilIdle()
-        // Same package re-emitted via the ignored-packages channel; should not call
-        // the filter again because the label is cached.
-        ignoredPackages.value = setOf("com.example")
+        // Same package re-emitted via the layouts channel (a layout of that app);
+        // should not call the filter again because the label is cached.
+        allProfiles.value = listOf(
+            Layout(id = 9L, name = "Example layout", packageName = "com.example")
+        )
         advanceUntilIdle()
 
         verify(exactly = 1) { filter.appLabel("com.example") }
@@ -500,11 +475,11 @@ class MainViewModelTest {
         subject.setViewingActionSet(42L)
         assertEquals(42L, subject.viewingActionSetId.value)
 
-        activeProfile.value = Profile(id = 7L, name = "Other")
+        activeLayout.value = Layout(id = 7L, name = "Other")
         advanceUntilIdle()
 
         assertNull(
-            "Switching the active profile should drop the editor's viewing pointer — the new controller has its own sets",
+            "Switching the active layout should drop the editor's viewing pointer — the new controller has its own sets",
             subject.viewingActionSetId.value,
         )
     }
@@ -515,12 +490,13 @@ class MainViewModelTest {
         every { controllerConfigRepo.observeActiveConfig(any()) } returns activeConfigFlow
         // Rebuild subject so it picks up the new mock behavior.
         subject = MainViewModel(
+            keyLayoutRepository = keyLayoutRepo,
             layoutRepository = layoutRepo,
-            profileRepository = profileRepo,
             controllerConfigRepository = controllerConfigRepo,
-            appProfileBindingRepository = bindingRepo,
+            appLayoutBindingRepository = bindingRepo,
             installedAppsRepository = installedAppsRepo,
             autoSwitchSettings = settings,
+            activeApplicationStore = activeAppStore,
             frameSettings = frameSettings,
             textSizeSettings = textSizeSettings,
             shizukuRequiredPreferences = shizukuRequiredPrefs,
@@ -537,7 +513,7 @@ class MainViewModelTest {
                 keyboardController = keyboardController,
             ioDispatcher = testDispatcher,
         )
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         // Emit a config that has set ids 1L and 2L.
         activeConfigFlow.value = miniConfig(setIds = listOf(1L, 2L))
         advanceUntilIdle()
@@ -583,7 +559,7 @@ class MainViewModelTest {
         }
         return ControllerConfig(
             controllerProfile = com.mappo.data.model.steam.ControllerProfile(
-                id = 1L, profileId = 1L,
+                id = 1L, layoutId = 1L,
                 controllerType = com.mappo.data.model.steam.ControllerType.GENERIC_ANDROID,
                 name = "Default",
             ),
@@ -595,7 +571,7 @@ class MainViewModelTest {
 
     @Test
     fun addControllerActionSet_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
 
         subject.addControllerActionSet(name = "menu", title = "Menu", inheritFromSetId = null)
         advanceUntilIdle()
@@ -605,7 +581,7 @@ class MainViewModelTest {
 
     @Test
     fun addControllerActionSet_noActiveConfig_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         // observeActiveConfig still emits null, so activeControllerConfig.value stays null.
         subject.addControllerActionSet(name = "menu", title = "Menu", inheritFromSetId = null)
         advanceUntilIdle()
@@ -619,7 +595,7 @@ class MainViewModelTest {
         every { controllerConfigRepo.observeActiveConfig(any()) } returns configFlow
         coEvery { controllerConfigRepo.addActionSet(any(), any(), any(), any()) } returns 42L
         subject = rebuildSubject()
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         advanceUntilIdle()
 
         subject.addControllerActionSet(name = "menu", title = "Menu", inheritFromSetId = null)
@@ -631,7 +607,7 @@ class MainViewModelTest {
 
     @Test
     fun renameControllerActionSet_delegatesToRepo() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         subject.renameControllerActionSet(actionSetId = 7L, name = "menu", title = "Menu")
         advanceUntilIdle()
         coVerify { controllerConfigRepo.renameActionSet(7L, "menu", "Menu") }
@@ -639,7 +615,7 @@ class MainViewModelTest {
 
     @Test
     fun renameControllerActionSet_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
         subject.renameControllerActionSet(actionSetId = 7L, name = "menu", title = "Menu")
         advanceUntilIdle()
         coVerify(exactly = 0) { controllerConfigRepo.renameActionSet(any(), any(), any()) }
@@ -647,7 +623,7 @@ class MainViewModelTest {
 
     @Test
     fun duplicateControllerActionSet_flipsViewingPointerToCopy() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         coEvery { controllerConfigRepo.duplicateActionSet(any(), any(), any()) } returns 99L
 
         subject.duplicateControllerActionSet(sourceSetId = 5L, name = "copy", title = "Copy")
@@ -659,7 +635,7 @@ class MainViewModelTest {
 
     @Test
     fun deleteControllerActionSet_delegatesToRepo() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         subject.deleteControllerActionSet(actionSetId = 5L)
         advanceUntilIdle()
         coVerify { controllerConfigRepo.deleteActionSet(5L) }
@@ -683,11 +659,11 @@ class MainViewModelTest {
         subject.setViewingLayer(7L)
         assertEquals(7L, subject.viewingLayerId.value)
 
-        activeProfile.value = Profile(id = 9L, name = "Other")
+        activeLayout.value = Layout(id = 9L, name = "Other")
         advanceUntilIdle()
 
         assertNull(
-            "Switching the active profile should drop the editor's layer focus",
+            "Switching the active layout should drop the editor's layer focus",
             subject.viewingLayerId.value,
         )
     }
@@ -711,7 +687,7 @@ class MainViewModelTest {
         val activeConfigFlow = MutableStateFlow<ControllerConfig?>(null)
         every { controllerConfigRepo.observeActiveConfig(any()) } returns activeConfigFlow
         subject = rebuildSubject()
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         activeConfigFlow.value = miniConfig(setIds = listOf(1L), layersBySet = mapOf(1L to listOf(10L, 11L)))
         advanceUntilIdle()
 
@@ -736,7 +712,7 @@ class MainViewModelTest {
         val activeConfigFlow = MutableStateFlow<ControllerConfig?>(null)
         every { controllerConfigRepo.observeActiveConfig(any()) } returns activeConfigFlow
         subject = rebuildSubject()
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         activeConfigFlow.value = miniConfig(
             setIds = listOf(1L, 2L),
             layersBySet = mapOf(1L to listOf(10L), 2L to listOf(20L)),
@@ -766,7 +742,7 @@ class MainViewModelTest {
         val activeConfigFlow = MutableStateFlow<ControllerConfig?>(null)
         every { controllerConfigRepo.observeActiveConfig(any()) } returns activeConfigFlow
         subject = rebuildSubject()
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         activeConfigFlow.value = miniConfig(
             setIds = listOf(1L, 2L),
             layersBySet = mapOf(1L to listOf(10L, 11L), 2L to listOf(20L)),
@@ -788,7 +764,7 @@ class MainViewModelTest {
 
     @Test
     fun addControllerActionLayer_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
 
         subject.addControllerActionLayer(actionSetId = 1L, name = "scope", title = "Scope")
         advanceUntilIdle()
@@ -798,7 +774,7 @@ class MainViewModelTest {
 
     @Test
     fun addControllerActionLayer_delegatesToRepo_andFlipsViewingLayerToNew() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         coEvery { controllerConfigRepo.addLayer(any(), any(), any()) } returns 77L
 
         subject.addControllerActionLayer(actionSetId = 5L, name = "scope", title = "Scope")
@@ -810,7 +786,7 @@ class MainViewModelTest {
 
     @Test
     fun renameControllerActionLayer_delegatesToRepo() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         subject.renameControllerActionLayer(layerId = 7L, name = "ads", title = "ADS")
         advanceUntilIdle()
         coVerify { controllerConfigRepo.renameLayer(7L, "ads", "ADS") }
@@ -818,7 +794,7 @@ class MainViewModelTest {
 
     @Test
     fun renameControllerActionLayer_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
         subject.renameControllerActionLayer(layerId = 7L, name = "ads", title = "ADS")
         advanceUntilIdle()
         coVerify(exactly = 0) { controllerConfigRepo.renameLayer(any(), any(), any()) }
@@ -826,7 +802,7 @@ class MainViewModelTest {
 
     @Test
     fun duplicateControllerActionLayer_flipsViewingLayerToCopy() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         coEvery { controllerConfigRepo.duplicateLayer(any(), any(), any()) } returns 88L
 
         subject.duplicateControllerActionLayer(sourceLayerId = 5L, name = "copy", title = "Copy")
@@ -838,7 +814,7 @@ class MainViewModelTest {
 
     @Test
     fun deleteControllerActionLayer_delegatesToRepo() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         subject.deleteControllerActionLayer(layerId = 5L)
         advanceUntilIdle()
         coVerify { controllerConfigRepo.deleteLayer(5L) }
@@ -848,7 +824,7 @@ class MainViewModelTest {
 
     @Test
     fun materializeLayerOverride_noActiveProfile_returnsNull_andDoesNotCallRepo() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
 
         val result = subject.materializeLayerOverride(
             layerId = 1L,
@@ -864,7 +840,7 @@ class MainViewModelTest {
 
     @Test
     fun materializeLayerOverride_delegatesToRepo_andReturnsId() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
         coEvery {
             controllerConfigRepo.materializeLayerOverride(
                 layerId = 10L,
@@ -891,7 +867,7 @@ class MainViewModelTest {
 
     @Test
     fun clearLayerOverride_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
 
         subject.clearLayerOverride(
             layerId = 1L,
@@ -907,7 +883,7 @@ class MainViewModelTest {
 
     @Test
     fun clearLayerOverride_delegatesToRepo() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 1L, name = "P")
+        activeLayout.value = Layout(id = 1L, name = "P")
 
         subject.clearLayerOverride(
             layerId = 10L,
@@ -927,12 +903,13 @@ class MainViewModelTest {
 
     /** Helper for tests that need to rebuild the subject after tweaking mock behavior. */
     private fun rebuildSubject(): MainViewModel = MainViewModel(
+        keyLayoutRepository = keyLayoutRepo,
         layoutRepository = layoutRepo,
-        profileRepository = profileRepo,
         controllerConfigRepository = controllerConfigRepo,
-        appProfileBindingRepository = bindingRepo,
+        appLayoutBindingRepository = bindingRepo,
         installedAppsRepository = installedAppsRepo,
         autoSwitchSettings = settings,
+        activeApplicationStore = activeAppStore,
         frameSettings = frameSettings,
         textSizeSettings = textSizeSettings,
         shizukuRequiredPreferences = shizukuRequiredPrefs,
@@ -952,7 +929,7 @@ class MainViewModelTest {
 
     @Test
     fun setControllerBinding_noActiveProfile_isNoOp() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
 
         subject.setControllerBinding(activatorId = 42L, output = BindingOutput.KeyPress("ENTER"))
         advanceUntilIdle()
@@ -962,7 +939,7 @@ class MainViewModelTest {
 
     @Test
     fun setControllerBinding_activeProfile_delegatesToRepository() = runTest(testDispatcher) {
-        activeProfile.value = Profile(id = 5L, name = "Test")
+        activeLayout.value = Layout(id = 5L, name = "Test")
 
         subject.setControllerBinding(activatorId = 42L, output = BindingOutput.KeyPress("ENTER"))
         advanceUntilIdle()
@@ -1162,7 +1139,7 @@ class MainViewModelTest {
         assertEquals(0, layout.buttons[0].col)
         assertEquals(0, layout.buttons[0].row)
         assertEquals(layout.buttons[0].id, subject.selectedButtonId.value)
-        coVerify { layoutRepo.saveLayout(any()) }
+        coVerify { keyLayoutRepo.saveLayout(any()) }
     }
 
     @Test
@@ -1405,7 +1382,7 @@ class MainViewModelTest {
         val ids = subject.layouts.value.map { it.id }
         assertEquals(listOf(2L, 3L, 1L), ids)
         coVerify {
-            layoutRepo.reorder(profileId = 1L, idToPosition = mapOf(2L to 0, 3L to 1, 1L to 2))
+            keyLayoutRepo.reorder(layoutId = 1L, idToPosition = mapOf(2L to 0, 3L to 1, 1L to 2))
         }
     }
 
@@ -1429,7 +1406,7 @@ class MainViewModelTest {
         subject.reorderTabs(fromIndex = 1, toIndex = 1)
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { layoutRepo.reorder(any(), any()) }
+        coVerify(exactly = 0) { keyLayoutRepo.reorder(any(), any()) }
     }
 
     @Test
@@ -1496,9 +1473,9 @@ class MainViewModelTest {
         seedLayouts(listOf(layout))
         // The DB-side query returns the existing row; subsequent insert + re-fetch
         // must reflect the appended copy.
-        val sourceKey = layout.toKeyLayout(profileId = 1L, position = 0)
+        val sourceKey = layout.toKeyLayout(layoutId = 1L, position = 0)
         val copyKey = sourceKey.copy(id = 11L, name = "Main Copy", position = 1)
-        coEvery { layoutRepo.getLayoutsByProfileOnce(1L) } returnsMany listOf(
+        coEvery { keyLayoutRepo.getKeyLayoutsByLayoutOnce(1L) } returnsMany listOf(
             listOf(sourceKey),
             listOf(sourceKey, copyKey),
         )
@@ -1506,7 +1483,7 @@ class MainViewModelTest {
         subject.duplicateKeyboard(layoutId = 10L)
         advanceUntilIdle()
 
-        coVerify { layoutRepo.saveLayout(match { it.name == "Main Copy" && it.position == 1 }) }
+        coVerify { keyLayoutRepo.saveLayout(match { it.name == "Main Copy" && it.position == 1 }) }
     }
 
     @Test
@@ -1517,13 +1494,13 @@ class MainViewModelTest {
             sampleLayout(id = 3L),
         )
         seedLayouts(layouts)
-        // After the optimistic delete, the repo's getLayoutsByProfileOnce should
+        // After the optimistic delete, the repo's getKeyLayoutsByLayoutOnce should
         // reflect the post-delete state (used by compaction).
         val keyLayouts = listOf(
             sampleLayout(id = 1L).toKeyLayout(1L, position = 0),
             sampleLayout(id = 3L).toKeyLayout(1L, position = 2), // gap at position 1
         )
-        coEvery { layoutRepo.getLayoutsByProfileOnce(1L) } returns keyLayouts
+        coEvery { keyLayoutRepo.getKeyLayoutsByLayoutOnce(1L) } returns keyLayouts
 
         subject.removeKeyboard(layoutId = 2L)
         advanceUntilIdle()
@@ -1531,7 +1508,7 @@ class MainViewModelTest {
         // Optimistic UI: layouts list no longer contains id=2.
         assertEquals(listOf(1L, 3L), subject.layouts.value.map { it.id })
         // Compaction: id=3 was at position 2 (gap), should be reordered to position 1.
-        coVerify { layoutRepo.reorder(profileId = 1L, idToPosition = mapOf(3L to 1)) }
+        coVerify { keyLayoutRepo.reorder(layoutId = 1L, idToPosition = mapOf(3L to 1)) }
     }
 
     @Test
@@ -1582,7 +1559,7 @@ class MainViewModelTest {
         // First call returns existing; second (after insert) returns appended row.
         val existingKey = sampleLayout(id = 10L, name = "New Keyboard").toKeyLayout(1L, 0)
         val appendedKey = sampleLayout(id = 11L, name = "New Keyboard 2").toKeyLayout(1L, 1)
-        coEvery { layoutRepo.getLayoutsByProfileOnce(1L) } returnsMany listOf(
+        coEvery { keyLayoutRepo.getKeyLayoutsByLayoutOnce(1L) } returnsMany listOf(
             listOf(existingKey),
             listOf(existingKey, appendedKey),
         )
@@ -1590,7 +1567,7 @@ class MainViewModelTest {
         subject.addBlankKeyboard()
         advanceUntilIdle()
 
-        coVerify { layoutRepo.saveLayout(match { it.name == "New Keyboard 2" && it.position == 1 }) }
+        coVerify { keyLayoutRepo.saveLayout(match { it.name == "New Keyboard 2" && it.position == 1 }) }
     }
 
     @Test
@@ -1600,7 +1577,7 @@ class MainViewModelTest {
             id = 42L, name = "FromTpl",
             columns = 2, rows = 2, buttons = emptyList(),
         )
-        coEvery { layoutRepo.getLayoutsByProfileOnce(1L) } returnsMany listOf(
+        coEvery { keyLayoutRepo.getKeyLayoutsByLayoutOnce(1L) } returnsMany listOf(
             listOf(sampleLayout(id = 10L, name = "Existing").toKeyLayout(1L, 0)),
             listOf(
                 sampleLayout(id = 10L, name = "Existing").toKeyLayout(1L, 0),
@@ -1611,7 +1588,7 @@ class MainViewModelTest {
         subject.addKeyboardFromTemplate(template)
         advanceUntilIdle()
 
-        coVerify { layoutRepo.saveLayout(match { it.name == "FromTpl" }) }
+        coVerify { keyLayoutRepo.saveLayout(match { it.name == "FromTpl" }) }
     }
 
     @Test
@@ -1621,7 +1598,7 @@ class MainViewModelTest {
             id = 42L, name = "Tpl",
             columns = 2, rows = 2, buttons = emptyList(),
         )
-        coEvery { layoutRepo.getLayoutsByProfileOnce(1L) } returnsMany listOf(
+        coEvery { keyLayoutRepo.getKeyLayoutsByLayoutOnce(1L) } returnsMany listOf(
             listOf(sampleLayout(id = 10L, name = "Tpl").toKeyLayout(1L, 0)),
             listOf(
                 sampleLayout(id = 10L, name = "Tpl").toKeyLayout(1L, 0),
@@ -1632,14 +1609,14 @@ class MainViewModelTest {
         subject.addKeyboardFromTemplate(template)
         advanceUntilIdle()
 
-        coVerify { layoutRepo.saveLayout(match { it.name == "Tpl 2" }) }
+        coVerify { keyLayoutRepo.saveLayout(match { it.name == "Tpl 2" }) }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
      * Drives the in-memory [_layouts] StateFlow indirectly by making the
-     * underlying flow emit. The init collector observes activeProfile→layouts
+     * underlying flow emit. The init collector observes activeLayout→layouts
      * and pushes into _layouts via toGridLayout(); we mimic that path by
      * setting both flows.
      */
@@ -1648,8 +1625,8 @@ class MainViewModelTest {
         // the real Gson serializer; in-memory GridLayouts with pre-populated
         // buttons must be visible to button-CRUD tests after the init collector
         // converts them back via toGridLayout().
-        val keyLayouts = layouts.mapIndexed { i, gl -> gl.toKeyLayout(profileId = 1L, position = i) }
-        activeProfile.value = Profile(id = 1L, name = "Test")
+        val keyLayouts = layouts.mapIndexed { i, gl -> gl.toKeyLayout(layoutId = 1L, position = i) }
+        activeLayout.value = Layout(id = 1L, name = "Test")
         allLayouts.value = keyLayouts
         testDispatcher.scheduler.advanceUntilIdle()
     }

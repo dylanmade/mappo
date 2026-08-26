@@ -154,9 +154,9 @@ fun GridLayout.seedNewButton(base: GridButton): GridButton = base.copy(
 /**
  * Returns a copy of this layout with a fresh UUID on every button. Required whenever a
  * GridLayout is cloned to seed a new persisted keyboard (duplicate tab, instantiate from
- * a template, copy from another profile). Without this, the copy's buttons retain the
+ * a template, copy from another layout). Without this, the copy's buttons retain the
  * source's ids; [MainViewModel.mutateLayoutContaining] matches buttons by id across the
- * active profile's layouts, so edits land on whichever layout it finds first — usually
+ * active layout's layouts, so edits land on whichever layout it finds first — usually
  * the original, making the copy appear "uneditable" until the source is deleted.
  */
 fun GridLayout.withFreshButtonIds(): GridLayout =

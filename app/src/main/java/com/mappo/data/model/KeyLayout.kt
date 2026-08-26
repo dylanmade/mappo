@@ -10,16 +10,16 @@ import com.google.gson.reflect.TypeToken
 @Entity(
     tableName = "key_layouts",
     foreignKeys = [ForeignKey(
-        entity = Profile::class,
+        entity = Layout::class,
         parentColumns = ["id"],
-        childColumns = ["profileId"],
+        childColumns = ["layoutId"],
         onDelete = ForeignKey.CASCADE
     )],
-    indices = [Index("profileId")]
+    indices = [Index("layoutId")]
 )
 data class KeyLayout(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val profileId: Long,
+    val layoutId: Long,
     val name: String,
     val columns: Int,
     val rows: Int,
@@ -118,12 +118,12 @@ fun KeyLayout.toGridLayout(): GridLayout = GridLayout(
 )
 
 fun GridLayout.toKeyLayout(
-    profileId: Long,
+    layoutId: Long,
     position: Int = 0,
     originalSnapshotJson: String? = null
 ): KeyLayout = KeyLayout(
     id = id,
-    profileId = profileId,
+    layoutId = layoutId,
     name = name,
     columns = columns,
     rows = rows,

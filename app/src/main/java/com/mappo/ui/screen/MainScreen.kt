@@ -153,7 +153,7 @@ import com.mappo.ui.screen.home.ScreenFrameFadeMillis
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
-import com.mappo.service.autoswitch.ProfileAutoSwitcher
+import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
 import com.mappo.ui.screen.keyboard.TabActionDialog
 import com.mappo.ui.screen.keyboard.TabActionDialogHost
@@ -180,9 +180,9 @@ fun MainScreen(
     val layouts by viewModel.layouts.collectAsStateWithLifecycle()
     val displayLayout by viewModel.displayLayout.collectAsStateWithLifecycle()
     val selectedButtonId by viewModel.selectedButtonId.collectAsStateWithLifecycle()
-    val activeProfile by viewModel.activeProfile.collectAsStateWithLifecycle()
+    val activeLayout by viewModel.activeLayout.collectAsStateWithLifecycle()
     val steamAccountName by viewModel.steamAccountName.collectAsStateWithLifecycle()
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val allLayouts by viewModel.allLayouts.collectAsStateWithLifecycle()
     val tabContextMenuFor by viewModel.tabContextMenuFor.collectAsStateWithLifecycle()
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val userTemplates = remember(templates) {
@@ -205,9 +205,9 @@ fun MainScreen(
             // want a second copy on Mappo's screen.
             if (isOverlayPermissionGranted(context)) return@collect
             when (event) {
-                is ProfileAutoSwitcher.UiEvent.Switched -> {
+                is ApplicationAutoSwitcher.UiEvent.Switched -> {
                     snackbarHostState.showSnackbar(
-                        context.getString(R.string.auto_switch_snackbar_switched, event.profileName, event.appLabel)
+                        context.getString(R.string.auto_switch_snackbar_switched, event.layoutName, event.appLabel)
                     )
                 }
             }
@@ -233,7 +233,7 @@ fun MainScreen(
     // The controls screen (and its sub-editors) render the VIEWED layout's config — the
     // active layout on the home instance, a specific layout when opened from the layouts
     // view. The runtime keeps compiling the ACTIVE config inside the VM regardless.
-    val viewedProfile by viewModel.viewedProfile.collectAsStateWithLifecycle()
+    val viewedLayout by viewModel.viewedLayout.collectAsStateWithLifecycle()
     val viewedControllerConfig by viewModel.viewedControllerConfig.collectAsStateWithLifecycle()
     val autoSwitchEnabled by viewModel.autoSwitchEnabled.collectAsStateWithLifecycle()
     val activateWarningSuppressed by viewModel.activateWarningSuppressed.collectAsStateWithLifecycle()
@@ -243,9 +243,10 @@ fun MainScreen(
     val remapEnabled by viewModel.remapEnabled.collectAsStateWithLifecycle()
     val overlayShowing by viewModel.overlayShowing.collectAsStateWithLifecycle()
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
-    // Feeds the profile panel's new-profile form (name + auto-switch app associations).
+    // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
-    val appProfileBindings by viewModel.appProfileBindings.collectAsStateWithLifecycle()
+    val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
+    val appLayoutBindings by viewModel.appLayoutBindings.collectAsStateWithLifecycle()
     val shizukuRequiredAcked by viewModel.shizukuRequiredAcknowledged.collectAsStateWithLifecycle()
     val shizukuReady by viewModel.shizukuReady.collectAsStateWithLifecycle()
     val shizukuState by viewModel.shizukuState.collectAsStateWithLifecycle()
@@ -270,12 +271,12 @@ fun MainScreen(
     }
 
     // The home route (2026-08-20 flow re-imagining): the CONTROLS view of the active
-    // layout — the REMAP_CONTROLS start destination with no viewed-profile arg. A
+    // layout — the REMAP_CONTROLS start destination with no viewed-layout arg. A
     // layouts-launched controls entry shares the destination pattern but carries a
-    // profileId, so the argument distinguishes home from viewing.
+    // layoutId, so the argument distinguishes home from viewing.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val isHomeRoute = currentBackStackEntry?.destination?.route == MappoRoute.REMAP_CONTROLS &&
-        (currentBackStackEntry?.arguments?.getLong(MappoRoute.ARG_PROFILE_ID) ?: 0L) == 0L
+        (currentBackStackEntry?.arguments?.getLong(MappoRoute.ARG_LAYOUT_ID) ?: 0L) == 0L
 
     // The home is a fullscreen *transparent* window, so a dismissed frame on the home route is
     // an invisible trap: nothing is drawn, yet the activity still swallows every touch over
@@ -354,7 +355,7 @@ fun MainScreen(
     val screenContent: @Composable () -> Unit = {
         NavHost(
             navController = navController,
-            // The home: the controls view of the active layout (no profileId arg).
+            // The home: the controls view of the active layout (no layoutId arg).
             startDestination = MappoRoute.REMAP_CONTROLS,
             // The soft keyboard OVERLAYS the UI — it must never move or squeeze it (imePadding
             // here used to shrink the routes inside the handheld frame's LCD whenever the IME
@@ -368,7 +369,7 @@ fun MainScreen(
             popExitTransition = { fadeOut(tween(250)) },
         ) {
             composable(MappoRoute.APPLICATIONS) {
-                // The profiles browse list — every launchable application; picking one
+                // The layouts browse list — every launchable application; picking one
                 // opens its layouts. No longer the home (2026-08-20): reached as the
                 // "View layouts" fallback when the viewed layout has no bound application.
                 ApplicationsScreen(
@@ -398,17 +399,17 @@ fun MainScreen(
                 LayoutsScreen(
                     appPackage = appPackage,
                     appLabel = appLabel,
-                    profiles = profiles,
-                    activeProfileId = activeProfile?.id,
-                    appBindings = remember(appProfileBindings) {
-                        appProfileBindings.associate { it.packageName to it.profileId }
+                    layouts = allLayouts,
+                    activeLayoutId = activeLayout?.id,
+                    appBindings = remember(appLayoutBindings) {
+                        appLayoutBindings.associate { it.packageName to it.layoutId }
                     },
-                    onSelectLayout = { profile ->
+                    onSelectLayout = { layout ->
                         // Selecting a layout VIEWS it (2026-08-20) — a controls entry
-                        // carrying the profile id — without activating; the controls
+                        // carrying the layout id — without activating; the controls
                         // bar's "Activate layout" does that.
                         navController.navigate(
-                            MappoRoute.remapControls(appPackage, appLabel, profile.id),
+                            MappoRoute.remapControls(appPackage, appLabel, layout.id),
                         ) {
                             launchSingleTop = true
                         }
@@ -416,7 +417,7 @@ fun MainScreen(
                     onBack = { navController.popBackStack() },
                     installedApps = installedApps,
                     onLoadInstalledApps = viewModel::loadInstalledApps,
-                    onCreateProfile = viewModel::createProfile,
+                    onCreateLayout = viewModel::createLayout,
                 )
             }
             composable(
@@ -430,7 +431,7 @@ fun MainScreen(
                         type = NavType.StringType
                         defaultValue = ""
                     },
-                    navArgument(MappoRoute.ARG_PROFILE_ID) {
+                    navArgument(MappoRoute.ARG_LAYOUT_ID) {
                         type = NavType.LongType
                         defaultValue = 0L
                     },
@@ -445,30 +446,30 @@ fun MainScreen(
                 // the home instance follows the active layout (null), a layouts-launched
                 // entry pins the picked one. Popping back re-runs the home's effect, so
                 // the pointer self-heals to "follow active".
-                val profileIdArg = entry.arguments?.getLong(MappoRoute.ARG_PROFILE_ID) ?: 0L
-                val isHomeEntry = profileIdArg == 0L
-                LaunchedEffect(profileIdArg) {
-                    viewModel.setViewingProfile(profileIdArg.takeIf { it != 0L })
+                val layoutIdArg = entry.arguments?.getLong(MappoRoute.ARG_LAYOUT_ID) ?: 0L
+                val isHomeEntry = layoutIdArg == 0L
+                LaunchedEffect(layoutIdArg) {
+                    viewModel.setViewingLayout(layoutIdArg.takeIf { it != 0L })
                 }
                 // The application context: the viewed layout's own parent application
-                // (Profile.packageName, the 2026-08-21 membership model), then the route
+                // (Layout.packageName, the 2026-08-21 membership model), then the route
                 // args, then the auto-switch binding as a legacy fallback for layouts
                 // created before membership landed.
-                val boundPackage = viewedProfile?.id?.let { id ->
-                    appProfileBindings.firstOrNull { it.profileId == id }?.packageName
+                val boundPackage = viewedLayout?.id?.let { id ->
+                    appLayoutBindings.firstOrNull { it.layoutId == id }?.packageName
                 }
                 // Package → active-layout id, for the applications drawer's previews and
                 // the new-layout form.
-                val bindingsByPackage = remember(appProfileBindings) {
-                    appProfileBindings.associate { it.packageName to it.profileId }
+                val bindingsByPackage = remember(appLayoutBindings) {
+                    appLayoutBindings.associate { it.packageName to it.layoutId }
                 }
-                val viewedAppPackage = viewedProfile?.packageName
+                val viewedAppPackage = viewedLayout?.packageName
                     ?: entry.arguments?.getString(MappoRoute.ARG_APP_PACKAGE)?.ifEmpty { null }
                     ?: boundPackage
-                val isActiveLayout = viewedProfile?.id == activeProfile?.id
+                val isActiveLayout = viewedLayout?.id == activeLayout?.id
                 RemapControlsScreen(
                     config = viewedControllerConfig,
-                    profileName = viewedProfile?.name,
+                    layoutName = viewedLayout?.name,
                     viewedAppPackage = viewedAppPackage,
                     // ── Layout settings panel: the layout-scoped entries (the global
                     // options moved to the wordmark drawer) ──
@@ -486,32 +487,35 @@ fun MainScreen(
                     autoSwitchEnabled = autoSwitchEnabled,
                     onAutoSwitchChange = viewModel::setAutoSwitchEnabled,
                     onActivateLayout = {
-                        viewedProfile?.let { viewModel.activateLayoutManually(it) }
+                        viewedLayout?.let { viewModel.activateLayoutManually(it) }
                     },
                     activateWarningSuppressed = activateWarningSuppressed,
                     onSuppressActivateWarning = viewModel::suppressActivateWarning,
                     // ── Side drawers (layouts left 2026-08-21, applications right
                     // 2026-08-25 — both push panes in the controls screen; the routed
-                    // LayoutsScreen and the Profiles browse chain are dormant) ──
-                    profiles = profiles,
-                    activeProfileId = activeProfile?.id,
-                    onPreviewLayout = { id -> viewModel.setViewingProfile(id) },
-                    onActivateLayoutCard = { profile -> viewModel.activateLayoutManually(profile) },
+                    // LayoutsScreen and the Layouts browse chain are dormant) ──
+                    layouts = allLayouts,
+                    activeLayoutId = activeLayout?.id,
+                    onPreviewLayout = { id -> viewModel.setViewingLayout(id) },
+                    onActivateLayoutCard = { layout -> viewModel.activateLayoutManually(layout) },
                     onDrawersClosed = {
                         // The drawers finished closing — revert the controls view to the
                         // active layout/application; scroll previews are transient.
-                        viewModel.setViewingProfile(null)
+                        viewModel.setViewingLayout(null)
                     },
                     onPreviewApplication = { pkg ->
                         // Preview the application's ACTIVE layout (its binding). Apps
                         // with no layouts leave the current preview in place.
-                        bindingsByPackage[pkg]?.let(viewModel::setViewingProfile)
+                        bindingsByPackage[pkg]?.let(viewModel::setViewingLayout)
                     },
                     // ── New-layout flow (the drawer's "+ New layout" card) ──
                     installedApps = installedApps,
                     onLoadInstalledApps = viewModel::loadInstalledApps,
                     appBindings = bindingsByPackage,
-                    onCreateProfile = viewModel::createProfile,
+                    onCreateLayout = viewModel::createLayout,
+                    // ── Active application (first-class, 2026-08-26) ──
+                    activeAppPackage = activeAppPackage,
+                    onActivateApplication = viewModel::activateApplication,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->
@@ -848,12 +852,6 @@ fun MainScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            composable(MappoRoute.AUTO_SWITCH) {
-                AutoSwitchScreen(onBack = { navController.popBackStack() })
-            }
-            composable(MappoRoute.BLOCKLIST) {
-                BlocklistScreen(onBack = { navController.popBackStack() })
-            }
             composable(MappoRoute.THEME_STUDIO) {
                 com.themestudio.ui.ThemeStudioScreen(
                     onClose = { navController.popBackStack() },
@@ -945,10 +943,10 @@ fun MainScreen(
             }
             composable(
                 route = MappoRoute.CONFIGURE_KEYBOARD,
-                arguments = listOf(navArgument(MappoRoute.ARG_LAYOUT_ID) { type = NavType.LongType }),
+                arguments = listOf(navArgument(MappoRoute.ARG_KEY_LAYOUT_ID) { type = NavType.LongType }),
             ) { entry ->
-                val layoutId = entry.arguments?.getLong(MappoRoute.ARG_LAYOUT_ID) ?: return@composable
-                val configuredLayout = layouts.find { it.id == layoutId }
+                val keyLayoutId = entry.arguments?.getLong(MappoRoute.ARG_KEY_LAYOUT_ID) ?: return@composable
+                val configuredLayout = layouts.find { it.id == keyLayoutId }
                 if (configuredLayout == null) {
                     LaunchedEffect(Unit) { navController.popBackStack() }
                     return@composable
@@ -957,11 +955,11 @@ fun MainScreen(
                     layout = configuredLayout,
                     themeFallback = MaterialTheme.colorScheme.surface,
                     onUpdate = { viewModel.updateLayoutInstant(it) },
-                    onTryResize = { cols, rows -> viewModel.tryResizeLayout(layoutId, cols, rows) },
+                    onTryResize = { cols, rows -> viewModel.tryResizeLayout(keyLayoutId, cols, rows) },
                     onApplyResizeWithAutoFit = { cols, rows ->
-                        viewModel.applyResizeWithAutoFit(layoutId, cols, rows)
+                        viewModel.applyResizeWithAutoFit(keyLayoutId, cols, rows)
                     },
-                    onReset = { viewModel.resetKeyboard(layoutId) },
+                    onReset = { viewModel.resetKeyboard(keyLayoutId) },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -1059,12 +1057,6 @@ fun MainScreen(
                     fontDebugEnabled = fontDebugEnabled,
                     onFontDebugChange = { fontDebugEnabled = it },
                     entries = listOf(
-                        RemapOptionEntry("auto_switch", "Auto switch", Icons.Filled.SwapHoriz) {
-                            navController.navigate(MappoRoute.AUTO_SWITCH)
-                        },
-                        RemapOptionEntry("blocklist", "Blocklist", Icons.Filled.Block) {
-                            navController.navigate(MappoRoute.BLOCKLIST)
-                        },
                         RemapOptionEntry("theme_studio", "Theme studio", Icons.Filled.Palette) {
                             navController.navigate(MappoRoute.THEME_STUDIO)
                         },
@@ -1100,8 +1092,8 @@ fun MainScreen(
         // Toast host — the old home Scaffold's snackbarHost slot, rehomed to the
         // window's bottom edge when the d-pad flower home was retired. Only a defensive
         // fallback: with the overlay permission granted these render on the primary
-        // screen instead (see the autoSwitchEvents collector above). The create-profile
-        // prompt banner that shared this slot retired 2026-08-26 — profiles auto-create.
+        // screen instead (see the autoSwitchEvents collector above). The create-layout
+        // prompt banner that shared this slot retired 2026-08-26 — layouts auto-create.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1125,11 +1117,11 @@ fun MainScreen(
 
     TabActionDialogHost(
         state = tabActionDialog,
-        profileName = activeProfile?.name ?: "",
+        layoutName = activeLayout?.name ?: "",
         userTemplates = userTemplates,
         allTemplates = templates,
-        profiles = profiles,
-        activeProfileId = activeProfile?.id,
+        layouts = allLayouts,
+        activeLayoutId = activeLayout?.id,
         onStateChange = { tabActionDialog = it },
         onConfirmRemove = { id -> viewModel.removeKeyboard(id) },
         onSaveAsNewTemplate = { id, templateName ->
@@ -1144,8 +1136,8 @@ fun MainScreen(
         },
         onAddBlankKeyboard = { viewModel.addBlankKeyboard() },
         onAddFromTemplate = { template -> viewModel.addKeyboardFromTemplate(template) },
-        onAddFromProfile = { sourceLayoutId -> viewModel.addKeyboardFromProfile(sourceLayoutId) },
-        fetchProfileLayouts = { profileId -> viewModel.layoutsForProfile(profileId) },
+        onAddFromLayout = { sourceLayoutId -> viewModel.addKeyboardFromLayout(sourceLayoutId) },
+        fetchLayoutKeyboards = { layoutId -> viewModel.keyLayoutsForLayout(layoutId) },
         onConfirmDeleteButton = { id -> viewModel.deleteButton(id) }
     )
     } // end Box

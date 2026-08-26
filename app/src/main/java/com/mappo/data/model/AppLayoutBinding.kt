@@ -5,20 +5,19 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 
 @Entity(
-    tableName = "app_profile_bindings",
-    primaryKeys = ["packageName", "subId"],
+    tableName = "app_layout_bindings",
+    primaryKeys = ["packageName"],
     foreignKeys = [
         ForeignKey(
-            entity = Profile::class,
+            entity = Layout::class,
             parentColumns = ["id"],
-            childColumns = ["profileId"],
+            childColumns = ["layoutId"],
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("profileId")]
+    indices = [Index("layoutId")]
 )
-data class AppProfileBinding(
+data class AppLayoutBinding(
     val packageName: String,
-    val subId: String = "",
-    val profileId: Long
+    val layoutId: Long
 )

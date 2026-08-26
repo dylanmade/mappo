@@ -5,11 +5,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.isGamepadOutput
 import com.mappo.data.model.steam.requiresShizuku
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.LayoutRepository
 import com.mappo.di.ApplicationScope
 import com.mappo.service.input.CompiledConfig
 import com.mappo.service.input.InputDispatcher
@@ -37,20 +37,20 @@ import javax.inject.Singleton
  *  - **Remap toggle is on** ([InputDispatcher.remapEnabled]) — the master kill-
  *    switch users flip with the gamepad button. Off → no Mappo input handling
  *    of any kind, digital or analog.
- *  - **Active profile's compiled config has at least one analog
+ *  - **Active layout's compiled config has at least one analog
  *    [com.mappo.data.model.steam.InputSource]** in the active set or layers
  *    (per [com.mappo.service.input.modes.requiresMotionCapture]).
  *  - **Shizuku connection is `Granted` and the UserService binder is alive**
  *    ([ShizukuConnection.isReadyFlow]).
  *
  * **History.** Pre-Brick-J the predicate also required "foreground app bound to
- * the active profile." That was a leftover from the pre-Shizuku focused-overlay
+ * the active layout." That was a leftover from the pre-Shizuku focused-overlay
  * era: attaching the overlay disrupted IME / back gesture / app-switcher, so we
  * had to gate the overlay's attach behind "we're definitely in a game." With
  * Shizuku, `/dev/input` reads have zero user-visible side effect — the only
- * reason to scope tighter than the active profile would be battery, and `Os.poll`
+ * reason to scope tighter than the active layout would be battery, and `Os.poll`
  * at 250 ms is cheap. Brick J dropped the clause; analog modes now follow the
- * active profile, which itself follows the user's auto-switch / manual choice.
+ * active layout, which itself follows the user's auto-switch / manual choice.
  * **Trade-off:** when the user has Mappo's own activity in the foreground with
  * remap on, stick deflection will fire bindings inside Mappo. Toggle off the
  * gamepad to edit safely. Same workflow as today's keyboard-blocklist nav.
@@ -80,7 +80,7 @@ import javax.inject.Singleton
 @Singleton
 class ShizukuMotionCoordinator @Inject constructor(
     @ApplicationContext private val appContext: Context,
-    private val profileRepository: ProfileRepository,
+    private val layoutRepository: LayoutRepository,
     private val inputDispatcher: InputDispatcher,
     private val inputEvaluator: InputEvaluator,
     private val shizukuConnection: ShizukuConnection,
@@ -91,7 +91,7 @@ class ShizukuMotionCoordinator @Inject constructor(
     private var collectionJob: Job? = null
 
     @Volatile
-    private var lastActiveProfileId: Long? = null
+    private var lastActiveLayoutId: Long? = null
 
     /**
      * Last full predicate breakdown observed. Used to detect the degraded-mode
@@ -114,7 +114,7 @@ class ShizukuMotionCoordinator @Inject constructor(
 
     private val _analogModeWanted = MutableStateFlow(false)
     /**
-     * True iff the user has remap enabled AND the active profile has an analog
+     * True iff the user has remap enabled AND the active layout has an analog
      * mode configured — i.e. the `remapEnabled && analogModeConfigured` partial
      * predicate. The "shizukuReady" clause is intentionally NOT applied here:
      * the health notification fires precisely when the user *wants* analog
@@ -148,14 +148,14 @@ class ShizukuMotionCoordinator @Inject constructor(
         collectionJob = applicationScope.launch {
             try {
                 combine(
-                    profileRepository.activeProfile,
+                    layoutRepository.activeLayout,
                     inputDispatcher.compiledConfig,
                     inputEvaluator.activeSetIdFlow,
                     inputEvaluator.activeLayerIdsFlow,
                     inputDispatcher.remapEnabled,
                     shizukuConnection.isReadyFlow,
                 ) { values ->
-                    val activeProfile = values[0] as Profile?
+                    val activeLayout = values[0] as Layout?
                     val compiled = values[1] as CompiledConfig
                     val activeSetId = values[2] as Long
                     @Suppress("UNCHECKED_CAST")
@@ -163,16 +163,16 @@ class ShizukuMotionCoordinator @Inject constructor(
                     val remapEnabled = values[4] as Boolean
                     val shizukuReady = values[5] as Boolean
 
-                    val activeProfileId = activeProfile?.id
-                    // Flush analog state on profile switch so synthetic dpad
-                    // edges + Mouse Joystick velocity from the prior profile
+                    val activeLayoutId = activeLayout?.id
+                    // Flush analog state on layout switch so synthetic dpad
+                    // edges + Mouse Joystick velocity from the prior layout
                     // don't leak across the boundary. `InputEvaluator.flushAnalog`
                     // covers both: latched synthetic edges (Brick 5) AND
                     // MouseEmitter velocity slots (Brick J).
-                    if (activeProfileId != lastActiveProfileId) {
-                        Log.d(TAG, "active profile switched $lastActiveProfileId → $activeProfileId; flushing analog state")
+                    if (activeLayoutId != lastActiveLayoutId) {
+                        Log.d(TAG, "active layout switched $lastActiveLayoutId → $activeLayoutId; flushing analog state")
                         inputEvaluator.flushAnalog()
-                        lastActiveProfileId = activeProfileId
+                        lastActiveLayoutId = activeLayoutId
                     }
                     evaluatePredicate(
                         compiled = compiled,

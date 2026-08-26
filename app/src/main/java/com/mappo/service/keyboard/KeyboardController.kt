@@ -9,8 +9,8 @@ import com.mappo.data.model.onDoubleTapTarget
 import com.mappo.data.model.onHoldTarget
 import com.mappo.data.model.onTapTarget
 import com.mappo.data.model.toGridLayout
+import com.mappo.data.repository.KeyLayoutRepository
 import com.mappo.data.repository.LayoutRepository
-import com.mappo.data.repository.ProfileRepository
 import com.mappo.di.IoDispatcher
 import com.mappo.service.input.InputDispatcher
 import kotlinx.collections.immutable.ImmutableList
@@ -49,16 +49,16 @@ import javax.inject.Singleton
  * + overlay would otherwise produce divergent state).
  *
  * **What this owns (source of truth):**
- *  - `layouts` — the active profile's layouts in order. Auto-loaded from
- *    `LayoutRepository` whenever the active profile changes.
+ *  - `layouts` — the active layout's layouts in order. Auto-loaded from
+ *    `KeyLayoutRepository` whenever the active layout changes.
  *  - `selectedIndex` — which tab is selected.
  *  - `displayLayout` (FC1 seam — `StateFlow<GridLayout?>`) — the rendered grid.
- *    Today's resolver is `(profile, selectedIndex) → GridLayout`. Tomorrow's
- *    `(profile, activeActionSet, activeActionLayer) → GridLayout` is a local swap.
+ *    Today's resolver is `(layout, selectedIndex) → GridLayout`. Tomorrow's
+ *    `(layout, activeActionSet, activeActionLayer) → GridLayout` is a local swap.
  *  - `tabs` (FC1 seam — `List<KeyboardTab>`) — opaque tab descriptors, not
  *    `List<Layout>`. Same reasoning as `displayLayout`.
  *  - `remapEnabled` — global remap-toggle flag, mirrored into [InputDispatcher].
- *  - `activeProfileId` — convenience projection of the profile-repo's active flow.
+ *  - `activeLayoutId` — convenience projection of the layout-repo's active flow.
  *
  * **What this does NOT own (stays in [com.mappo.ui.viewmodel.MainViewModel]):**
  *  - Edit-mode UI state (`selectedButtonId`, `editingLayoutId`, tab context menus,
@@ -78,8 +78,8 @@ import javax.inject.Singleton
 @Singleton
 class KeyboardController @Inject constructor(
     private val inputDispatcher: InputDispatcher,
+    private val keyLayoutRepository: KeyLayoutRepository,
     private val layoutRepository: LayoutRepository,
-    private val profileRepository: ProfileRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
 
@@ -119,7 +119,7 @@ class KeyboardController @Inject constructor(
         .map { layouts -> layouts.map { KeyboardTab(it.id, it.name) }.toImmutableList() }
         .stateIn(scope, SharingStarted.Eagerly, persistentListOf())
 
-    val activeProfileId: StateFlow<Long?> = profileRepository.activeProfile
+    val activeLayoutId: StateFlow<Long?> = layoutRepository.activeLayout
         .map { it?.id }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
@@ -141,12 +141,12 @@ class KeyboardController @Inject constructor(
         // Single subscription per process (we're @Singleton) — both activity and
         // overlay read the same StateFlow.
         scope.launch {
-            profileRepository.activeProfile
+            layoutRepository.activeLayout
                 .filterNotNull()
-                .flatMapLatest { profile ->
+                .flatMapLatest { layout ->
                     flow {
-                        layoutRepository.seedDefaultsIfEmpty(profile.id)
-                        emitAll(layoutRepository.getLayoutsByProfile(profile.id))
+                        keyLayoutRepository.seedDefaultsIfEmpty(layout.id)
+                        emitAll(keyLayoutRepository.getKeyLayoutsByLayout(layout.id))
                     }
                 }
                 .collect { roomLayouts ->

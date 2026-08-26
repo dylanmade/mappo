@@ -907,7 +907,7 @@ class CompiledConfigTest {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun sampleControllerProfile() = ControllerProfile(
-        id = 1L, profileId = 1L,
+        id = 1L, layoutId = 1L,
         controllerType = ControllerType.GENERIC_ANDROID,
         name = "Default",
     )

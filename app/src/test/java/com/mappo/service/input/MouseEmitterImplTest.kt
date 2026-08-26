@@ -178,7 +178,7 @@ class MouseEmitterImplTest {
     fun clearDoesNotEndSession_keepsFingerDownAtCenter() {
         // Session stays alive across stick release so Wine doesn't see an
         // ACTION_UP (which it could interpret as a click). Session ends
-        // only on clearAllVelocities (profile / action-set switch).
+        // only on clearAllVelocities (layout / action-set switch).
         subject.setStickAbsoluteTarget(InputSource.LEFT_JOYSTICK, 0.9f, 0.5f)
         subject.clearStickAbsoluteTarget(InputSource.LEFT_JOYSTICK)
         verify(exactly = 0) { dispatcher.endContinuousCursor() }

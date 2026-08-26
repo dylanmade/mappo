@@ -45,9 +45,9 @@ class AutoSwitchSettingsTest {
     }
 
     @Test
-    fun defaults_autoSwitchAndAutoCreateOn_blocklistSeededWithLaunchers() {
-        assertTrue(settings.autoSwitchEnabled.value)
-        assertTrue(settings.autoCreateProfilesEnabled.value)
+    fun defaults_autoSwitchOff_blocklistSeededWithLaunchers() {
+        // Auto-switch ships OFF until the user opts in via the bar's Auto switch.
+        assertFalse(settings.autoSwitchEnabled.value)
         // Seed includes AOSP launcher3 and Pixel Launcher; spot-check both.
         assertTrue(
             "com.android.launcher3 should be seeded into the blocklist",
@@ -82,15 +82,6 @@ class AutoSwitchSettingsTest {
         // New instance reading the same prefs should see the persisted value.
         val reread = AutoSwitchSettings(ApplicationProvider.getApplicationContext())
         assertFalse(reread.autoSwitchEnabled.value)
-    }
-
-    @Test
-    fun setAutoCreateProfilesEnabled_persistsAndUpdatesFlow() {
-        settings.setAutoCreateProfilesEnabled(false)
-        assertFalse(settings.autoCreateProfilesEnabled.value)
-
-        val reread = AutoSwitchSettings(ApplicationProvider.getApplicationContext())
-        assertFalse(reread.autoCreateProfilesEnabled.value)
     }
 
     @Test

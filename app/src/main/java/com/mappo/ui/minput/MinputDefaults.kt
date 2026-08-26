@@ -331,7 +331,7 @@ val MinputIconButtonSize = 24.dp
 val MinputIconButtonIconSize = 16.dp
 
 // ── Panel anatomy: header + divider + content ────────────────────────────────────────────
-// The shared skeleton of the full-screen panel surfaces (the remap profile/options panels,
+// The shared skeleton of the full-screen panel surfaces (the remap layout/options panels,
 // the group editor): a fixed-height header row, a horizontal divider, then content. Every
 // surface with this anatomy pulls these values so the family stays in lockstep.
 

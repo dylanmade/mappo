@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
@@ -94,10 +94,10 @@ import kotlinx.collections.immutable.ImmutableList
 internal fun LayoutsDrawerPane(
     open: Boolean,
     appPackage: String?,
-    profiles: ImmutableList<Profile>,
-    activeProfileId: Long?,
+    layouts: ImmutableList<Layout>,
+    activeLayoutId: Long?,
     onPreviewLayout: (Long) -> Unit,
-    onActivateLayout: (Profile) -> Unit,
+    onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
     onFullyClosed: () -> Unit,
     modifier: Modifier = Modifier,
@@ -110,8 +110,8 @@ internal fun LayoutsDrawerPane(
     ) {
         LayoutsDrawerContent(
             appPackage = appPackage,
-            profiles = profiles,
-            activeProfileId = activeProfileId,
+            layouts = layouts,
+            activeLayoutId = activeLayoutId,
             onPreviewLayout = onPreviewLayout,
             onActivateLayout = onActivateLayout,
             onNewLayout = onNewLayout,
@@ -185,10 +185,10 @@ internal fun SideDrawerShell(
 @Composable
 private fun LayoutsDrawerContent(
     appPackage: String?,
-    profiles: ImmutableList<Profile>,
-    activeProfileId: Long?,
+    layouts: ImmutableList<Layout>,
+    activeLayoutId: Long?,
     onPreviewLayout: (Long) -> Unit,
-    onActivateLayout: (Profile) -> Unit,
+    onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
 ) {
     // Live name filter — local so a fresh open starts clean isn't wanted here: the drawer
@@ -242,18 +242,18 @@ private fun LayoutsDrawerContent(
             }
         }
 
-        // Category assembly. Membership = Profile.packageName (2026-08-21 model). No app
+        // Category assembly. Membership = Layout.packageName (2026-08-21 model). No app
         // context → every layout under Installed. Community stays empty until sharing
         // lands. (The Default category retired with the default-layout concept —
         // 2026-08-24: the active layout IS the app's functional default.)
         val children = if (appPackage != null) {
-            profiles.filter { it.packageName == appPackage }
-        } else profiles
+            layouts.filter { it.packageName == appPackage }
+        } else layouts
         val trimmed = query.trim()
         val filtered = if (trimmed.isEmpty()) children
         else children.filter { it.name.contains(trimmed, ignoreCase = true) }
         val installed = filtered.sortedWith(sort.comparator)
-        val community = emptyList<Profile>()
+        val community = emptyList<Layout>()
 
         // Preview triggers are DELIBERATE only (2026-08-26): card focus (d-pad, via
         // each card's focus observer) or tap — the scroll-position-driven preview
@@ -271,12 +271,12 @@ private fun LayoutsDrawerContent(
                 bottom = PanelContentPadding,
             ),
         ) {
-            drawerSection("Installed", installed, emptyHint = "No layouts yet") { profile ->
+            drawerSection("Installed", installed, emptyHint = "No layouts yet") { layout ->
                 LayoutCard(
-                    profile = profile,
-                    active = profile.id == activeProfileId,
-                    onPreview = { onPreviewLayout(profile.id) },
-                    onActivate = { onActivateLayout(profile) },
+                    layout = layout,
+                    active = layout.id == activeLayoutId,
+                    onPreview = { onPreviewLayout(layout.id) },
+                    onActivate = { onActivateLayout(layout) },
                 )
             }
             // Always the Installed section's last card — the empty "+ New layout" card
@@ -285,12 +285,12 @@ private fun LayoutsDrawerContent(
             item(key = "new-layout", contentType = "new") {
                 NewLayoutCard(onClick = onNewLayout)
             }
-            drawerSection("Community", community, emptyHint = "No community layouts yet") { profile ->
+            drawerSection("Community", community, emptyHint = "No community layouts yet") { layout ->
                 LayoutCard(
-                    profile = profile,
-                    active = profile.id == activeProfileId,
-                    onPreview = { onPreviewLayout(profile.id) },
-                    onActivate = { onActivateLayout(profile) },
+                    layout = layout,
+                    active = layout.id == activeLayoutId,
+                    onPreview = { onPreviewLayout(layout.id) },
+                    onActivate = { onActivateLayout(layout) },
                 )
             }
         }
@@ -300,9 +300,9 @@ private fun LayoutsDrawerContent(
 /** One category of the card list: overline header, then cards (or a muted empty hint). */
 private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
     title: String,
-    sectionProfiles: List<Profile>,
+    sectionLayouts: List<Layout>,
     emptyHint: String,
-    card: @Composable (Profile) -> Unit,
+    card: @Composable (Layout) -> Unit,
 ) {
     item(key = "header:$title", contentType = "header") {
         Text(
@@ -312,7 +312,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
             modifier = Modifier.padding(top = MinputPanelDividerContentGap),
         )
     }
-    if (sectionProfiles.isEmpty()) {
+    if (sectionLayouts.isEmpty()) {
         item(key = "empty:$title", contentType = "empty") {
             Text(
                 text = emptyHint,
@@ -322,7 +322,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
             )
         }
     } else {
-        items(sectionProfiles, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { card(it) }
+        items(sectionLayouts, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { card(it) }
     }
 }
 
@@ -337,7 +337,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
  */
 @Composable
 private fun LayoutCard(
-    profile: Profile,
+    layout: Layout,
     active: Boolean,
     onPreview: () -> Unit,
     onActivate: () -> Unit,
@@ -365,7 +365,7 @@ private fun LayoutCard(
             .clickable(
                 interactionSource = interaction,
                 indication = minputIndication(),
-                onClickLabel = "Activate ${profile.name}",
+                onClickLabel = "Activate ${layout.name}",
                 onClick = onActivate,
             ),
     ) {
@@ -373,14 +373,14 @@ private fun LayoutCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = profile.name,
+                        text = layout.name,
                         style = minputMiniTextStyle(),
                         color = primaryContent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = profile.author.ifEmpty { "You" },
+                        text = layout.author.ifEmpty { "You" },
                         style = minputMicroTextStyle(),
                         color = secondaryContent,
                         maxLines = 1,
@@ -398,7 +398,7 @@ private fun LayoutCard(
                     )
                     Spacer(Modifier.width(LikeCountGap))
                     Text(
-                        text = profile.likeCount.toString(),
+                        text = layout.likeCount.toString(),
                         style = minputMicroTextStyle(),
                         color = secondaryContent,
                         maxLines = 1,
@@ -410,7 +410,7 @@ private fun LayoutCard(
                 Text(
                     // Two lines are always reserved (minLines) so card heights stay
                     // uniform whether or not a description exists.
-                    text = profile.description.ifBlank { PlaceholderDescription },
+                    text = layout.description.ifBlank { PlaceholderDescription },
                     style = minputMicroTextStyle().copy(fontStyle = FontStyle.Italic),
                     color = secondaryContent,
                     minLines = 2,
@@ -468,11 +468,11 @@ private fun NewLayoutCard(onClick: () -> Unit) {
  * first — the dormant layouts view's precedent), and [LIKES] ties at zero until community
  * sharing brings real counts, so recency breaks the tie.
  */
-internal enum class LayoutSort(val label: String, val comparator: Comparator<Profile>) {
-    RECENT("Recent", compareByDescending<Profile> { it.id }),
-    LIKES("Likes", compareByDescending<Profile> { it.likeCount }.thenByDescending { it.id }),
-    A_TO_Z("A to Z", compareBy<Profile> { it.name.lowercase() }),
-    Z_TO_A("Z to A", compareByDescending<Profile> { it.name.lowercase() }),
+internal enum class LayoutSort(val label: String, val comparator: Comparator<Layout>) {
+    RECENT("Recent", compareByDescending<Layout> { it.id }),
+    LIKES("Likes", compareByDescending<Layout> { it.likeCount }.thenByDescending { it.id }),
+    A_TO_Z("A to Z", compareBy<Layout> { it.name.lowercase() }),
+    Z_TO_A("Z to A", compareByDescending<Layout> { it.name.lowercase() }),
 }
 
 /** Lucide's heart, FILLED: the lucide-icons port ships stroke-only glyphs, so the filled

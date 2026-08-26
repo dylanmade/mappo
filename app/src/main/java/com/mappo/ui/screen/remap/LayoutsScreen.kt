@@ -36,7 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
@@ -55,7 +55,7 @@ import kotlinx.collections.immutable.ImmutableList
  * sharing brings real like counts. [naturalAscending] is the direction each sort resets
  * to when picked — the direction toggle flips from there.
  */
-internal enum class ProfileSort(val label: String, val naturalAscending: Boolean) {
+internal enum class LayoutsScreenSort(val label: String, val naturalAscending: Boolean) {
     RECENT("Recent", naturalAscending = false),
     LIKES("Likes", naturalAscending = false),
     NAME("A to Z", naturalAscending = true),
@@ -66,10 +66,10 @@ internal enum class ProfileSort(val label: String, val naturalAscending: Boolean
 private enum class LayoutsModal { ADD, OPTIONS }
 
 /**
- * The layouts view for ONE application (UI label "layouts"; the code keeps the Profile
+ * The layouts view for ONE application (UI label "layouts"; the code keeps the Layout
  * names) — the middle of the applications → layouts → controls browse chain (2026-08-14).
- * Rebuilt on the Profiles view's anatomy: the shared browse-chain top bar (back arrow · the
- * profile's application icon · "<profile> - Layouts" · Add/Tune utilities), search + sort +
+ * Rebuilt on the Layouts view's anatomy: the shared browse-chain top bar (back arrow · the
+ * layout's application icon · "<layout> - Layouts" · Add/Tune utilities), search + sort +
  * direction row, then the layout tiles. Only child layouts of [appPackage] (associated via auto-switch bindings)
  * are listed; selecting one opens its controls view for VIEWING (2026-08-20 — activation
  * moved to the controls bar's "Activate layout").
@@ -78,14 +78,14 @@ private enum class LayoutsModal { ADD, OPTIONS }
 fun LayoutsScreen(
     appPackage: String,
     appLabel: String,
-    profiles: ImmutableList<Profile>,
-    activeProfileId: Long?,
+    layouts: ImmutableList<Layout>,
+    activeLayoutId: Long?,
     appBindings: Map<String, Long>,
-    onSelectLayout: (Profile) -> Unit,
+    onSelectLayout: (Layout) -> Unit,
     onBack: () -> Unit,
     installedApps: List<InstalledApp>,
     onLoadInstalledApps: () -> Unit,
-    onCreateProfile: (name: String, packages: Set<String>) -> Unit,
+    onCreateLayout: (name: String, packageName: String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var openModal by remember { mutableStateOf<LayoutsModal?>(null) }
@@ -93,8 +93,8 @@ fun LayoutsScreen(
     BackHandler { if (openModal != null) openModal = null else onBack() }
     // Live name filter + sort — local so a fresh visit starts clean.
     var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(ProfileSort.RECENT) }
-    var ascending by remember { mutableStateOf(ProfileSort.RECENT.naturalAscending) }
+    var sort by remember { mutableStateOf(LayoutsScreenSort.RECENT) }
+    var ascending by remember { mutableStateOf(LayoutsScreenSort.RECENT.naturalAscending) }
     // The Add form's app picker needs the installed list — start the (cached, one-shot)
     // load with the view so the modal never pops in empty.
     LaunchedEffect(Unit) { onLoadInstalledApps() }
@@ -107,7 +107,7 @@ fun LayoutsScreen(
         // surface — the screen's content plane.
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize()) {
-                // The shared browse-chain bar: back to the profiles home, the profile's
+                // The shared browse-chain bar: back to the layouts home, the layout's
                 // application icon, then its utilities.
                 RemapTopBar(
                     overline = "$appLabel Layouts",
@@ -155,17 +155,17 @@ fun LayoutsScreen(
                     MinputPillDropdown(
                         current = sort,
                         elevated = true,
-                        options = ProfileSort.entries,
+                        options = LayoutsScreenSort.entries,
                         optionLabel = { it.label },
                         onPick = { sort = it; ascending = it.naturalAscending },
                         onClickLabel = "Sort layouts",
                     )
                     SortDirectionButton(ascending = ascending, onToggle = { ascending = !ascending })
                 }
-                // Child layouts only: profiles bound (via auto-switch bindings) to this app.
-                val packagesByProfile = appBindings.entries.groupBy({ it.value }, { it.key })
-                val children = profiles.filter {
-                    packagesByProfile[it.id]?.contains(appPackage) == true
+                // Child layouts only: layouts bound (via auto-switch bindings) to this app.
+                val packagesByLayout = appBindings.entries.groupBy({ it.value }, { it.key })
+                val children = layouts.filter {
+                    packagesByLayout[it.id]?.contains(appPackage) == true
                 }
                 val trimmed = query.trim()
                 val filtered = if (trimmed.isEmpty()) {
@@ -175,11 +175,11 @@ fun LayoutsScreen(
                 }
                 val comparator = when (sort) {
                     // No last-used tracking yet — "Recent" approximates with creation recency.
-                    ProfileSort.RECENT -> compareBy<Profile> { it.id }
+                    LayoutsScreenSort.RECENT -> compareBy<Layout> { it.id }
                     // Placeholder until community sharing brings real like counts —
                     // everything ties at zero, so recency breaks the tie.
-                    ProfileSort.LIKES -> compareBy<Profile> { profileLikes(it) }.thenBy { it.id }
-                    ProfileSort.NAME -> compareBy { it.name.lowercase() }
+                    LayoutsScreenSort.LIKES -> compareBy<Layout> { layoutLikes(it) }.thenBy { it.id }
+                    LayoutsScreenSort.NAME -> compareBy { it.name.lowercase() }
                 }
                 val displayed = filtered.sortedWith(if (ascending) comparator else comparator.reversed())
                 LazyColumn(
@@ -198,7 +198,7 @@ fun LayoutsScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = if (children.isEmpty()) "No layouts for this profile yet"
+                                    text = if (children.isEmpty()) "No layouts for this layout yet"
                                     else "No layouts match",
                                     style = minputMiniTextStyle(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -206,11 +206,11 @@ fun LayoutsScreen(
                             }
                         }
                     }
-                    items(displayed, key = { it.id }) { profile ->
+                    items(displayed, key = { it.id }) { layout ->
                         LayoutTileRow(
-                            profile = profile,
-                            active = profile.id == activeProfileId,
-                            onClick = { onSelectLayout(profile) },
+                            layout = layout,
+                            active = layout.id == activeLayoutId,
+                            onClick = { onSelectLayout(layout) },
                         )
                     }
                 }
@@ -222,32 +222,28 @@ fun LayoutsScreen(
         MinputModal(
             open = openModal == LayoutsModal.ADD,
             onDismiss = { openModal = null },
-            height = AddProfileModalHeight,
+            height = AddLayoutModalHeight,
             focusSeat = addModalCloseFocus,
             testTag = "layouts-modal:ADD",
             modifier = Modifier.matchParentSize(),
         ) {
-            AddProfileModalContent(
-                profiles = profiles,
-                installedApps = installedApps,
-                appBindings = appBindings,
-                onLoadInstalledApps = onLoadInstalledApps,
-                onCreateProfile = onCreateProfile,
+            AddLayoutModalContent(
+                // A layout belongs to ONE application — this view's (2026-08-26).
+                applicationLabel = appLabel,
+                onCreate = { name -> onCreateLayout(name, appPackage) },
                 onClose = { openModal = null },
-                // New layouts default to children of this view's application.
-                initialPackages = setOf(appPackage),
                 closeFocusRequester = addModalCloseFocus,
             )
         }
         MinputModal(
             open = openModal == LayoutsModal.OPTIONS,
             onDismiss = { openModal = null },
-            height = ProfileOptionsModalHeight,
+            height = LayoutOptionsModalHeight,
             focusSeat = optionsModalCloseFocus,
             testTag = "layouts-modal:OPTIONS",
             modifier = Modifier.matchParentSize(),
         ) {
-            ProfileOptionsModalContent(
+            LayoutOptionsModalContent(
                 onClose = { openModal = null },
                 closeFocusRequester = optionsModalCloseFocus,
             )
@@ -262,7 +258,7 @@ fun LayoutsScreen(
  */
 @Composable
 private fun LayoutTileRow(
-    profile: Profile,
+    layout: Layout,
     active: Boolean,
     onClick: () -> Unit,
 ) {
@@ -280,7 +276,7 @@ private fun LayoutTileRow(
         }
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
-            text = profile.name,
+            text = layout.name,
             style = minputMiniTextStyle(),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -294,12 +290,12 @@ private fun LayoutTileRow(
             modifier = Modifier.widthIn(max = TileAuthorMaxWidth),
         )
         Spacer(Modifier.width(MinputPillContentPadding))
-        TileMetaColumn(label = "Likes", value = profileLikes(profile).toString())
+        TileMetaColumn(label = "Likes", value = layoutLikes(layout).toString())
     }
 }
 
 /** Like count for a layout — a constant until community sharing brings real counts. */
-private fun profileLikes(@Suppress("UNUSED_PARAMETER") profile: Profile): Int = 0
+private fun layoutLikes(@Suppress("UNUSED_PARAMETER") layout: Layout): Int = 0
 
 /**
  * One overline-labeled metadata attribute on a layout tile (Author, Likes) — label stacked

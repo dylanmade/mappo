@@ -140,7 +140,7 @@ class TriggerModeSoftPressTest {
     fun missingSettingsKeys_fallBackToSteamDefaults() {
         // Brick 4 / Brick 5 install seeded `click_threshold` only — verify the parser
         // tolerates the older shape (no `soft_threshold` / `soft_hysteresis` keys)
-        // and applies the Steam defaults so a profile created before this brick
+        // and applies the Steam defaults so a layout created before this brick
         // still gets working soft-press out of the box.
         val legacy = """{"click_threshold":0.95}"""
         TriggerMode.evaluate(reading(0.15f), ctx(priorLatched = false, legacy), emit, MouseEmitter.NOOP)

@@ -49,7 +49,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Reads + mutates the Steam-Input-style binding graph for a given [com.mappo.data.model.Profile].
+ * Reads + mutates the Steam-Input-style binding graph for a given [com.mappo.data.model.Layout].
  *
  * Lifecycle:
  *  - [observeActiveConfig] auto-seeds a default config if none exists, so the UI
@@ -80,27 +80,27 @@ class ControllerConfigRepository @Inject constructor(
     private val configDirtyTick = MutableStateFlow(0L)
 
     /**
-     * Ensures the given profile has a [ControllerProfile]. Returns the active
+     * Ensures the given layout has a [ControllerProfile]. Returns the active
      * controller_profile's id (either pre-existing or newly seeded).
      */
-    suspend fun ensureSeeded(profileId: Long): Long {
-        controllerProfileDao.getByProfile(profileId).firstOrNull()?.let { return it.id }
-        return seedDefaultConfig(profileId)
+    suspend fun ensureSeeded(layoutId: Long): Long {
+        controllerProfileDao.getByLayout(layoutId).firstOrNull()?.let { return it.id }
+        return seedDefaultConfig(layoutId)
     }
 
     /**
-     * Seeds a default Steam-Input-style config under [profileId]:
+     * Seeds a default Steam-Input-style config under [layoutId]:
      * one Generic Android controller_profile, one "Default" action_set,
      * one binding_group per default input source, default activators (FULL_PRESS)
      * with [BindingOutputType.UNBOUND] bindings.
      *
-     * Caller is responsible for ensuring no controller_profile exists for [profileId]
+     * Caller is responsible for ensuring no controller_profile exists for [layoutId]
      * already; otherwise this creates a second one.
      */
-    suspend fun seedDefaultConfig(profileId: Long): Long {
+    suspend fun seedDefaultConfig(layoutId: Long): Long {
         val controllerProfileId = controllerProfileDao.insert(
             ControllerProfile(
-                profileId = profileId,
+                layoutId = layoutId,
                 controllerType = ControllerType.GENERIC_ANDROID,
                 name = "Default",
                 legacySet = true,
@@ -196,12 +196,12 @@ class ControllerConfigRepository @Inject constructor(
 
     /**
      * Persist a translated [ImportedConfig] (from `com.mappo.data.io.vdf.VdfImporter`)
-     * as a new [ControllerProfile] under [profileId]. Returns the new
+     * as a new [ControllerProfile] under [layoutId]. Returns the new
      * controller_profile id.
      *
      * Walks the id-free import model inserting entities in dependency order, so every
      * row gets a fresh Room id (`feedback_duplicates_own_their_data`) — the imported
-     * config is independently addressable and never shares ids with another profile.
+     * config is independently addressable and never shares ids with another layout.
      *
      * **Mode shifts** are wired in a second pass: a `mode_shift` VDF command became an
      * [ImportedCommand.ModeShiftTrigger]; we collect those during the walk and, once
@@ -220,10 +220,10 @@ class ControllerConfigRepository @Inject constructor(
      * key the runtime ignores), and remapping `CHANGE_PRESET` / `add_layer` argument ids
      * from VDF-preset space to Mappo Room ids.
      */
-    suspend fun importConfig(profileId: Long, imported: ImportedConfig): Long {
+    suspend fun importConfig(layoutId: Long, imported: ImportedConfig): Long {
         val controllerProfileId = controllerProfileDao.insert(
             ControllerProfile(
-                profileId = profileId,
+                layoutId = layoutId,
                 controllerType = imported.controllerType,
                 name = imported.title,
                 legacySet = imported.isLegacyRawBindings,
@@ -424,7 +424,7 @@ class ControllerConfigRepository @Inject constructor(
      * no-op once every set has been retrofitted. Generic for the next time we
      * add an input source to the seed table (gyro was the first such addition
      * after D.3 enabled the runtime), so we don't repeatedly rediscover the
-     * "user's pre-existing profile shows no picker for the new source"
+     * "user's pre-existing layout shows no picker for the new source"
      * problem.
      *
      * Compares each action set's `active`-state PresetBindings to the seed
@@ -928,15 +928,15 @@ class ControllerConfigRepository @Inject constructor(
     }
 
     /**
-     * Observe the active config for [profileId]. Auto-seeds if none exists.
+     * Observe the active config for [layoutId]. Auto-seeds if none exists.
      * Emits null only while seeding is in flight on first subscription
      * (transient — the next emission carries the seeded config).
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun observeActiveConfig(profileId: Long): Flow<ControllerConfig?> = flow {
-        ensureSeeded(profileId)
+    fun observeActiveConfig(layoutId: Long): Flow<ControllerConfig?> = flow {
+        ensureSeeded(layoutId)
         // Retrofit any DEFAULT_INPUT_SOURCE_SEEDS entries that were added to the
-        // table after this profile's action sets were first seeded (e.g. GYRO,
+        // table after this layout's action sets were first seeded (e.g. GYRO,
         // added 2026-05-31 after D.3 lit up the gyro runtime). Idempotent —
         // no-op once every set has every seed. Runs before the first emission
         // so the consumer's compiled config sees the retrofitted groups on the
@@ -944,39 +944,39 @@ class ControllerConfigRepository @Inject constructor(
         ensureSeededInputSources()
         emitAll(
             combine(
-                controllerProfileDao.observeByProfile(profileId)
-                    .map { profiles -> profiles.firstOrNull() }
+                controllerProfileDao.observeByProfile(layoutId)
+                    .map { layouts -> layouts.firstOrNull() }
                     .distinctUntilChanged { a, b -> a?.id == b?.id },
                 configDirtyTick,
-            ) { activeProfile, _ -> activeProfile }
-                .flatMapLatest { activeProfile ->
-                    if (activeProfile == null) flowOf<ControllerConfig?>(null)
-                    else flow { emit(loadConfigSnapshot(activeProfile)) }
+            ) { activeLayout, _ -> activeLayout }
+                .flatMapLatest { activeLayout ->
+                    if (activeLayout == null) flowOf<ControllerConfig?>(null)
+                    else flow { emit(loadConfigSnapshot(activeLayout)) }
                 }
         )
     }
 
     /** One-shot read of the active config, or null if none exists yet. */
-    suspend fun getActiveConfigOnce(profileId: Long): ControllerConfig? {
-        val cp = controllerProfileDao.getByProfile(profileId).firstOrNull() ?: return null
+    suspend fun getActiveConfigOnce(layoutId: Long): ControllerConfig? {
+        val cp = controllerProfileDao.getByLayout(layoutId).firstOrNull() ?: return null
         return loadConfigSnapshot(cp)
     }
 
     /**
      * Deep-clone every [ControllerProfile] under [sourceProfileId] into [destProfileId].
-     * No-op when the source has no controller_profile (e.g., fresh profile that hasn't been
+     * No-op when the source has no controller_profile (e.g., fresh layout that hasn't been
      * observed yet — the dest will auto-seed on first observation, same as the source would).
      *
      * Per feedback_duplicates_own_their_data, each cloned row gets a fresh autogenerated id
      * via `.copy(id = 0)` so the duplicate is independently addressable.
      */
     suspend fun copyConfig(sourceProfileId: Long, destProfileId: Long) {
-        val sourceControllerProfiles = controllerProfileDao.getByProfile(sourceProfileId)
+        val sourceControllerProfiles = controllerProfileDao.getByLayout(sourceProfileId)
         if (sourceControllerProfiles.isEmpty()) return
 
         for (sourceCp in sourceControllerProfiles) {
             val newCpId = controllerProfileDao.insert(
-                sourceCp.copy(id = 0, profileId = destProfileId)
+                sourceCp.copy(id = 0, layoutId = destProfileId)
             )
 
             val sourceSets = actionSetDao.getByControllerProfile(sourceCp.id)
@@ -1708,7 +1708,7 @@ class ControllerConfigRepository @Inject constructor(
             // KEYCODE_BUTTON_L2 / R2) and "soft_pull" (analog soft-pull,
             // fired via TriggerMode.evaluate's hysteresis on the Shizuku
             // motion stream). The mode defaults to DEVICE_DEFAULT on a fresh
-            // profile; switching to TRIGGER mode is what activates both rows.
+            // layout; switching to TRIGGER mode is what activates both rows.
             InputSource.LEFT_TRIGGER to InputSourceSeed(
                 "left_trigger", BindingMode.DEVICE_DEFAULT, listOf("full_pull", "soft_pull"),
             ),

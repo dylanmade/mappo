@@ -79,10 +79,10 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun ensureSeeded_freshProfile_createsDefaultControllerProfile() = runTest {
-        val cpId = subject.ensureSeeded(profileId = 1L)
+        val cpId = subject.ensureSeeded(layoutId = 1L)
 
         assertTrue("Expected positive auto-gen id", cpId > 0)
-        val stored = controllerProfileDao.getByProfile(1L)
+        val stored = controllerProfileDao.getByLayout(1L)
         assertEquals(1, stored.size)
         assertEquals(ControllerType.GENERIC_ANDROID, stored[0].controllerType)
         assertEquals("Default", stored[0].name)
@@ -91,26 +91,26 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun ensureSeeded_calledTwice_doesNotDuplicate() = runTest {
-        val first = subject.ensureSeeded(profileId = 1L)
-        val second = subject.ensureSeeded(profileId = 1L)
+        val first = subject.ensureSeeded(layoutId = 1L)
+        val second = subject.ensureSeeded(layoutId = 1L)
 
         assertEquals(first, second)
-        assertEquals(1, controllerProfileDao.getByProfile(1L).size)
+        assertEquals(1, controllerProfileDao.getByLayout(1L).size)
     }
 
     @Test
     fun ensureSeeded_differentProfiles_areIsolated() = runTest {
-        val a = subject.ensureSeeded(profileId = 1L)
-        val b = subject.ensureSeeded(profileId = 2L)
+        val a = subject.ensureSeeded(layoutId = 1L)
+        val b = subject.ensureSeeded(layoutId = 2L)
 
-        assertFalse("Each profile gets its own controller_profile id", a == b)
-        assertEquals(1, controllerProfileDao.getByProfile(1L).size)
-        assertEquals(1, controllerProfileDao.getByProfile(2L).size)
+        assertFalse("Each layout gets its own controller_profile id", a == b)
+        assertEquals(1, controllerProfileDao.getByLayout(1L).size)
+        assertEquals(1, controllerProfileDao.getByLayout(2L).size)
     }
 
     @Test
     fun seedDefaultConfig_createsOneActionSet() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val sets = actionSetDao.getByControllerProfile(cpId)
         assertEquals(1, sets.size)
         assertEquals("Default", sets[0].title)
@@ -119,7 +119,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun seedDefaultConfig_createsBindingGroupForEverySeededInputSource() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
 
         val expectedSources = setOf(
             InputSource.BUTTON_DIAMOND,
@@ -140,7 +140,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun seedDefaultConfig_buttonDiamondGroup_hasButtonPadModeWithFourInputs() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val faceButtons = cfg.activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!.group
 
@@ -154,12 +154,12 @@ class ControllerConfigRepositoryTest {
     @Test
     fun seedDefaultConfig_dpadGroup_defaultsToUnboundWithDirectionSubInputsAvailable() = runTest {
         // Per the post-Brick-4 follow-up: analog-capable sources (dpad, triggers,
-        // sticks) default to UNBOUND on a fresh profile so Mappo doesn't intercept
+        // sticks) default to UNBOUND on a fresh layout so Mappo doesn't intercept
         // and the motion-capture overlay stays detached. The four direction
         // sub-inputs are still seeded so picking a non-UNBOUND mode later doesn't
         // need to backfill the rows — they're already present, the mode flip
         // just changes how compile interprets them.
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val dpad = cfg.activeActionSet!!.presetFor(InputSource.DPAD)!!.group
 
@@ -172,7 +172,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun seedDefaultConfig_everyInputHasFullPressActivatorWithUnboundBinding() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
 
         for (preset in cfg.activeActionSet!!.preset) {
@@ -192,12 +192,12 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun getActiveConfigOnce_unseededProfile_returnsNull() = runTest {
-        assertNull(subject.getActiveConfigOnce(profileId = 1L))
+        assertNull(subject.getActiveConfigOnce(layoutId = 1L))
     }
 
     @Test
     fun observeActiveConfig_emitsSeededConfigOnFirstSubscribe() = runTest {
-        val emitted = subject.observeActiveConfig(profileId = 1L).first()
+        val emitted = subject.observeActiveConfig(layoutId = 1L).first()
         assertNotNull(emitted)
         assertEquals(ControllerType.GENERIC_ANDROID, emitted!!.controllerProfile.controllerType)
         assertEquals(1, emitted.actionSets.size)
@@ -205,7 +205,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun setBinding_replacesActivatorBindings() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val activatorId = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -227,7 +227,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun setBinding_unbound_keepsExactlyOneRowWithUnboundType() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val activatorId = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -251,7 +251,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addActivator_appendsRowWithUnboundBinding_andHigherOrderIndex() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val buttonA = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -275,7 +275,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun removeActivator_deletesActivatorAndItsBindings() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val buttonA = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -293,7 +293,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun updateActivatorType_changesTypeWithoutTouchingBindings() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val activator = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -316,14 +316,14 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun updateActivatorType_unknownId_isNoOp() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         subject.updateActivatorType(activatorId = 9_999_999L, type = ActivatorType.LONG_PRESS)
         // Just verifying it doesn't throw — assertion is on completion alone.
     }
 
     @Test
     fun updateActivatorSettings_replacesJsonBlob() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val activatorId = subject.getActiveConfigOnce(1L)!!
             .activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -349,7 +349,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun updateActivatorSettings_unknownId_isNoOp() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         subject.updateActivatorSettings(activatorId = 9_999_999L, settingsJson = """{"x":1}""")
         // Just verifying it doesn't throw.
     }
@@ -358,12 +358,12 @@ class ControllerConfigRepositoryTest {
     fun copyConfig_emptySource_isNoOp() = runTest {
         subject.copyConfig(sourceProfileId = 1L, destProfileId = 2L)
 
-        assertTrue(controllerProfileDao.getByProfile(2L).isEmpty())
+        assertTrue(controllerProfileDao.getByLayout(2L).isEmpty())
     }
 
     @Test
     fun copyConfig_seededSource_producesEquivalentGraphForDest() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val sourceCfg = subject.getActiveConfigOnce(1L)!!
 
         subject.copyConfig(sourceProfileId = 1L, destProfileId = 2L)
@@ -381,13 +381,13 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun copyConfig_clonedGraphHasFreshIds() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         subject.copyConfig(sourceProfileId = 1L, destProfileId = 2L)
 
         // The "duplicates own their data" invariant: every cloned row gets a new PK and the
         // source's PKs must not appear under the destination.
-        val sourceCp = controllerProfileDao.getByProfile(1L).single()
-        val destCp = controllerProfileDao.getByProfile(2L).single()
+        val sourceCp = controllerProfileDao.getByLayout(1L).single()
+        val destCp = controllerProfileDao.getByLayout(2L).single()
         assertFalse(sourceCp.id == destCp.id)
 
         val sourceSetIds = actionSetDao.getByControllerProfile(sourceCp.id).map { it.id }.toSet()
@@ -397,7 +397,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun copyConfig_preservesBindings() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val sourceCfg = subject.getActiveConfigOnce(1L)!!
         val aActivator = sourceCfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -417,7 +417,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun copyConfig_editsToDestDoNotAffectSource() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         subject.copyConfig(sourceProfileId = 1L, destProfileId = 2L)
 
         val destAActivator = subject.getActiveConfigOnce(2L)!!
@@ -437,7 +437,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun setBinding_doesNotLeakAcrossActivators() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val faceButtons = cfg.activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!.group
         val aActivator = faceButtons.inputByKey("button_a")!!.activators[0].activator.id
@@ -462,7 +462,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addCommand_appendsNewBindingAtNextOrderIndex() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val aActivator = cfg.activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -484,7 +484,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun setCommand_updatesOneRowOnly() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val aActivator = subject.getActiveConfigOnce(1L)!!
             .activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -507,7 +507,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun removeCommand_deletesOnlyTargetedRow() = runTest {
-        subject.seedDefaultConfig(profileId = 1L)
+        subject.seedDefaultConfig(layoutId = 1L)
         val aActivator = subject.getActiveConfigOnce(1L)!!
             .activeActionSet!!
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
@@ -530,7 +530,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addActionSet_blank_seedsDefaultGroupsAndPresets() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
 
         val newSetId = subject.addActionSet(cpId, name = "menu", title = "Menu")
 
@@ -554,7 +554,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addActionSet_inherit_clonesGroupsBindingsAndPresetsFromSource() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val defaultSet = actionSetDao.getByControllerProfile(cpId).single()
         // Customize the source so we can verify the clone copied it.
         val aActivatorId = subject.getActiveConfigOnce(1L)!!
@@ -585,7 +585,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun duplicateActionSet_independentlyEditable() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val sourceSet = actionSetDao.getByControllerProfile(cpId).single()
         // Set source's button_a to ENTER, then duplicate.
         val sourceActivatorId = subject.getActiveConfigOnce(1L)!!
@@ -612,7 +612,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun renameActionSet_updatesNameAndTitle() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val set = actionSetDao.getByControllerProfile(cpId).single()
 
         subject.renameActionSet(set.id, name = "menu", title = "Menu Set")
@@ -631,7 +631,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun deleteActionSet_lastSet_isGuardedAndDoesNothing() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val onlySet = actionSetDao.getByControllerProfile(cpId).single()
 
         val result = subject.deleteActionSet(onlySet.id)
@@ -642,7 +642,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun deleteActionSet_nonLastSet_succeeds() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val newSetId = subject.addActionSet(cpId, "menu", "Menu")
 
         val result = subject.deleteActionSet(newSetId)
@@ -657,7 +657,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addLayer_appendsEmptyLayerWithOrderIndexZero() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
 
         val layerId = subject.addLayer(setId, name = "scope", title = "Scope")
@@ -676,7 +676,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun addLayer_secondLayerGetsIncrementedOrderIndex() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
 
         subject.addLayer(setId, "scope", "Scope")
@@ -690,7 +690,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun renameLayer_updatesNameAndTitle() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
 
@@ -715,7 +715,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun deleteLayer_existing_succeeds() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
 
@@ -727,7 +727,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun duplicateLayer_emptySource_clonesLayerRowOnly() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val sourceId = subject.addLayer(setId, "scope", "Scope")
 
@@ -744,7 +744,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun duplicateLayer_clonesGroupsInputsActivatorsBindings_withFreshIds() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val sourceId = subject.addLayer(setId, "scope", "Scope")
         // Seed an overlay binding_group under the source layer by hand — the 5.5 UI
@@ -808,7 +808,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun duplicateLayer_editsToCloneDoNotAffectSource() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val sourceId = subject.addLayer(setId, "scope", "Scope")
         val groupId = bindingGroupDao.insert(
@@ -850,7 +850,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun observeActiveConfig_hydratesActionLayerGraphPreset_fromLayerPresetBindingDao() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         // Seed an overlay binding_group + the layer_preset_binding pointing at it.
@@ -876,7 +876,7 @@ class ControllerConfigRepositoryTest {
             )
         )
 
-        val config = subject.observeActiveConfig(profileId = 1L).first()
+        val config = subject.observeActiveConfig(layoutId = 1L).first()
         val layerGraph = config!!.actionSets.single().layers.single()
         assertEquals(layerId, layerGraph.layer.id)
         assertEquals(1, layerGraph.preset.size)
@@ -889,7 +889,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun duplicateLayer_clonesLayerPresetBindingRows_pointingAtClonedGroups() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val sourceLayerId = subject.addLayer(setId, "scope", "Scope")
         val overlayGroupId = bindingGroupDao.insert(
@@ -930,11 +930,11 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun observeActiveConfig_layerWithNoPreset_yieldsEmptyPresetList() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         subject.addLayer(setId, "scope", "Scope")
 
-        val config = subject.observeActiveConfig(profileId = 1L).first()
+        val config = subject.observeActiveConfig(layoutId = 1L).first()
         val layerGraph = config!!.actionSets.single().layers.single()
         assertTrue("Default-state layer has no preset entries", layerGraph.preset.isEmpty())
     }
@@ -943,7 +943,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun materializeLayerOverride_freshLayer_createsGroupInputActivatorAndBindingChain() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
 
@@ -977,7 +977,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun materializeLayerOverride_secondSubInputOnSameSource_reusesOverlayGroup() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
 
@@ -996,7 +996,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun materializeLayerOverride_calledTwiceForSameSubInput_isIdempotent() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
 
@@ -1018,7 +1018,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun materializeLayerOverride_inheritsBaseGroupModeAndSettings() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         // Mutate the base BUTTON_DIAMOND group's settings so we can verify inheritance.
         val basePresetRow = presetBindingDao.getByActionSets(listOf(setId))
@@ -1042,7 +1042,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun clearLayerOverride_existingOverride_deletesGroupInput() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         val materializedId =
@@ -1055,7 +1055,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun clearLayerOverride_lastSubInput_alsoDropsOverlayGroupAndPresetRow() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         subject.materializeLayerOverride(layerId, InputSource.BUTTON_DIAMOND, "button_a")
@@ -1074,7 +1074,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun clearLayerOverride_keepsSiblingSubInputsIntact() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         subject.materializeLayerOverride(layerId, InputSource.BUTTON_DIAMOND, "button_a")
@@ -1093,7 +1093,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun clearLayerOverride_unknownOverride_isNoOp() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         // No materialize call — nothing exists for this layer.
@@ -1106,7 +1106,7 @@ class ControllerConfigRepositoryTest {
 
     @Test
     fun clearLayerOverride_unknownSubInputOnExistingOverlayGroup_isNoOp() = runTest {
-        val cpId = subject.seedDefaultConfig(profileId = 1L)
+        val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val setId = actionSetDao.getByControllerProfile(cpId).single().id
         val layerId = subject.addLayer(setId, "scope", "Scope")
         subject.materializeLayerOverride(layerId, InputSource.BUTTON_DIAMOND, "button_a")

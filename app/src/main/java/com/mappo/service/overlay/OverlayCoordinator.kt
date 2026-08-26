@@ -1,7 +1,7 @@
 package com.mappo.service.overlay
 
 import android.util.Log
-import com.mappo.service.autoswitch.ProfileAutoSwitcher
+import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -11,14 +11,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Routes [ProfileAutoSwitcher] events to the system-overlay surface so prompts and
+ * Routes [ApplicationAutoSwitcher] events to the system-overlay surface so prompts and
  * confirmations appear on whichever screen the foreground app is on. No-ops if
  * overlay permission is missing — MainScreen's in-app snackbar listens to the same
  * event stream as a defensive fallback.
  */
 @Singleton
 class OverlayCoordinator @Inject constructor(
-    private val autoSwitcher: ProfileAutoSwitcher,
+    private val autoSwitcher: ApplicationAutoSwitcher,
     private val overlayManager: OverlayManager
 ) {
 
@@ -35,8 +35,8 @@ class OverlayCoordinator @Inject constructor(
                     return@collect
                 }
                 when (event) {
-                    is ProfileAutoSwitcher.UiEvent.Switched -> {
-                        overlayManager.showToast("Loaded profile “${event.profileName}” for ${event.appLabel}")
+                    is ApplicationAutoSwitcher.UiEvent.Switched -> {
+                        overlayManager.showToast("Loaded layout “${event.layoutName}” for ${event.appLabel}")
                     }
                 }
             }

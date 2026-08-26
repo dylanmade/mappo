@@ -39,7 +39,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.GridLayout
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.TemplateRef
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.collections.immutable.ImmutableList
@@ -54,11 +54,11 @@ import com.mappo.ui.mappoKeyboardOptions
 @Composable
 fun TabActionDialogHost(
     state: TabActionDialog?,
-    profileName: String,
+    layoutName: String,
     userTemplates: ImmutableList<TemplateRef.User>,
     allTemplates: ImmutableList<TemplateRef>,
-    profiles: ImmutableList<Profile>,
-    activeProfileId: Long?,
+    layouts: ImmutableList<Layout>,
+    activeLayoutId: Long?,
     onStateChange: (TabActionDialog?) -> Unit,
     onConfirmRemove: (layoutId: Long) -> Unit,
     onSaveAsNewTemplate: (layoutId: Long, templateName: String) -> Unit,
@@ -66,8 +66,8 @@ fun TabActionDialogHost(
     onTemplateSaveCanceled: () -> Unit,
     onAddBlankKeyboard: () -> Unit,
     onAddFromTemplate: (TemplateRef) -> Unit,
-    onAddFromProfile: (sourceLayoutId: Long) -> Unit,
-    fetchProfileLayouts: suspend (profileId: Long) -> List<GridLayout>,
+    onAddFromLayout: (sourceLayoutId: Long) -> Unit,
+    fetchLayoutKeyboards: suspend (layoutId: Long) -> List<GridLayout>,
     onConfirmDeleteButton: (buttonId: String) -> Unit
 ) {
     when (val s = state) {
@@ -76,7 +76,7 @@ fun TabActionDialogHost(
             onDismissRequest = { onStateChange(null) },
             title = { Text(stringResource(R.string.tab_dialog_remove_title, s.name)) },
             text = {
-                Text(stringResource(R.string.tab_dialog_remove_text, s.name, s.profileName))
+                Text(stringResource(R.string.tab_dialog_remove_text, s.name, s.layoutName))
             },
             confirmButton = {
                 TextButton(
@@ -361,7 +361,7 @@ fun TabActionDialogHost(
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_add_from_template)) }
                     ListItem(
-                        onClick = { onStateChange(TabActionDialog.AddFromProfile) },
+                        onClick = { onStateChange(TabActionDialog.AddFromLayout) },
                         modifier = Modifier.fillMaxWidth(),
                         leadingContent = { Icon(Icons.Default.Person, contentDescription = null) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
@@ -446,33 +446,33 @@ fun TabActionDialogHost(
                 }
             )
         }
-        is TabActionDialog.AddFromProfile -> {
-            val otherProfiles = remember(profiles, activeProfileId) {
-                profiles.filter { it.id != activeProfileId }
+        is TabActionDialog.AddFromLayout -> {
+            val otherLayouts = remember(layouts, activeLayoutId) {
+                layouts.filter { it.id != activeLayoutId }
             }
             AlertDialog(
                 onDismissRequest = { onStateChange(null) },
                 title = { Text(stringResource(R.string.tab_dialog_pick_profile_title)) },
                 text = {
-                    if (otherProfiles.isEmpty()) {
+                    if (otherLayouts.isEmpty()) {
                         Text(
                             stringResource(R.string.tab_dialog_no_other_profiles),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
                         LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
-                            items(otherProfiles, key = { it.id }) { profile ->
+                            items(otherLayouts, key = { it.id }) { layout ->
                                 ListItem(
                                     onClick = {
                                         onStateChange(
-                                            TabActionDialog.AddFromProfileLayout(
-                                                profileId = profile.id,
-                                                profileName = profile.name
+                                            TabActionDialog.AddFromLayoutKeyboard(
+                                                layoutId = layout.id,
+                                                layoutName = layout.name
                                             )
                                         )
                                     },
                                     modifier = Modifier.fillMaxWidth(),
-                                ) { Text(profile.name) }
+                                ) { Text(layout.name) }
                             }
                         }
                     }
@@ -516,26 +516,26 @@ fun TabActionDialogHost(
                 ) { Text(stringResource(R.string.dialog_cancel)) }
             }
         )
-        is TabActionDialog.AddFromProfileLayout -> {
-            var profileLayouts by remember(s.profileId) { mutableStateOf<List<GridLayout>>(emptyList()) }
-            LaunchedEffect(s.profileId) {
-                profileLayouts = fetchProfileLayouts(s.profileId)
+        is TabActionDialog.AddFromLayoutKeyboard -> {
+            var layoutKeyboards by remember(s.layoutId) { mutableStateOf<List<GridLayout>>(emptyList()) }
+            LaunchedEffect(s.layoutId) {
+                layoutKeyboards = fetchLayoutKeyboards(s.layoutId)
             }
             AlertDialog(
                 onDismissRequest = { onStateChange(null) },
-                title = { Text(stringResource(R.string.tab_dialog_pick_keyboard_title, s.profileName)) },
+                title = { Text(stringResource(R.string.tab_dialog_pick_keyboard_title, s.layoutName)) },
                 text = {
-                    if (profileLayouts.isEmpty()) {
+                    if (layoutKeyboards.isEmpty()) {
                         Text(
                             stringResource(R.string.tab_dialog_no_keyboards_in_profile),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
                         LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
-                            items(profileLayouts, key = { it.id }) { layout ->
+                            items(layoutKeyboards, key = { it.id }) { layout ->
                                 ListItem(
                                     onClick = {
-                                        onAddFromProfile(layout.id)
+                                        onAddFromLayout(layout.id)
                                         onStateChange(null)
                                     },
                                     modifier = Modifier.fillMaxWidth(),
@@ -557,7 +557,7 @@ fun TabActionDialogHost(
                 confirmButton = {},
                 dismissButton = {
                     TextButton(
-                        onClick = { onStateChange(TabActionDialog.AddFromProfile) },
+                        onClick = { onStateChange(TabActionDialog.AddFromLayout) },
                         colors = ButtonDefaults.textButtonColors(
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )

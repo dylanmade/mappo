@@ -12,7 +12,7 @@ sealed class TabActionDialog {
     data class RemoveConfirm(
         val layoutId: Long,
         val name: String,
-        val profileName: String
+        val layoutName: String
     ) : TabActionDialog()
 
     data class SaveTemplateChooser(
@@ -50,11 +50,11 @@ sealed class TabActionDialog {
 
     object AddFromTemplate : TabActionDialog()
 
-    object AddFromProfile : TabActionDialog()
+    object AddFromLayout : TabActionDialog()
 
-    data class AddFromProfileLayout(
-        val profileId: Long,
-        val profileName: String
+    data class AddFromLayoutKeyboard(
+        val layoutId: Long,
+        val layoutName: String
     ) : TabActionDialog()
 
     data class RemoveButtonConfirm(

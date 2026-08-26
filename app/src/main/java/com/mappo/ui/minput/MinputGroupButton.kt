@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
  * ([androidx.compose.material3.SingleChoiceSegmentedButtonRow] / M2's ToggleButtonBar —
  * plain single-choice, no width animation), but carries the M3 button group's distinct GAP
  * between segments. Group silhouette stays a pill: outer ends fully rounded, inner edges
- * perfectly FLAT (square corners) — the classic connected-segment profile.
+ * perfectly FLAT (square corners) — the classic connected-segment layout.
  *
  * Selection reads through the surface system: unselected segments wear **surface 2**
  * ([MinputElevatedContainer]) with the family bevel — ordinary buttons on their plane —

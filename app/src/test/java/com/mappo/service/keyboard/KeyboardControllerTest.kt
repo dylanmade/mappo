@@ -3,12 +3,12 @@ package com.mappo.service.keyboard
 import com.mappo.data.model.GridButton
 import com.mappo.data.model.GridLayout
 import com.mappo.data.model.KeyLayout
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.RemapTarget
 import com.mappo.data.model.TrackpadGesture
 import com.mappo.data.model.toKeyLayout
+import com.mappo.data.repository.KeyLayoutRepository
 import com.mappo.data.repository.LayoutRepository
-import com.mappo.data.repository.ProfileRepository
 import com.mappo.service.input.InputDispatcher
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -35,7 +35,7 @@ import org.junit.Test
 /**
  * Brick 2 (single-screen refactor) tests. Validates the runtime state surface
  * extracted from [com.mappo.ui.viewmodel.MainViewModel]:
- *  - Layouts auto-load from `LayoutRepository` per active profile.
+ *  - Layouts auto-load from `KeyLayoutRepository` per active layout.
  *  - State mutators (`setSelectedIndex`, `replaceLayouts`, `replaceLayoutById`,
  *    `toggleRemap`) update the corresponding flows.
  *  - `displayLayout` (FC1 seam) reflects `(selectedIndex, layouts)` and is nullable.
@@ -49,10 +49,10 @@ class KeyboardControllerTest {
     private val testDispatcher = StandardTestDispatcher()
 
     private lateinit var inputDispatcher: InputDispatcher
+    private lateinit var keyLayoutRepo: KeyLayoutRepository
     private lateinit var layoutRepo: LayoutRepository
-    private lateinit var profileRepo: ProfileRepository
 
-    private val activeProfile = MutableStateFlow<Profile?>(null)
+    private val activeLayout = MutableStateFlow<Layout?>(null)
     private val allLayouts = MutableStateFlow<List<KeyLayout>>(emptyList())
 
     private lateinit var subject: KeyboardController
@@ -61,17 +61,17 @@ class KeyboardControllerTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         inputDispatcher = mockk(relaxed = true)
+        keyLayoutRepo = mockk(relaxed = true)
         layoutRepo = mockk(relaxed = true)
-        profileRepo = mockk(relaxed = true)
-        every { profileRepo.activeProfile } returns activeProfile
-        every { layoutRepo.getLayoutsByProfile(any()) } returns allLayouts
-        coEvery { layoutRepo.seedDefaultsIfEmpty(any()) } returns Unit
+        every { layoutRepo.activeLayout } returns activeLayout
+        every { keyLayoutRepo.getKeyLayoutsByLayout(any()) } returns allLayouts
+        coEvery { keyLayoutRepo.seedDefaultsIfEmpty(any()) } returns Unit
         every { inputDispatcher.isReady } returns true
 
         subject = KeyboardController(
             inputDispatcher = inputDispatcher,
+            keyLayoutRepository = keyLayoutRepo,
             layoutRepository = layoutRepo,
-            profileRepository = profileRepo,
             ioDispatcher = testDispatcher,
         )
     }
@@ -294,21 +294,21 @@ class KeyboardControllerTest {
 
     @Test
     fun activeProfileId_reflectsProfileRepoFlow() = runTest(testDispatcher) {
-        activeProfile.value = null
+        activeLayout.value = null
         advanceUntilIdle()
-        assertNull(subject.activeProfileId.value)
+        assertNull(subject.activeLayoutId.value)
 
-        activeProfile.value = Profile(id = 42L, name = "Test")
+        activeLayout.value = Layout(id = 42L, name = "Test")
         advanceUntilIdle()
-        assertEquals(42L, subject.activeProfileId.value)
+        assertEquals(42L, subject.activeLayoutId.value)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Seed the controller's repo-backed layouts collector with [layouts] under profile id=1. */
+    /** Seed the controller's repo-backed layouts collector with [layouts] under layout id=1. */
     private fun seed(layouts: List<GridLayout>) {
-        activeProfile.value = Profile(id = 1L, name = "Test")
-        allLayouts.value = layouts.mapIndexed { i, gl -> gl.toKeyLayout(profileId = 1L, position = i) }
+        activeLayout.value = Layout(id = 1L, name = "Test")
+        allLayouts.value = layouts.mapIndexed { i, gl -> gl.toKeyLayout(layoutId = 1L, position = i) }
         testDispatcher.scheduler.advanceUntilIdle()
         assertNotNull("seed() failed to publish layouts", subject.layouts.value)
     }

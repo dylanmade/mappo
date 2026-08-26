@@ -171,7 +171,7 @@ object DefaultLayouts {
     // (R) variant: trackpad takes the right 8 columns, mouse buttons sit on the left.
     val trackpadR: GridLayout = trackpadLayout(name = "Trackpad (R)", trackpadOnLeft = false)
     // (L) variant: mirror — trackpad on the left, mouse buttons on the right. Available as
-    // a built-in template only; not seeded into a new profile's initial keyboards.
+    // a built-in template only; not seeded into a new layout's initial keyboards.
     val trackpadL: GridLayout = trackpadLayout(name = "Trackpad (L)", trackpadOnLeft = true)
 
     // 12×6 grid with two columns of buttons hugging each edge and an 8-column gutter
@@ -190,7 +190,7 @@ object DefaultLayouts {
         },
     )
 
-    /** Layouts seeded into a new profile on first use. Order is the initial tab order. */
+    /** Layouts seeded into a new layout on first use. Order is the initial tab order. */
     val all: List<GridLayout> = listOf(default, keysMain, keysAlt, mouse, trackpadR)
 
     /** Built-in template catalog shown in the "Add from template" picker. Includes [trackpadL]

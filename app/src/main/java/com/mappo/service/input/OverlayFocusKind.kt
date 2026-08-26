@@ -11,7 +11,7 @@ package com.mappo.service.input
  *  - [NONE] — no Mappo overlay is focused. Gamepad / key events flow to whichever
  *    app window holds keyboard focus underneath (typically the foreground game).
  *  - [PROMPT] — a focusable Mappo overlay prompt (e.g. the auto-switch
- *    "Create profile for X?" prompt from `OverlayManager`) is up. The accessibility
+ *    "Create layout for X?" prompt from `OverlayManager`) is up. The accessibility
  *    service translates gamepad A → ENTER and B → BACK so the user can navigate the
  *    prompt with their controller.
  *  - [KEYBOARD] — the run-mode virtual-keyboard overlay is up. **Reserved.** The

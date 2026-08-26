@@ -54,7 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.mappo.R
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.TextSize
 import com.composables.icons.lucide.Lucide
@@ -75,12 +75,11 @@ import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
-import com.mappo.ui.screen.AppPickerSheet
 import kotlinx.collections.immutable.ImmutableList
 
 /**
  * The full-screen overlay panels of the controls screen. Only OPTIONS remains (physical
- * Start / the top bar's Layout settings pill): the former PROFILE panel — layout
+ * Start / the top bar's Layout settings pill): the former layout-selection panel — layout
  * selection — was upgraded into the browse chain of proper routes (2026-08-14). Rescoped
  * 2026-08-20: the GLOBAL app options (power, text size, the destination rows) moved to
  * the wordmark drawer ([com.mappo.ui.screen.home.MappoDrawerContent]); this panel is now
@@ -176,7 +175,7 @@ private fun LayoutSettingsPanelContent(
                 start = PanelContentPadding,
                 end = PanelContentPadding,
                 // First content sits the standard gap below the divider — matches the
-                // profiles panel's search/sort row.
+                // layouts panel's search/sort row.
                 top = MinputPanelDividerContentGap,
                 bottom = 2.dp,
             ),
@@ -446,30 +445,28 @@ internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) 
 }
 
 /**
- * The new-profile form: name plus (optionally) the apps auto-switch should open it for.
- * Form state is deliberately un-hoisted — the modal's content leaves composition on close,
- * so every summon starts a fresh form. [initialPackages] pre-associates the form (the
- * layouts view passes its own application, so a layout created there stays its child).
+ * The new-layout form (2026-08-26, ex new-layout): a name plus the ONE application the
+ * layout belongs to — displayed, not picked: a layout is only ever associated with one
+ * application (the multi-app "associated apps" picker retired with the layout concept),
+ * and creation always happens inside an application context (the drawers' cards, the
+ * no-layout state). Form state is deliberately un-hoisted — the modal's content leaves
+ * composition on close, so every summon starts a fresh form.
+ *
+ * [applicationLabel] null = no application context: the layout is created unassigned.
  */
 @Composable
-internal fun AddProfileModalContent(
-    profiles: ImmutableList<Profile>,
-    installedApps: List<InstalledApp>,
-    appBindings: Map<String, Long>,
-    onLoadInstalledApps: () -> Unit,
-    onCreateProfile: (name: String, packages: Set<String>) -> Unit,
+internal fun AddLayoutModalContent(
+    applicationLabel: String?,
+    onCreate: (name: String) -> Unit,
     onClose: () -> Unit,
-    initialPackages: Set<String> = emptySet(),
     // Attached to the Close button; the hosting MinputModal owns the seat/recovery.
     closeFocusRequester: FocusRequester? = null,
 ) {
     var name by remember { mutableStateOf("") }
-    var picked by remember { mutableStateOf(initialPackages) }
-    var pickerOpen by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
-            title = "New profile",
+            title = "New layout",
             icon = Icons.Filled.Add,
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
@@ -483,34 +480,24 @@ internal fun AddProfileModalContent(
             MinputTextField(
                 value = name,
                 onValueChange = { name = it },
-                placeholder = "Profile name",
+                placeholder = "Layout name",
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Associated apps",
-                        style = minputMiniTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = "Auto switch opens this profile with these apps",
-                        style = minputMiniTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = "Application",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                MinputPillButton(
-                    text = when (picked.size) {
-                        0 -> "Pick apps"
-                        1 -> "1 app"
-                        else -> "${picked.size} apps"
-                    },
-                    onClick = { onLoadInstalledApps(); pickerOpen = true },
-                    elevated = true,
+                Text(
+                    text = applicationLabel ?: "None",
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -521,43 +508,28 @@ internal fun AddProfileModalContent(
             MinputPillButton(text = "Cancel", onClick = onClose)
             MinputPillButton(
                 text = "Create",
-                onClick = { onCreateProfile(name.trim(), picked); onClose() },
+                onClick = { onCreate(name.trim()); onClose() },
                 enabled = name.isNotBlank(),
                 filled = true,
                 elevated = true,
             )
         }
     }
-
-    if (pickerOpen) {
-        // The auto-switch app picker, aimed at a profile that doesn't exist yet — the picked
-        // set is held here and bound in one shot when Create fires.
-        AppPickerSheet(
-            visible = true,
-            targetProfileName = name.trim().ifEmpty { "New profile" },
-            targetProfileId = null,
-            installedApps = installedApps,
-            existingBindings = appBindings,
-            profilesById = profiles.associateBy { it.id },
-            onConfirm = { picked = it },
-            onDismiss = { pickerOpen = false },
-        )
-    }
 }
 
 /**
- * Options that apply across ALL profiles. Deliberately empty for now — the surface and its
+ * Options that apply across ALL layouts. Deliberately empty for now — the surface and its
  * summon exist so content can land here without another chrome pass.
  */
 @Composable
-internal fun ProfileOptionsModalContent(
+internal fun LayoutOptionsModalContent(
     onClose: () -> Unit,
     // Attached to the Close button; the hosting MinputModal owns the seat/recovery.
     closeFocusRequester: FocusRequester? = null,
 ) {
     Column(Modifier.fillMaxSize()) {
         PanelHeader(
-            title = "Profile options",
+            title = "Layout options",
             icon = Icons.Filled.Tune,
             onClose = onClose,
             closeFocusRequester = closeFocusRequester,
@@ -567,7 +539,7 @@ internal fun ProfileOptionsModalContent(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "Options that apply to all profiles will live here",
+                text = "Options that apply to all layouts will live here",
                 style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -587,8 +559,8 @@ private val PanelPowerRowHeight = 36.dp
 /** Leading glyph edge inside panel rows. */
 internal val PanelRowIconSize = 16.dp
 
-/** Target height of the new-profile modal: header + name field + apps row + footer. */
-internal val AddProfileModalHeight = 172.dp
+/** Target height of the new-layout modal: header + name field + apps row + footer. */
+internal val AddLayoutModalHeight = 172.dp
 
-/** Target height of the (for-now empty) all-profiles options modal. */
-internal val ProfileOptionsModalHeight = 120.dp
+/** Target height of the (for-now empty) all-layouts options modal. */
+internal val LayoutOptionsModalHeight = 120.dp

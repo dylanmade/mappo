@@ -82,22 +82,20 @@ import kotlinx.coroutines.delay
  * The Mappo home: a compact, rounded floating toolbar near the bottom of the screen, with a small
  * non-interactive "tab" hanging off its bottom edge carrying the wordmark. The toolbar, left to right:
  *  - **Master switch** — turns Mappo's features (remap + overlay) on/off in lockstep (icons in the thumb).
- *  - **Split button** — the active profile name (leading; opens profile options) + an edit-pencil
- *    menu trigger (trailing) that opens the profile/navigation menu.
+ *  - **Split button** — the active layout name (leading; opens layout options) + an edit-pencil
+ *    menu trigger (trailing) that opens the layout/navigation menu.
  *  - **Options button** — opens the (temporary) "more" menu of secondary destinations.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MainBottomToolbar(
-    profileName: String,
+    layoutName: String,
     steamAccountName: String?,
     mappoEnabled: Boolean,
     onSetMappoEnabled: (Boolean) -> Unit,
     onEditOverlay: () -> Unit,
     onEditControls: () -> Unit,
-    onOpenProfile: () -> Unit,
-    onOpenAutoSwitch: () -> Unit,
-    onOpenBlocklist: () -> Unit,
+    onOpenApplications: () -> Unit,
     onOpenThemeStudio: () -> Unit,
     onOpenShizukuSetup: () -> Unit,
     onOpenSteamSetup: () -> Unit,
@@ -123,14 +121,12 @@ fun MainBottomToolbar(
 
     // The two menus modeled as ordered entry lists so the renderer + touch + focus nav share one
     // source. Each entry closes its menu and runs its action (focus activation arrives as ENTER).
-    val profileEntries = listOf(
-        ToolbarMenuEntry("profile_options", "Profile options", Icons.Filled.Person, onOpenProfile),
+    val layoutEntries = listOf(
+        ToolbarMenuEntry("layout_options", "Layout options", Icons.Filled.Person, onOpenApplications),
         ToolbarMenuEntry("edit_controls", "Edit controls", Icons.Filled.SportsEsports, onEditControls),
         ToolbarMenuEntry("edit_overlay", "Edit overlay", Icons.Filled.Edit, onEditOverlay),
     )
     val optionEntries = buildList {
-        add(ToolbarMenuEntry("auto_switch", "Auto switch", Icons.Filled.SwapHoriz, onOpenAutoSwitch))
-        add(ToolbarMenuEntry("blocklist", "Blocklist", Icons.Filled.Block, onOpenBlocklist))
         add(ToolbarMenuEntry("theme_studio", "Theme studio", Icons.Filled.Palette, onOpenThemeStudio))
         add(ToolbarMenuEntry("shizuku_setup", "Shizuku setup", Icons.Filled.SecurityUpdateGood, onOpenShizukuSetup))
         add(ToolbarMenuEntry("steam", if (steamAccountName != null) "Steam account" else "Connect to Steam", Icons.Filled.Person, onOpenSteamSetup))
@@ -218,20 +214,20 @@ fun MainBottomToolbar(
                         }
                     }
 
-                    // ── Split button: profile name + menu (center) ──
+                    // ── Split button: layout name + menu (center) ──
                     Box(modifier = Modifier.toolbarFocusRing(navEnabled)) {
                         SplitButtonLayout(
                             leadingButton = {
                                 SplitButtonDefaults.LeadingButton(
-                                    onClick = onOpenProfile,
+                                    onClick = onOpenApplications,
                                     // Skipped by gamepad focus traversal: the menu (trailing) is the
-                                    // single gamepad stop and already contains "Profile options".
+                                    // single gamepad stop and already contains "Layout options".
                                     modifier = Modifier.focusProperties { canFocus = false },
                                     shapes = SplitButtonDefaults.leadingButtonShapesFor(mediumStyle),
                                     contentPadding = SplitButtonDefaults.leadingButtonContentPaddingFor(mediumStyle),
                                 ) {
-                                    // Profile name is user-typed: cap width + ellipsize (see NameableText).
-                                    NameableText(profileName)
+                                    // Layout name is user-typed: cap width + ellipsize (see NameableText).
+                                    NameableText(layoutName)
                                 }
                             },
                             trailingButton = {
@@ -244,14 +240,14 @@ fun MainBottomToolbar(
                                     // Edit pencil at rest; open-chevron while the menu is up.
                                     Icon(
                                         imageVector = if (menuExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.Edit,
-                                        contentDescription = if (menuExpanded) "Close menu" else "Profile menu",
+                                        contentDescription = if (menuExpanded) "Close menu" else "Layout menu",
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
                             },
                         )
                         UpwardMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            profileEntries.forEach { entry ->
+                            layoutEntries.forEach { entry ->
                                 // onExitNav after launching: a menu item navigates away, so leave nav
                                 // (revert the overlay to non-focusable) or it would sit focusable above
                                 // the launched screen and steal its input.

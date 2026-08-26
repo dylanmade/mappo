@@ -42,7 +42,7 @@ import com.mappo.ui.minput.minputOverlineTextStyle
  * The shared browse-chain top bar (2026-08-15; slots widened for the 2026-08-20 flow
  * re-imagining): every view of the chain wears the same bar — a [navigation] slot at the
  * start (defaults to the Back arrow; the controls home swaps in the Auto switch stack),
- * the viewed profile's application icon (generic glyph when none), the header text — an
+ * the viewed layout's application icon (generic glyph when none), the header text — an
  * [overline] label with an optional value line beneath it — then [leadingActions] sitting
  * WITH the identity cluster (the controls view's Activate / View layouts pills) and
  * right-aligned trailing [actions] (Add/Tune on layouts, Layout settings on controls).
@@ -138,6 +138,6 @@ internal fun RemapTopBar(
     }
 }
 
-/** Width cap for the bar's overline/title stack — profile and application names are
+/** Width cap for the bar's overline/title stack — layout and application names are
  *  unbounded, and the bar has actions to fit on both sides of them. */
 private val TopBarStackMaxWidth = 200.dp

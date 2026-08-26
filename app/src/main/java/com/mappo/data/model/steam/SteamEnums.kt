@@ -36,7 +36,7 @@ enum class BindingMode {
     /**
      * Mappo does not intercept this source — physical events pass through to the
      * foreground app untouched, no activators fire. The default for
-     * analog-capable sources on freshly-seeded profiles so user-facing behavior
+     * analog-capable sources on freshly-seeded layouts so user-facing behavior
      * starts at "Mappo does nothing" and the user opts in mode-by-mode.
      *
      * Mappo-specific. No Steam Input analog (Steam IS the controller driver, so

@@ -9,12 +9,12 @@ import javax.inject.Singleton
 /**
  * Source of truth for the rebuilt overlay's free-positioned elements
  * (see `OVERLAY_REBUILD_PLAN.md`). Thin wrapper over [OverlayElementDao]; the active
- * overlay is "all elements for the active profile."
+ * overlay is "all elements for the active layout."
  */
 @Singleton
 class OverlayRepository @Inject constructor(private val dao: OverlayElementDao) {
 
-    fun elementsByProfile(profileId: Long): Flow<List<OverlayElement>> = dao.getByProfile(profileId)
+    fun elementsByProfile(layoutId: Long): Flow<List<OverlayElement>> = dao.getByLayout(layoutId)
 
     /** Set-owned elements (editor set scope / run-mode active-set overlay). */
     fun elementsBySet(actionSetId: Long): Flow<List<OverlayElement>> = dao.getBySet(actionSetId)
@@ -22,8 +22,8 @@ class OverlayRepository @Inject constructor(private val dao: OverlayElementDao) 
     /** Layer-owned elements (editor layer scope). */
     fun elementsByLayer(actionLayerId: Long): Flow<List<OverlayElement>> = dao.getByLayer(actionLayerId)
 
-    suspend fun elementsByProfileOnce(profileId: Long): List<OverlayElement> =
-        dao.getByProfileOnce(profileId)
+    suspend fun elementsByProfileOnce(layoutId: Long): List<OverlayElement> =
+        dao.getByLayoutOnce(layoutId)
 
     suspend fun getById(id: Long): OverlayElement? = dao.getById(id)
 
@@ -46,5 +46,5 @@ class OverlayRepository @Inject constructor(private val dao: OverlayElementDao) 
     suspend fun replaceScopeElements(actionSetId: Long?, actionLayerId: Long?, elements: List<OverlayElement>) =
         dao.replaceScope(actionSetId, actionLayerId, elements)
 
-    suspend fun clearForProfile(profileId: Long) = dao.deleteAllForProfile(profileId)
+    suspend fun clearForLayout(layoutId: Long) = dao.deleteAllForLayout(layoutId)
 }

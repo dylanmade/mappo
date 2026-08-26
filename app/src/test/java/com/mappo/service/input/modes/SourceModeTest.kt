@@ -218,7 +218,7 @@ class SourceModeTest {
     @Test
     fun unbound_isNotInMotionCaptureSet() {
         // Critical contract — defaulting analog sources to UNBOUND only achieves
-        // the "no Shizuku enumeration / no setup-friction on a fresh profile"
+        // the "no Shizuku enumeration / no setup-friction on a fresh layout"
         // goal if the gating predicate doesn't treat UNBOUND as analog.
         assertFalse(BindingMode.DEVICE_DEFAULT.requiresMotionCapture())
     }

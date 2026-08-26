@@ -5,7 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mappo.data.model.KeyLayout
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -19,9 +19,9 @@ import org.junit.runner.RunWith
 class LayoutDaoTest {
 
     private lateinit var db: AppDatabase
-    private lateinit var dao: LayoutDao
-    private lateinit var profileDao: ProfileDao
-    private var profileId: Long = 0L
+    private lateinit var dao: KeyLayoutDao
+    private lateinit var layoutDao: LayoutDao
+    private var layoutId: Long = 0L
 
     @Before
     fun setUp() = runTest {
@@ -29,9 +29,9 @@ class LayoutDaoTest {
         db = Room.inMemoryDatabaseBuilder(ctx, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        dao = db.layoutDao()
-        profileDao = db.profileDao()
-        profileId = profileDao.insert(Profile(name = "Test"))
+        dao = db.keyLayoutDao()
+        layoutDao = db.layoutDao()
+        layoutId = layoutDao.insert(Layout(name = "Test"))
     }
 
     @After
@@ -40,7 +40,7 @@ class LayoutDaoTest {
     }
 
     private fun layout(name: String, position: Int = 0) = KeyLayout(
-        profileId = profileId,
+        layoutId = layoutId,
         name = name,
         columns = 3,
         rows = 2,
@@ -60,7 +60,7 @@ class LayoutDaoTest {
         val secondId = dao.insert(layout("Second", position = 1))
         val thirdId = dao.insert(layout("Third", position = 1))
 
-        val ids = dao.getByProfile(profileId).first().map { it.id }
+        val ids = dao.getByLayout(layoutId).first().map { it.id }
         assertEquals(listOf(firstId, secondId, thirdId), ids)
     }
 
@@ -71,11 +71,11 @@ class LayoutDaoTest {
         val c = dao.insert(layout("C", position = 2))
 
         dao.reorder(
-            profileId = profileId,
+            layoutId = layoutId,
             idToPosition = mapOf(a to 2, b to 0, c to 1),
         )
 
-        val ordered = dao.getByProfile(profileId).first().map { it.id }
+        val ordered = dao.getByLayout(layoutId).first().map { it.id }
         assertEquals(listOf(b, c, a), ordered)
     }
 
@@ -86,11 +86,11 @@ class LayoutDaoTest {
 
         // Map sets a→0 (unchanged) and b→1 (unchanged); should be a no-op.
         dao.reorder(
-            profileId = profileId,
+            layoutId = layoutId,
             idToPosition = mapOf(a to 0, b to 1),
         )
 
-        val ids = dao.getByProfile(profileId).first().map { it.id }
+        val ids = dao.getByLayout(layoutId).first().map { it.id }
         assertEquals(listOf(a, b), ids)
     }
 
@@ -98,7 +98,7 @@ class LayoutDaoTest {
     fun deleteById_removesRow() = runTest {
         val id = dao.insert(layout("X"))
         dao.deleteById(id)
-        assertEquals(emptyList<KeyLayout>(), dao.getByProfile(profileId).first())
+        assertEquals(emptyList<KeyLayout>(), dao.getByLayout(layoutId).first())
     }
 
     @Test
@@ -113,9 +113,9 @@ class LayoutDaoTest {
     fun deletingProfile_cascadesToLayouts() = runTest {
         dao.insert(layout("L1"))
         dao.insert(layout("L2"))
-        assertEquals(2, dao.getByProfileOnce(profileId).size)
+        assertEquals(2, dao.getByLayoutOnce(layoutId).size)
 
-        profileDao.delete(Profile(id = profileId, name = "Test"))
-        assertEquals(0, dao.getByProfileOnce(profileId).size)
+        layoutDao.delete(Layout(id = layoutId, name = "Test"))
+        assertEquals(0, dao.getByLayoutOnce(layoutId).size)
     }
 }

@@ -77,7 +77,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Settings
 import com.mappo.R
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
@@ -105,8 +105,8 @@ import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
-import com.mappo.ui.screen.remap.AddProfileModalContent
-import com.mappo.ui.screen.remap.AddProfileModalHeight
+import com.mappo.ui.screen.remap.AddLayoutModalContent
+import com.mappo.ui.screen.remap.AddLayoutModalHeight
 import com.mappo.ui.screen.remap.ApplicationsDrawerPane
 import com.mappo.ui.screen.remap.LayoutsDrawerPane
 import com.mappo.ui.screen.remap.RemapBottomRow
@@ -147,7 +147,7 @@ fun RemapControlsScreen(
     onOpenInputEditor: (inputSource: com.mappo.data.model.steam.InputSource, groupInputKey: String, label: String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    profileName: String? = null,
+    layoutName: String? = null,
     viewingActionSetId: Long? = null,
     onSelectActionSet: (Long) -> Unit = {},
     onAddActionSet: (title: String, inheritFromSetId: Long?) -> Unit = { _, _ -> },
@@ -212,10 +212,10 @@ fun RemapControlsScreen(
     onSuppressActivateWarning: () -> Unit = {},
     // ── Layouts drawer (2026-08-21: the layouts view is a push pane in this screen;
     // the bar's change button slides it in) ────────────────────────────────────────
-    profiles: ImmutableList<Profile> = persistentListOf(),
-    activeProfileId: Long? = null,
+    layouts: ImmutableList<Layout> = persistentListOf(),
+    activeLayoutId: Long? = null,
     onPreviewLayout: (Long) -> Unit = {},
-    onActivateLayoutCard: (Profile) -> Unit = {},
+    onActivateLayoutCard: (Layout) -> Unit = {},
     // Fired when the LAST open drawer finishes its close animation — the caller reverts
     // the controls view to the active layout/application (2026-08-25: at animation END,
     // not close intent, so the sliding-away drawer's content stays scoped — reverting
@@ -230,7 +230,11 @@ fun RemapControlsScreen(
     installedApps: List<com.mappo.data.repository.InstalledAppsRepository.InstalledApp> = emptyList(),
     onLoadInstalledApps: () -> Unit = {},
     appBindings: Map<String, Long> = emptyMap(),
-    onCreateProfile: (name: String, packages: Set<String>) -> Unit = { _, _ -> },
+    onCreateLayout: (name: String, packageName: String?) -> Unit = { _, _ -> },
+    // ── Active application (2026-08-26: first-class, layout-independent — an app with
+    // no layouts can be the current application, its home = the no-layout state) ───
+    activeAppPackage: String? = null,
+    onActivateApplication: (String) -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -251,7 +255,8 @@ fun RemapControlsScreen(
     // (and keep auto detection on — see MainViewModel.activateLayoutManually). All
     // activation paths (the bar pill, either drawer's cards) stash their commit here and
     // share the dialog. The auto-detected application = the active layout's parent.
-    val detectedAppPackage = profiles.firstOrNull { it.id == activeProfileId }?.packageName
+    val detectedAppPackage = activeAppPackage
+        ?: layouts.firstOrNull { it.id == activeLayoutId }?.packageName
     var pendingActivate by remember { mutableStateOf<(() -> Unit)?>(null) }
     val requestActivate: (targetPackage: String?, commit: () -> Unit) -> Unit =
         { targetPackage, commit ->
@@ -261,7 +266,7 @@ fun RemapControlsScreen(
             } else commit()
         }
     // The new-layout modal (the drawer's "+ New layout" card). Plain remember — the form
-    // content resets on close by design (see AddProfileModalContent).
+    // content resets on close by design (see AddLayoutModalContent).
     var addLayoutOpen by remember { mutableStateOf(false) }
     val addModalCloseFocus = remember { FocusRequester() }
     // The side drawers (the bar's corner buttons). Survive the sub-editor round-trips.
@@ -271,7 +276,18 @@ fun RemapControlsScreen(
     // viewed layout's own application for the top-bar identity, the layouts drawer's
     // scope, and new-layout association. Cleared when the drawers finish closing.
     var viewingAppOverride by rememberSaveable { mutableStateOf<String?>(null) }
-    val effectiveAppPackage = viewingAppOverride ?: viewedAppPackage
+    // Home (viewing the active layout) shows the ACTIVE APPLICATION — which may have no
+    // layouts at all; a previewed layout shows its own parent application.
+    val effectiveAppPackage = viewingAppOverride
+        ?: (if (isActiveLayout) detectedAppPackage ?: viewedAppPackage else viewedAppPackage)
+    // The viewed application has no layout — the ACTIVE app fresh from detection (the
+    // core flow: shortcut-open Mappo over a new game), an apps-drawer preview/pick of an
+    // unbound app, or one whose bound layout was deleted. Drives both the content
+    // plane's no-layout state and the bar's truthful "None" layout title.
+    val effectiveAppHasNoLayout = effectiveAppPackage != null &&
+        effectiveAppPackage.let { pkg ->
+            appBindings[pkg]?.let { id -> layouts.firstOrNull { it.id == id } }
+        } == null
     // Revert fires when the LAST drawer's close animation completes (both panes report
     // through here; the guard makes the pair idempotent). Closing one drawer while the
     // other stays open reverts nothing — the surviving drawer's preview context holds.
@@ -467,7 +483,9 @@ fun RemapControlsScreen(
                 // tabs that lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
                     overline = if (isActiveLayout) "Current layout" else "Previewing layout",
-                    title = profileName ?: "Layout",
+                    // An application with no layout reads "None" — not the stale name of
+                    // another app's layout (2026-08-26 audit).
+                    title = if (effectiveAppHasNoLayout) "None" else layoutName ?: "Layout",
                     // Null on purpose (2026-08-25): the application identity — icon
                     // included — lives in the bar's RIGHT corner now.
                     appPackage = null,
@@ -585,11 +603,11 @@ fun RemapControlsScreen(
                 LayoutsDrawerPane(
                     open = layoutsDrawerOpen,
                     appPackage = effectiveAppPackage,
-                    profiles = profiles,
-                    activeProfileId = activeProfileId,
+                    layouts = layouts,
+                    activeLayoutId = activeLayoutId,
                     onPreviewLayout = onPreviewLayout,
-                    onActivateLayout = { profile ->
-                        requestActivate(profile.packageName) { onActivateLayoutCard(profile) }
+                    onActivateLayout = { layout ->
+                        requestActivate(layout.packageName) { onActivateLayoutCard(layout) }
                     },
                     onNewLayout = { addLayoutOpen = true },
                     onFullyClosed = onDrawerFullyClosed,
@@ -599,19 +617,18 @@ fun RemapControlsScreen(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
-                    // The viewed application has no layout (an apps-drawer preview/pick of
-                    // an unbound app, or one whose bound layout was deleted): the content
-                    // plane shows the no-layout state instead of another app's controls —
-                    // tiles route into layout creation and the layouts drawer (which
-                    // holds the Community section once sharing lands).
-                    val overrideBoundProfile = viewingAppOverride?.let { pkg ->
-                        appBindings[pkg]?.let { id -> profiles.firstOrNull { it.id == id } }
-                    }
-                    if (viewingAppOverride != null && overrideBoundProfile == null) {
+                    // The viewed application has no layout — the ACTIVE app fresh from
+                    // detection (the core flow: shortcut-open Mappo over a new game), an
+                    // apps-drawer preview/pick of an unbound app, or one whose bound
+                    // layout was deleted: the content plane shows the no-layout state
+                    // instead of another app's controls — tiles route into layout
+                    // creation and the layouts drawer (which holds the Community section
+                    // once sharing lands).
+                    if (effectiveAppHasNoLayout) {
                         NoLayoutAssignedView(
                             appLabel = installedApps
-                                .firstOrNull { it.packageName == viewingAppOverride }?.label
-                                ?: viewingAppOverride.orEmpty(),
+                                .firstOrNull { it.packageName == effectiveAppPackage }?.label
+                                ?: effectiveAppPackage.orEmpty(),
                             onCreateLayout = { addLayoutOpen = true },
                             onBrowseLayouts = { layoutsDrawerOpen = true },
                         )
@@ -651,17 +668,11 @@ fun RemapControlsScreen(
                     },
                     onSelectApplication = { app ->
                         requestActivate(app.packageName) {
-                            val boundProfile = appBindings[app.packageName]?.let { id ->
-                                profiles.firstOrNull { it.id == id }
-                            }
-                            if (boundProfile != null) {
-                                onActivateLayoutCard(boundProfile)
-                            } else {
-                                // No layout to activate yet — pin the application
-                                // context so the layouts drawer (and its "+ New layout"
-                                // card) scope to this app.
-                                viewingAppOverride = app.packageName
-                            }
+                            // Instant UI context; the caller moves the persistent
+                            // active-application pointer (and activates the app's
+                            // active layout when it has one).
+                            viewingAppOverride = app.packageName
+                            onActivateApplication(app.packageName)
                         }
                     },
                     onFullyClosed = onDrawerFullyClosed,
@@ -681,21 +692,19 @@ fun RemapControlsScreen(
         MinputModal(
             open = addLayoutOpen,
             onDismiss = { addLayoutOpen = false },
-            height = AddProfileModalHeight,
+            height = AddLayoutModalHeight,
             focusSeat = addModalCloseFocus,
             testTag = "controls-modal:ADD",
             modifier = Modifier.matchParentSize(),
         ) {
-            AddProfileModalContent(
-                profiles = profiles,
-                installedApps = installedApps,
-                appBindings = appBindings,
-                onLoadInstalledApps = onLoadInstalledApps,
-                onCreateProfile = onCreateProfile,
+            AddLayoutModalContent(
+                // The layout's ONE application = the viewed application context (the
+                // apps-drawer override wins while browsing); null = unassigned.
+                applicationLabel = effectiveAppPackage?.let { pkg ->
+                    installedApps.firstOrNull { it.packageName == pkg }?.label ?: pkg
+                },
+                onCreate = { name -> onCreateLayout(name, effectiveAppPackage) },
                 onClose = { addLayoutOpen = false },
-                // New layouts default to children of the viewed application (the
-                // apps-drawer override wins while browsing).
-                initialPackages = setOfNotNull(effectiveAppPackage),
                 closeFocusRequester = addModalCloseFocus,
             )
         }

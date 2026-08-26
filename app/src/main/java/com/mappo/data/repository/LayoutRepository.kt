@@ -1,64 +1,109 @@
 package com.mappo.data.repository
 
+import com.mappo.data.db.AppLayoutBindingDao
+import com.mappo.data.db.KeyLayoutDao
 import com.mappo.data.db.LayoutDao
-import com.mappo.data.defaults.DefaultLayouts
-import com.mappo.data.model.KeyLayout
+import com.mappo.data.model.Layout
+import com.mappo.data.settings.ActiveApplicationStore
+import com.mappo.data.model.toGridLayout
 import com.mappo.data.model.toKeyLayout
 import com.mappo.data.model.toJson
 import com.mappo.data.model.toSnapshot
 import com.mappo.data.model.withFreshButtonIds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class LayoutRepository @Inject constructor(private val dao: LayoutDao) {
+class LayoutRepository @Inject constructor(
+    private val layoutDao: LayoutDao,
+    private val keyLayoutDao: KeyLayoutDao,
+    private val keyLayoutRepository: KeyLayoutRepository,
+    private val controllerConfigRepository: ControllerConfigRepository,
+    private val appLayoutBindingDao: AppLayoutBindingDao,
+    private val activeApplicationStore: ActiveApplicationStore,
+) {
 
-    fun getLayoutsByProfile(profileId: Long): Flow<List<KeyLayout>> = dao.getByProfile(profileId)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    suspend fun getLayoutsByProfileOnce(profileId: Long): List<KeyLayout> =
-        dao.getByProfileOnce(profileId)
+    private val _activeLayout = MutableStateFlow<Layout?>(null)
+    val activeLayout: StateFlow<Layout?> = _activeLayout.asStateFlow()
 
-    suspend fun getById(id: Long): KeyLayout? = dao.getById(id)
-
-    suspend fun saveLayout(layout: KeyLayout): Long = dao.insert(layout)
-
-    suspend fun updateLayout(layout: KeyLayout) = dao.update(layout)
-
-    suspend fun deleteLayout(layout: KeyLayout) = dao.delete(layout)
-
-    suspend fun deleteById(id: Long) = dao.deleteById(id)
-
-    suspend fun reorder(profileId: Long, idToPosition: Map<Long, Int>) =
-        dao.reorder(profileId, idToPosition)
-
-    /**
-     * Idempotent: only seeds when the profile has no persisted layouts. Used on first observation
-     * of a profile created via the SQL seed callback (which doesn't insert default layouts).
-     */
-    suspend fun seedDefaultsIfEmpty(profileId: Long) {
-        if (dao.getByProfileOnce(profileId).isEmpty()) seedDefaults(profileId)
+    init {
+        scope.launch {
+            // Cold-start restore: the active APPLICATION's active layout (2026-08-26 —
+            // the seeded "default profile" concept is retired; a fresh install starts
+            // with no applications, no layouts, and nothing active).
+            val pkg = activeApplicationStore.activeAppPackage.value ?: return@launch
+            val bound = appLayoutBindingDao.getForPackageOnce(pkg) ?: return@launch
+            val restored = layoutDao.getById(bound.layoutId) ?: return@launch
+            if (_activeLayout.value == null) {
+                _activeLayout.value = restored
+            }
+        }
     }
 
-    /**
-     * Insert the built-in default layouts for [profileId] with stable positions and a populated
-     * originalSnapshotJson so a future Reset can revert to the as-seeded state.
-     */
-    suspend fun seedDefaults(profileId: Long) {
-        DefaultLayouts.all.forEachIndexed { index, layout ->
-            // DefaultLayouts.all holds singleton GridLayouts whose buttons get the same
-            // UUIDs at app start; seeding from them as-is means every profile shares button
-            // ids with every other profile and with the in-memory templates. Regenerate
-            // per-profile so each seed is independent.
-            val fresh = layout.withFreshButtonIds()
-            val snapshotJson = fresh.toSnapshot().toJson()
-            dao.insert(
-                fresh.toKeyLayout(
-                    profileId = profileId,
-                    position = index,
-                    originalSnapshotJson = snapshotJson
+    fun getAllLayouts(): Flow<List<Layout>> = layoutDao.getAll()
+
+    fun setActiveLayout(layout: Layout) {
+        _activeLayout.value = layout
+    }
+
+    /** Deleting the active layout leaves nothing active — no default-layout fallback. */
+    fun clearActiveLayout() {
+        _activeLayout.value = null
+    }
+
+    suspend fun setActiveLayoutById(id: Long): Layout? {
+        val layout = layoutDao.getById(id) ?: return null
+        _activeLayout.value = layout
+        return layout
+    }
+
+    suspend fun addLayout(name: String, packageName: String? = null): Long {
+        val newId = layoutDao.insert(Layout(name = name, packageName = packageName))
+        keyLayoutRepository.seedDefaults(newId)
+        return newId
+    }
+
+    suspend fun duplicateLayout(source: Layout, newName: String) {
+        // The copy stays in the source's application family and keeps its description;
+        // author/likes reset — a duplicate is the device owner's own layout.
+        val newId = layoutDao.insert(
+            Layout(name = newName, packageName = source.packageName, description = source.description)
+        )
+        val sourceLayouts = keyLayoutDao.getByLayoutOnce(source.id)
+        if (sourceLayouts.isEmpty()) {
+            // The Default layout may have been created via the SQL seed callback before any
+            // layouts were persisted; fall back to seeding so the duplicate isn't blank.
+            keyLayoutRepository.seedDefaults(newId)
+        } else {
+            sourceLayouts.forEach { layout ->
+                // Fresh UUIDs per button so the duplicated layout's keyboards don't share
+                // button ids with the source layout's keyboards. The reset-to-original
+                // snapshot is regenerated from the fresh-id state to match.
+                val fresh = layout.toGridLayout().withFreshButtonIds()
+                val snapshotJson = fresh.toSnapshot().toJson()
+                keyLayoutDao.insert(
+                    fresh.toKeyLayout(
+                        layoutId = newId,
+                        position = layout.position,
+                        originalSnapshotJson = snapshotJson
+                    )
                 )
-            )
+            }
         }
+        controllerConfigRepository.copyConfig(source.id, newId)
+    }
+
+    suspend fun deleteLayout(layout: Layout) {
+        layoutDao.delete(layout)
     }
 }

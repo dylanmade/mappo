@@ -31,7 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * Snackbar-shaped informational message. Used for "Loaded profile X for Y".
+ * Snackbar-shaped informational message. Used for "Loaded layout X for Y".
  * Auto-dismisses after [autoDismissMs]; not focusable / non-interactive.
  *
  * The window is full screen width; this Box centers the snackbar horizontally
@@ -74,7 +74,7 @@ fun OverlayToast(
 }
 
 /**
- * Three-button create-profile prompt. Layout is a single Row with the message
+ * Three-button create-layout prompt. Layout is a single Row with the message
  * taking weighted remaining space and the button group on the right. On narrow
  * displays the message ellipsizes rather than wrapping, keeping the layout stable.
  *
@@ -125,7 +125,7 @@ fun OverlayCreatePrompt(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "Create profile for $appLabel?",
+                    text = "Create layout for $appLabel?",
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,

@@ -64,7 +64,7 @@ class MouseEmitterImpl @Inject constructor(
      * 2026-05-30).
      *
      *  - [AbsSourcePhase.UNTOUCHED] — never produced a Mouse Region event
-     *    in the current profile. First event snaps the cursor to screen
+     *    in the current layout. First event snaps the cursor to screen
      *    center, so the cursor doesn't sit at whatever stale position the
      *    host (e.g. Wine in GameNative) last put it.
      *  - [AbsSourcePhase.AT_CENTER] — stick is at rest; cursor is
@@ -79,7 +79,7 @@ class MouseEmitterImpl @Inject constructor(
      * side keeps the synthetic finger "down" so Wine sees continuous
      * tracking with no spurious clicks.
      *
-     * Cleared on profile / action-set switch via [clearAllVelocities].
+     * Cleared on layout / action-set switch via [clearAllVelocities].
      */
     private enum class AbsSourcePhase { UNTOUCHED, AT_CENTER, DEFLECTED }
     private val absSourcePhases = EnumMap<InputSource, AbsSourcePhase>(InputSource::class.java)
@@ -139,7 +139,7 @@ class MouseEmitterImpl @Inject constructor(
             // Don't end the session on snap-back — the synthetic finger
             // stays "down" at center so Wine doesn't see ACTION_UP (which
             // could register as a click). Session ends on
-            // [clearAllVelocities] (profile / action-set switch).
+            // [clearAllVelocities] (layout / action-set switch).
             shouldEndSession = false
         }
         if (needBeginSession) {

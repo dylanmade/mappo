@@ -28,16 +28,16 @@ import com.mappo.data.model.steam.ActionSet
  *  - an [ActionLayer] ([actionLayerId] set, [actionSetId] null) — "layer-owned".
  * The editor edits one scope at a time (a dropdown picks it); run mode shows the active
  * action set's set-owned elements. Layer→set inheritance is a later brick — for now a
- * scope shows only its own elements. [profileId] is retained for the profile CASCADE and
- * "clear all for profile".
+ * scope shows only its own elements. [layoutId] is retained for the layout CASCADE and
+ * "clear all for layout".
  */
 @Entity(
     tableName = "overlay_elements",
     foreignKeys = [
         ForeignKey(
-            entity = Profile::class,
+            entity = Layout::class,
             parentColumns = ["id"],
-            childColumns = ["profileId"],
+            childColumns = ["layoutId"],
             onDelete = ForeignKey.CASCADE,
         ),
         ForeignKey(
@@ -53,11 +53,11 @@ import com.mappo.data.model.steam.ActionSet
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("profileId"), Index("actionSetId"), Index("actionLayerId")],
+    indices = [Index("layoutId"), Index("actionSetId"), Index("actionLayerId")],
 )
 data class OverlayElement(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val profileId: Long,
+    val layoutId: Long,
     // Scope: exactly one is non-null (see class doc). Null/null = unscoped (legacy/no config).
     val actionSetId: Long? = null,
     val actionLayerId: Long? = null,

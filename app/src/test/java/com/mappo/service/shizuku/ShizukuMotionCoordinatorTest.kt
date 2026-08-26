@@ -5,7 +5,7 @@ import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.InputSource
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.LayoutRepository
 import com.mappo.service.input.CompiledActionSet
 import com.mappo.service.input.CompiledActivator
 import com.mappo.service.input.CompiledConfig
@@ -44,7 +44,7 @@ class ShizukuMotionCoordinatorTest {
     fun setUp() {
         coordinator = ShizukuMotionCoordinator(
             appContext = mockk<Context>(relaxed = true),
-            profileRepository = mockk<ProfileRepository>(relaxed = true),
+            layoutRepository = mockk<LayoutRepository>(relaxed = true),
             inputDispatcher = mockk<InputDispatcher>(relaxed = true),
             inputEvaluator = mockk<InputEvaluator>(relaxed = true),
             shizukuConnection = mockk<ShizukuConnection>(relaxed = true),

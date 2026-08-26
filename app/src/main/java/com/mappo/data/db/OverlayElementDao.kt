@@ -13,11 +13,11 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface OverlayElementDao {
 
-    @Query("SELECT * FROM overlay_elements WHERE profileId = :profileId ORDER BY zIndex ASC, id ASC")
-    fun getByProfile(profileId: Long): Flow<List<OverlayElement>>
+    @Query("SELECT * FROM overlay_elements WHERE layoutId = :layoutId ORDER BY zIndex ASC, id ASC")
+    fun getByLayout(layoutId: Long): Flow<List<OverlayElement>>
 
-    @Query("SELECT * FROM overlay_elements WHERE profileId = :profileId ORDER BY zIndex ASC, id ASC")
-    suspend fun getByProfileOnce(profileId: Long): List<OverlayElement>
+    @Query("SELECT * FROM overlay_elements WHERE layoutId = :layoutId ORDER BY zIndex ASC, id ASC")
+    suspend fun getByLayoutOnce(layoutId: Long): List<OverlayElement>
 
     /** Set-owned elements (the editor's set scope; run mode's active-set overlay). */
     @Query("SELECT * FROM overlay_elements WHERE actionSetId = :actionSetId ORDER BY zIndex ASC, id ASC")
@@ -76,6 +76,6 @@ interface OverlayElementDao {
     @Query("DELETE FROM overlay_elements WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("DELETE FROM overlay_elements WHERE profileId = :profileId")
-    suspend fun deleteAllForProfile(profileId: Long)
+    @Query("DELETE FROM overlay_elements WHERE layoutId = :layoutId")
+    suspend fun deleteAllForLayout(layoutId: Long)
 }

@@ -827,7 +827,7 @@ private val ActionSetRowGap = 6.dp
 private val BadgeGutter = 18.dp
 
 // The group editor's morph values — canonical in the library (MinputDefaults.kt); these
-// are the remap package's aliases. The profile/options panels no longer morph (they're
+// are the remap package's aliases. The layout/options panels no longer morph (they're
 // MinputModals now, fade + settle) but still share GroupCorner/EditorMargin framing so
 // the remap surfaces read as one family.
 internal val GroupCorner = com.mappo.ui.minput.MinputMorphCorner

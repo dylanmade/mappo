@@ -6,7 +6,7 @@ import com.mappo.data.model.OverlayGesture
 import com.mappo.data.model.targetFor
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.OverlayRepository
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.LayoutRepository
 import com.mappo.service.overlay.keyboard.KeyboardDisplayRouter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +34,7 @@ import javax.inject.Singleton
  * (see `OVERLAY_REBUILD_PLAN.md`, Brick B). Sibling of `KeyboardOverlayPresenter` — the
  * new overlay is independent of the legacy keyboard runtime.
  *
- * Holds the live/not-live flag and, while live, collects the active profile's
+ * Holds the live/not-live flag and, while live, collects the active layout's
  * [OverlayElement]s and drives [OverlayElementWindowManager.render]. Taps dispatch
  * through [OverlayTargetDispatcher]; an un-connected accessibility sink is surfaced via
  * [errorMessages] (relayed by `MainViewModel` into its toast stream, like the keyboard
@@ -45,7 +45,7 @@ import javax.inject.Singleton
 class OverlayPresenter @Inject constructor(
     private val manager: OverlayElementWindowManager,
     private val overlayRepository: OverlayRepository,
-    private val profileRepository: ProfileRepository,
+    private val layoutRepository: LayoutRepository,
     private val controllerConfigRepository: ControllerConfigRepository,
     private val dispatcher: OverlayTargetDispatcher,
     private val displayRouter: KeyboardDisplayRouter,
@@ -78,10 +78,10 @@ class OverlayPresenter @Inject constructor(
         // switching is a later brick — we follow the config's first/active set for now).
         // Re-renders whenever those elements change, so editor edits reflect immediately.
         collectJob = scope.launch {
-            profileRepository.activeProfile
+            layoutRepository.activeLayout
                 .filterNotNull()
-                .flatMapLatest { profile ->
-                    controllerConfigRepository.observeActiveConfig(profile.id)
+                .flatMapLatest { layout ->
+                    controllerConfigRepository.observeActiveConfig(layout.id)
                         .map { it?.activeActionSet?.actionSet?.id }
                         .distinctUntilChanged()
                         .flatMapLatest { setId ->

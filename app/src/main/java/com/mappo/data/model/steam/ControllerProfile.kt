@@ -4,13 +4,13 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 
 /**
- * A controller-specific binding configuration belonging to a [Profile].
- * One [Profile] can hold multiple [ControllerProfile]s (e.g., separate configs
- * for the device's built-in pad and an attached Xbox controller). Per-profile
- * "active" controller is tracked separately at runtime (Phase 1 ships one per profile).
+ * A controller-specific binding configuration belonging to a [Layout].
+ * One [Layout] can hold multiple [ControllerProfile]s (e.g., separate configs
+ * for the device's built-in pad and an attached Xbox controller). Per-layout
+ * "active" controller is tracked separately at runtime (Phase 1 ships one per layout).
  *
  * `legacySet=true` (the common case) means action sets contain concrete output bindings.
  * `legacySet=false` means action sets reference an action manifest; Mappo defers
@@ -20,17 +20,17 @@ import com.mappo.data.model.Profile
     tableName = "controller_profile",
     foreignKeys = [
         ForeignKey(
-            entity = Profile::class,
+            entity = Layout::class,
             parentColumns = ["id"],
-            childColumns = ["profileId"],
+            childColumns = ["layoutId"],
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("profileId")],
+    indices = [Index("layoutId")],
 )
 data class ControllerProfile(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val profileId: Long,
+    val layoutId: Long,
     val controllerType: ControllerType,
     val name: String,
     val legacySet: Boolean = true,

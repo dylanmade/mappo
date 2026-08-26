@@ -228,7 +228,7 @@ interface MouseEmitter {
 
     /**
      * Clear all per-source velocity contributions. Called from
-     * `InputEvaluator.flushAnalog` on profile / action-set switch so a
+     * `InputEvaluator.flushAnalog` on layout / action-set switch so a
      * deflected stick doesn't leak motion across set boundaries.
      */
     fun clearAllVelocities()
@@ -401,11 +401,11 @@ interface GamepadEmitter {
  * to the launched game).
  *
  * This is the default mode for analog-capable sources (sticks, dpad, triggers)
- * on freshly-seeded profiles. The user must explicitly pick an analog mode for
+ * on freshly-seeded layouts. The user must explicitly pick an analog mode for
  * Mappo to start interpreting the source, which is also what gates the
  * [ShizukuMotionCoordinator][com.mappo.service.shizuku.ShizukuMotionCoordinator]'s
  * `/dev/input` enumeration — keeping `:shizuku-service` idle (battery) on
- * profiles that haven't opted in.
+ * layouts that haven't opted in.
  *
  * **Distinct from [NoneMode]** ([BindingMode.NONE]) which intercepts and
  * silences. See [feedback_none_vs_device_default_distinction.md].
@@ -512,7 +512,7 @@ object DpadMode : SourceMode {
     private val gyroIntegratedAngle = mutableMapOf<InputSource, FloatArray>()
 
     /**
-     * Public reset hook called from [InputEvaluator.flushAnalog] at profile
+     * Public reset hook called from [InputEvaluator.flushAnalog] at layout
      * / action-set boundaries so accumulated gyro tilt doesn't leak across
      * configurations. Joystick paths are stateless and unaffected.
      */
@@ -1080,7 +1080,7 @@ object TriggerMode : SourceMode {
 
     /**
      * Clear per-pull threshold-style state. Called from [InputEvaluator.flushAnalog] at
-     * profile / action-set boundaries so a stale lock or defer window can't leak across.
+     * layout / action-set boundaries so a stale lock or defer window can't leak across.
      */
     fun resetState() {
         styleStateBySource.clear()
@@ -2941,7 +2941,7 @@ internal data class GyroJoystickCameraSettings(
  *
  * **Auto-calibration.** Reference orientation captured on the first event
  * after [resetState] — i.e. at gyro-pipeline activation. The user's
- * natural holding angle becomes "neutral." Reset across profile / set
+ * natural holding angle becomes "neutral." Reset across layout / set
  * boundaries via [InputEvaluator.flushAnalog].
  *
  * **Output mapping** lives in [GyroJoystickDeflectionSettings]: the
@@ -2977,7 +2977,7 @@ object GyroToJoystickDeflectionMode : SourceMode {
 
     /**
      * Test seam + public reset hook. Called from
-     * [InputEvaluator.flushAnalog] at profile / action-set boundaries so
+     * [InputEvaluator.flushAnalog] at layout / action-set boundaries so
      * the next event re-captures a fresh reference.
      */
     fun resetState() {

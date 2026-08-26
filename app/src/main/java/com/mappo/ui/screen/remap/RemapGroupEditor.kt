@@ -256,9 +256,9 @@ internal fun RemapGroupEditor(
                     )
                     RichMenuItem(
                         title = "Import $modeName",
-                        helper = "Bring in a mode and inputs from another profile.",
+                        helper = "Bring in a mode and inputs from another layout.",
                         icon = Icons.Filled.Download,
-                        // Future: profile import. Inert while the acquisition flow lands.
+                        // Future: layout import. Inert while the acquisition flow lands.
                         onClick = { headerMore = false },
                     )
                     RichMenuItem(
@@ -378,7 +378,7 @@ internal fun RemapGroupEditor(
             if (editable) {
                 item(key = "editor-footer") {
                     // Centered dashed-outline action, sized like the rows' input/output
-                    // buttons ("Import input" was cut 2026-07-13 — profile import returns
+                    // buttons ("Import input" was cut 2026-07-13 — layout import returns
                     // with the acquisition flow).
                     Row(
                         modifier = Modifier

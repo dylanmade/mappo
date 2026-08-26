@@ -165,7 +165,7 @@ class InputEvaluator @Inject constructor(
      * Lifecycle: shifts whose `(triggerSource, triggerSubInput)` matches an
      * incoming press are appended in [activateModeShiftsFor]; shifts whose
      * trigger matches an incoming release are removed in [releaseModeShiftFor];
-     * [flushAllRuntime] clears the list on profile/set switch. Steam-faithful:
+     * [flushAllRuntime] clears the list on layout/set switch. Steam-faithful:
      * mode shifts always release on UP, never sticky.
      *
      * Multi-shift on same target source: the most-recently-activated wins
@@ -235,7 +235,7 @@ class InputEvaluator @Inject constructor(
      * DOUBLE_PRESS, or CHORDED_PRESS) fired during the current press cycle. Consulted
      * by RELEASE_PRESS in onRelease: if its `interruptable=true` AND this set contains
      * the address, RELEASE_PRESS is suppressed. Cleared per-address at the end of
-     * onRelease; [flushAllRuntime] clears the whole set on profile/set switch.
+     * onRelease; [flushAllRuntime] clears the whole set on layout/set switch.
      */
     private val moreSpecificFiredFor = HashSet<InputAddress>()
 
@@ -249,7 +249,7 @@ class InputEvaluator @Inject constructor(
      * without holding state themselves (modes are singletons).
      *
      * Persists across motion events; cleared per-source by [flushAnalog] on
-     * profile/set switch.
+     * layout/set switch.
      */
     private val analogLatched = HashMap<InputAddress, Boolean>()
 
@@ -1992,10 +1992,10 @@ class InputEvaluator @Inject constructor(
 
     /**
      * Brick 4: release any analog-mode runtime state. Called from [flushAllRuntime]
-     * (set-switch path) and from `ShizukuMotionCoordinator` on profile transitions
-     * so a `CHANGE_PRESET` or profile swap doesn't leak in-flight analog state —
+     * (set-switch path) and from `ShizukuMotionCoordinator` on layout transitions
+     * so a `CHANGE_PRESET` or layout swap doesn't leak in-flight analog state —
      * synthetic SOFT_PRESS edges latched on a trigger, synthetic dpad edges (Brick
-     * 6) held by a JOYSTICK_MOVE source, etc. — into the new set / profile.
+     * 6) held by a JOYSTICK_MOVE source, etc. — into the new set / layout.
      *
      * Brick 5 fills in trigger Soft_Press. For each latched virtual sub-input we
      * synthesize the matching UP edge so any held bindings the analog path put
@@ -2011,20 +2011,20 @@ class InputEvaluator @Inject constructor(
         // pure clear with no downstream emit.
         mouseEmitter.clearAllVelocities()
         // Brick C: zero every gamepad-emitting source so a deflected stick or
-        // pulled trigger doesn't leak into the next set/profile. Clearing one
+        // pulled trigger doesn't leak into the next set/layout. Clearing one
         // source at a time keeps the cached state correct without resetting
         // sources owned by a still-active mode.
         for (source in GAMEPAD_EMITTING_SOURCES) gamepadEmitter.clearSource(source)
         // DpadMode's gyro path is angle-integrated (tilt-and-hold = held
         // dpad direction); reset its per-source state so accumulated tilt
-        // doesn't leak across set/profile boundaries.
+        // doesn't leak across set/layout boundaries.
         com.mappo.service.input.modes.DpadMode.resetState()
         // GyroToJoystickDeflectionMode is tilt-based and caches a
         // per-source reference orientation. Reset so the next event
         // recalibrates against the user's new natural holding angle.
         com.mappo.service.input.modes.GyroToJoystickDeflectionMode.resetState()
         // TriggerMode caches per-pull threshold-style state (hip-fire defer window,
-        // exclusive lock); reset so it can't leak across a profile / action-set switch.
+        // exclusive lock); reset so it can't leak across a layout / action-set switch.
         com.mappo.service.input.modes.TriggerMode.resetState()
         // GyroToMouseMode caches per-source dt / momentum / movement-threshold /
         // rotational-haptic accumulators; reset at config boundaries.
@@ -2201,7 +2201,7 @@ class InputEvaluator @Inject constructor(
             // GYRO contributes to left or right stick via the gyro→stick
             // modes (Camera / Deflection). Without inclusion here, a
             // deflected stick from a prior gyro session persists in the
-            // virtual gamepad after profile/set switch (or any other
+            // virtual gamepad after layout/set switch (or any other
             // flushAnalog trigger) until something else writes to that
             // stick, which never happens if the new config has gyro back
             // on DEVICE_DEFAULT / NONE.

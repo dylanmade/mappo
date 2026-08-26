@@ -143,9 +143,9 @@ class ControllerConfigImportTest {
 
     @Test
     fun importsFullGraph() = runTest {
-        val cpId = subject.importConfig(profileId = 7L, imported = VdfImporter.import(sample))
+        val cpId = subject.importConfig(layoutId = 7L, imported = VdfImporter.import(sample))
 
-        // Controller profile.
+        // Controller layout.
         val cp = controllerProfileDao.getById(cpId)!!
         assertEquals(ControllerType.STEAM_DECK, cp.controllerType)
         assertEquals("gg", cp.name)

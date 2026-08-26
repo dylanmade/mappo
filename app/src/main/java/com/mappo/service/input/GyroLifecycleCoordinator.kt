@@ -35,7 +35,7 @@ import javax.inject.Singleton
  *  - Gyro lifecycle is *independent* of Shizuku — the sensor is an Android
  *    API, not a `/dev/input` reader. Mappo installs without Shizuku can still
  *    run gyro modes.
- *  - The predicate clauses overlap (profile, compiled config, remap toggle)
+ *  - The predicate clauses overlap (layout, compiled config, remap toggle)
  *    but the *decision* is different (start sensor listener vs. enable
  *    Shizuku enumeration), and the failure modes are different too
  *    (no-gyro-hardware vs. SELinux-blocked uinput).
@@ -79,7 +79,7 @@ class GyroLifecycleCoordinator @Inject constructor(
      * actively interacting (even from the lockscreen, e.g. glancing at
      * notifications); the predicate's other clauses still gate on
      * remap-enabled + scope-has-gyro-mode, so a screen-on-but-no-active-gyro
-     * profile stays inert anyway.
+     * layout stays inert anyway.
      */
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {

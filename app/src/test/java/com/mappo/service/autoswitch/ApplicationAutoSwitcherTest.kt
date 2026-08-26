@@ -1,9 +1,10 @@
 package com.mappo.service.autoswitch
 
 import app.cash.turbine.test
-import com.mappo.data.model.Profile
-import com.mappo.data.repository.AppProfileBindingRepository
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.model.Layout
+import com.mappo.data.repository.AppLayoutBindingRepository
+import com.mappo.data.repository.LayoutRepository
+import com.mappo.data.settings.ActiveApplicationStore
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.service.foreground.ForegroundAppFilter
 import com.mappo.service.foreground.ForegroundAppMonitor
@@ -20,53 +21,54 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Drives [ProfileAutoSwitcher.handleForegroundChange] directly with mocked
+ * Drives [ApplicationAutoSwitcher.handleForegroundChange] directly with mocked
  * collaborators. The dispatcher-bound start() collector isn't exercised here —
  * its only logic is `filterNotNull().distinctUntilChanged().collect(::handleForegroundChange)`,
  * which is trivial. Branch coverage of handleForegroundChange is the goal.
  */
-class ProfileAutoSwitcherTest {
+class ApplicationAutoSwitcherTest {
 
     private val foregroundAppMonitor = ForegroundAppMonitor(
         mockk { every { packageName } returns "com.mappo" }
     )
-    private lateinit var bindingRepo: AppProfileBindingRepository
-    private lateinit var profileRepo: ProfileRepository
+    private lateinit var bindingRepo: AppLayoutBindingRepository
+    private lateinit var layoutRepo: LayoutRepository
     private lateinit var settings: AutoSwitchSettings
+    private lateinit var activeAppStore: ActiveApplicationStore
     private lateinit var filter: ForegroundAppFilter
     private lateinit var inputDispatcher: com.mappo.service.input.InputDispatcher
-    private lateinit var subject: ProfileAutoSwitcher
+    private lateinit var subject: ApplicationAutoSwitcher
 
     private val autoSwitchEnabled = MutableStateFlow(true)
-    private val autoCreateEnabled = MutableStateFlow(false)
     private val ignoredPackages = MutableStateFlow<Set<String>>(emptySet())
-    private val activeProfile = MutableStateFlow<Profile?>(
-        Profile(id = 1L, name = "Default", isDefault = true),
+    private val activeLayout = MutableStateFlow<Layout?>(
+        Layout(id = 1L, name = "Default"),
     )
 
     @Before
     fun setUp() {
         bindingRepo = mockk(relaxed = true)
-        profileRepo = mockk(relaxed = true)
+        layoutRepo = mockk(relaxed = true)
         settings = mockk(relaxed = true)
         filter = mockk(relaxed = true)
         inputDispatcher = mockk(relaxed = true)
 
         every { settings.autoSwitchEnabled } returns autoSwitchEnabled
-        every { settings.autoCreateProfilesEnabled } returns autoCreateEnabled
+        activeAppStore = mockk(relaxed = true)
         every { settings.ignoredPackages } returns ignoredPackages
-        every { profileRepo.activeProfile } returns activeProfile
+        every { layoutRepo.activeLayout } returns activeLayout
         every { filter.isInteresting(any()) } returns true
         every { filter.appLabel(any()) } answers { firstArg<String>().substringAfterLast('.') }
         every { inputDispatcher.queryPrimaryDisplayForegroundPackage() } returns null
 
-        coEvery { bindingRepo.getForPackageOnce(any(), any()) } returns null
+        coEvery { bindingRepo.getForPackageOnce(any()) } returns null
 
-        subject = ProfileAutoSwitcher(
+        subject = ApplicationAutoSwitcher(
             foregroundAppMonitor = foregroundAppMonitor,
             bindingRepo = bindingRepo,
-            profileRepo = profileRepo,
+            layoutRepo = layoutRepo,
             settings = settings,
+            activeApplicationStore = activeAppStore,
             filter = filter,
             inputDispatcher = inputDispatcher,
             scope = TestScope(),
@@ -95,10 +97,10 @@ class ProfileAutoSwitcherTest {
 
     @Test
     fun emitsNothing_whenBindingMatchesActiveProfile() = runTest {
-        coEvery { bindingRepo.getForPackageOnce("com.example.game", any()) } returns
-            com.mappo.data.model.AppProfileBinding(
+        coEvery { bindingRepo.getForPackageOnce("com.example.game") } returns
+            com.mappo.data.model.AppLayoutBinding(
                 packageName = "com.example.game",
-                profileId = 1L,
+                layoutId = 1L,
             )
 
         subject.events.test {
@@ -109,22 +111,22 @@ class ProfileAutoSwitcherTest {
 
     @Test
     fun emitsSwitched_whenBindingPointsToDifferentProfile() = runTest {
-        val gameProfile = Profile(id = 7L, name = "Racing", isDefault = false)
-        coEvery { bindingRepo.getForPackageOnce("com.example.game", any()) } returns
-            com.mappo.data.model.AppProfileBinding(
+        val gameProfile = Layout(id = 7L, name = "Racing")
+        coEvery { bindingRepo.getForPackageOnce("com.example.game") } returns
+            com.mappo.data.model.AppLayoutBinding(
                 packageName = "com.example.game",
-                profileId = 7L,
+                layoutId = 7L,
             )
-        coEvery { profileRepo.setActiveProfileById(7L) } returns gameProfile
+        coEvery { layoutRepo.setActiveLayoutById(7L) } returns gameProfile
 
         subject.events.test {
             subject.handleForegroundChange("com.example.game")
             val event = awaitItem()
             assertEquals(
-                ProfileAutoSwitcher.UiEvent.Switched(
+                ApplicationAutoSwitcher.UiEvent.Switched(
                     pkg = "com.example.game",
                     appLabel = "game",
-                    profileName = "Racing",
+                    layoutName = "Racing",
                 ),
                 event,
             )
@@ -133,12 +135,12 @@ class ProfileAutoSwitcherTest {
 
     @Test
     fun emitsNothing_whenBindingReferencesMissingProfile() = runTest {
-        coEvery { bindingRepo.getForPackageOnce("com.example.game", any()) } returns
-            com.mappo.data.model.AppProfileBinding(
+        coEvery { bindingRepo.getForPackageOnce("com.example.game") } returns
+            com.mappo.data.model.AppLayoutBinding(
                 packageName = "com.example.game",
-                profileId = 999L,
+                layoutId = 999L,
             )
-        coEvery { profileRepo.setActiveProfileById(999L) } returns null
+        coEvery { layoutRepo.setActiveLayoutById(999L) } returns null
 
         subject.events.test {
             subject.handleForegroundChange("com.example.game")
@@ -154,8 +156,8 @@ class ProfileAutoSwitcherTest {
             subject.handleForegroundChange("com.example.game")
             expectNoEvents()
         }
-        coVerify(exactly = 0) { profileRepo.addProfile(any(), any()) }
-        coVerify(exactly = 0) { bindingRepo.bind(any(), any(), any()) }
+        coVerify(exactly = 0) { layoutRepo.addLayout(any(), any()) }
+        coVerify(exactly = 0) { bindingRepo.bind(any(), any()) }
     }
 
     @Test
@@ -163,22 +165,23 @@ class ProfileAutoSwitcherTest {
         every { inputDispatcher.queryPrimaryDisplayForegroundPackage() } returns null
         // foregroundAppMonitor's currentPackage is null initially.
         subject.reevaluate()
-        coVerify(exactly = 0) { bindingRepo.getForPackageOnce(any(), any()) }
+        coVerify(exactly = 0) { bindingRepo.getForPackageOnce(any()) }
     }
 
     @Test
     fun reevaluate_cachedPackage_firesHandleForegroundChange() = runTest {
         foregroundAppMonitor.reportForegroundPackage("com.example.foo")
         every { inputDispatcher.queryPrimaryDisplayForegroundPackage() } returns null
-        coEvery { bindingRepo.getForPackageOnce("com.example.foo", any()) } returns null
+        coEvery { bindingRepo.getForPackageOnce("com.example.foo") } returns null
 
         // Use a TestScope so launch in reevaluate() runs against the test dispatcher.
         val testScope = this
-        val testSubject = ProfileAutoSwitcher(
+        val testSubject = ApplicationAutoSwitcher(
             foregroundAppMonitor = foregroundAppMonitor,
             bindingRepo = bindingRepo,
-            profileRepo = profileRepo,
+            layoutRepo = layoutRepo,
             settings = settings,
+            activeApplicationStore = activeAppStore,
             filter = filter,
             inputDispatcher = inputDispatcher,
             scope = testScope,
@@ -186,7 +189,7 @@ class ProfileAutoSwitcherTest {
         testSubject.reevaluate()
         testScope.testScheduler.advanceUntilIdle()
 
-        coVerify { bindingRepo.getForPackageOnce("com.example.foo", any()) }
+        coVerify { bindingRepo.getForPackageOnce("com.example.foo") }
     }
 
     @Test
@@ -195,14 +198,15 @@ class ProfileAutoSwitcherTest {
         // display foreground app. The live result should win.
         foregroundAppMonitor.reportForegroundPackage("com.example.stale")
         every { inputDispatcher.queryPrimaryDisplayForegroundPackage() } returns "com.example.live"
-        coEvery { bindingRepo.getForPackageOnce(any(), any()) } returns null
+        coEvery { bindingRepo.getForPackageOnce(any()) } returns null
 
         val testScope = this
-        val testSubject = ProfileAutoSwitcher(
+        val testSubject = ApplicationAutoSwitcher(
             foregroundAppMonitor = foregroundAppMonitor,
             bindingRepo = bindingRepo,
-            profileRepo = profileRepo,
+            layoutRepo = layoutRepo,
             settings = settings,
+            activeApplicationStore = activeAppStore,
             filter = filter,
             inputDispatcher = inputDispatcher,
             scope = testScope,
@@ -210,7 +214,7 @@ class ProfileAutoSwitcherTest {
         testSubject.reevaluate()
         testScope.testScheduler.advanceUntilIdle()
 
-        coVerify { bindingRepo.getForPackageOnce("com.example.live", any()) }
-        coVerify(exactly = 0) { bindingRepo.getForPackageOnce("com.example.stale", any()) }
+        coVerify { bindingRepo.getForPackageOnce("com.example.live") }
+        coVerify(exactly = 0) { bindingRepo.getForPackageOnce("com.example.stale") }
     }
 }

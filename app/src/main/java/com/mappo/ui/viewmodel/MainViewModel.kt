@@ -3,11 +3,11 @@ package com.mappo.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mappo.data.defaults.DefaultLayouts
-import com.mappo.data.model.AppProfileBinding
+import com.mappo.data.model.AppLayoutBinding
 import com.mappo.data.model.GridButton
 import com.mappo.data.model.GridLayout
 import com.mappo.data.model.LayoutSnapshot
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.RemapTarget
 import com.mappo.data.model.TemplateRef
 import com.mappo.data.model.TrackpadGesture
@@ -30,13 +30,14 @@ import com.mappo.data.model.wouldOverlap
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.resolveActionSet
-import com.mappo.data.repository.AppProfileBindingRepository
+import com.mappo.data.repository.AppLayoutBindingRepository
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.InstalledAppsRepository
 import com.mappo.data.repository.KeyboardTemplateRepository
+import com.mappo.data.repository.KeyLayoutRepository
 import com.mappo.data.repository.LayoutRepository
-import com.mappo.data.repository.ProfileRepository
 import com.mappo.data.settings.ShizukuRequiredPreferences
+import com.mappo.data.settings.ActiveApplicationStore
 import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.FrameStyle
@@ -45,7 +46,7 @@ import com.mappo.data.settings.TextSizeSettings
 import com.mappo.di.IoDispatcher
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.steam.auth.SteamCredentialStore
-import com.mappo.service.autoswitch.ProfileAutoSwitcher
+import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.service.foreground.ForegroundAppFilter
 import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.CompiledConfig
@@ -96,17 +97,18 @@ sealed class TabUiEvent {
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class MainViewModel @Inject constructor(
+    private val keyLayoutRepository: KeyLayoutRepository,
     private val layoutRepository: LayoutRepository,
-    private val profileRepository: ProfileRepository,
     private val controllerConfigRepository: ControllerConfigRepository,
-    private val appProfileBindingRepository: AppProfileBindingRepository,
+    private val appLayoutBindingRepository: AppLayoutBindingRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val autoSwitchSettings: AutoSwitchSettings,
+    private val activeApplicationStore: ActiveApplicationStore,
     private val frameSettings: FrameSettings,
     private val textSizeSettings: TextSizeSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
-    private val autoSwitcher: ProfileAutoSwitcher,
+    private val autoSwitcher: ApplicationAutoSwitcher,
     private val foregroundAppFilter: ForegroundAppFilter,
     foregroundAppMonitor: ForegroundAppMonitor,
     private val keyboardTemplateRepository: KeyboardTemplateRepository,
@@ -155,7 +157,7 @@ class MainViewModel @Inject constructor(
 
     // Single source of truth for "is some tab being edited?". Replaces the previous
     // (_isEditMode, _editingLayout) pair: there's no buffered draft anymore — every
-    // edit op writes through to _layouts and the DB immediately. `null` = not editing.
+    // edit op writes through to _allLayouts and the DB immediately. `null` = not editing.
     private val _editingLayoutId = MutableStateFlow<Long?>(null)
     val editingLayoutId: StateFlow<Long?> = _editingLayoutId.asStateFlow()
     val isEditMode: StateFlow<Boolean> = _editingLayoutId
@@ -183,10 +185,10 @@ class MainViewModel @Inject constructor(
     )
     val tabUiEvents: SharedFlow<TabUiEvent> = _tabUiEvents.asSharedFlow()
 
-    val activeProfile: StateFlow<Profile?> = profileRepository.activeProfile
+    val activeLayout: StateFlow<Layout?> = layoutRepository.activeLayout
 
-    private val _profiles = MutableStateFlow<ImmutableList<Profile>>(persistentListOf())
-    val profiles: StateFlow<ImmutableList<Profile>> = _profiles.asStateFlow()
+    private val _allLayouts = MutableStateFlow<ImmutableList<Layout>>(persistentListOf())
+    val allLayouts: StateFlow<ImmutableList<Layout>> = _allLayouts.asStateFlow()
 
     override val remapEnabled: StateFlow<Boolean> = keyboardController.remapEnabled
 
@@ -196,9 +198,8 @@ class MainViewModel @Inject constructor(
     val activateWarningSuppressed: StateFlow<Boolean> =
         autoSwitchSettings.activateWarningSuppressed
 
-    val autoCreateProfilesEnabled: StateFlow<Boolean> = autoSwitchSettings.autoCreateProfilesEnabled
-
-    val ignoredPackages: StateFlow<Set<String>> = autoSwitchSettings.ignoredPackages
+    /** The ACTIVE APPLICATION — first-class and layout-independent (2026-08-26). */
+    val activeAppPackage: StateFlow<String?> = activeApplicationStore.activeAppPackage
 
     /** Handheld-frame chrome styling (Frame style settings screen + HandheldFrame). */
     val frameStyle: StateFlow<FrameStyle> = frameSettings.style
@@ -206,8 +207,8 @@ class MainViewModel @Inject constructor(
     /** App-level text size (options panel dropdown); applied via context wrapping. */
     val textSize: StateFlow<TextSize> = textSizeSettings.size
 
-    val appProfileBindings: StateFlow<ImmutableList<AppProfileBinding>> =
-        appProfileBindingRepository.getAll()
+    val appLayoutBindings: StateFlow<ImmutableList<AppLayoutBinding>> =
+        appLayoutBindingRepository.getAll()
             .map { it.toImmutableList() }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), persistentListOf())
 
@@ -224,10 +225,10 @@ class MainViewModel @Inject constructor(
     val installedApps: StateFlow<List<InstalledAppsRepository.InstalledApp>> =
         _installedApps.asStateFlow()
 
-    val autoSwitchEvents: SharedFlow<ProfileAutoSwitcher.UiEvent> = autoSwitcher.events
+    val autoSwitchEvents: SharedFlow<ApplicationAutoSwitcher.UiEvent> = autoSwitcher.events
 
     /**
-     * The materialized binding graph for the active profile's active controller.
+     * The materialized binding graph for the active layout's active controller.
      * Auto-seeds a default config on first observation if none exists.
      * `RemapControlsScreen` reads this and writes back via [setControllerBinding].
      *
@@ -235,34 +236,34 @@ class MainViewModel @Inject constructor(
      * runtime path the evaluator reads on every key/motion event.
      */
     val activeControllerConfig: StateFlow<ControllerConfig?> =
-        activeProfile.filterNotNull()
+        activeLayout.filterNotNull()
             .flatMapLatest { controllerConfigRepository.observeActiveConfig(it.id) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * 2026-08-20 flow re-imagining: which layout (Profile) the controls screen is
+     * 2026-08-20 flow re-imagining: which layout (Layout) the controls screen is
      * *viewing*. Null = follow the active layout — the home state. The layouts view sets
      * a specific id when the user opens a layout to inspect it WITHOUT activating; the
      * top bar's "Activate layout" then promotes it via [activateLayoutManually].
      */
-    private val _viewingProfileId = MutableStateFlow<Long?>(null)
+    private val _viewingLayoutId = MutableStateFlow<Long?>(null)
 
     /** The layout the controls screen shows: the viewed one, falling back to the active
      *  layout when nothing specific is viewed (or the viewed id disappeared). */
-    val viewedProfile: StateFlow<Profile?> =
-        combine(_viewingProfileId, activeProfile, _profiles) { viewingId, active, all ->
+    val viewedLayout: StateFlow<Layout?> =
+        combine(_viewingLayoutId, activeLayout, _allLayouts) { viewingId, active, all ->
             if (viewingId == null) active
             else all.firstOrNull { it.id == viewingId } ?: active
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * The materialized binding graph the controls screen EDITS — the viewed profile's.
+     * The materialized binding graph the controls screen EDITS — the viewed layout's.
      * Distinct from [activeControllerConfig], which stays pinned to the runtime-active
-     * profile and is what compiles into the input dispatcher: viewing a layout must never
+     * layout and is what compiles into the input dispatcher: viewing a layout must never
      * change what physical buttons do.
      */
     val viewedControllerConfig: StateFlow<ControllerConfig?> =
-        viewedProfile.filterNotNull()
+        viewedLayout.filterNotNull()
             .map { it.id }
             .distinctUntilChanged()
             .flatMapLatest { controllerConfigRepository.observeActiveConfig(it) }
@@ -275,7 +276,7 @@ class MainViewModel @Inject constructor(
      * — so the editor always lands somewhere sensible without the VM having to chase the
      * config's first set whenever the config changes.
      *
-     * Maintenance: reset to null when the active profile changes (different controller's
+     * Maintenance: reset to null when the active layout changes (different controller's
      * sets are unaddressable from here) or when the currently-viewed set disappears from
      * the config (e.g., user deleted it — Brick 4.4 territory). The cleanup collector is
      * cheap because the only state read is `actionSets.map { it.id }`.
@@ -290,7 +291,7 @@ class MainViewModel @Inject constructor(
      * truth for the layer pill row's selected state (5.4).
      *
      * Layers are *per-set*: each [ActionSet] has its own layer namespace. Maintenance:
-     *  - Reset to null when the active profile changes (different controller's layers).
+     *  - Reset to null when the active layout changes (different controller's layers).
      *  - Reset to null when the viewing action set changes (sibling sets' ids are unrelated).
      *  - Reset to null when the layer disappears from the viewing set (user deleted it).
      *
@@ -331,7 +332,7 @@ class MainViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            profileRepository.getAllProfiles().collect { _profiles.value = it.toImmutableList() }
+            layoutRepository.getAllLayouts().collect { _allLayouts.value = it.toImmutableList() }
         }
         // Relay run-mode dispatch errors from the controller into this VM's toast stream
         // so MainScreen's existing `toastMessage` collector keeps surfacing them.
@@ -343,7 +344,7 @@ class MainViewModel @Inject constructor(
             overlayPresenter.errorMessages.collect { _toastMessage.tryEmit(it) }
         }
         viewModelScope.launch {
-            // The runtime path: the ACTIVE profile's config compiles into the dispatcher —
+            // The runtime path: the ACTIVE layout's config compiles into the dispatcher —
             // never the viewed one (viewing a layout must not change what buttons do).
             activeControllerConfig.collect { config ->
                 val compiled = config?.toCompiled() ?: CompiledConfig.EMPTY
@@ -376,10 +377,10 @@ class MainViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            // Viewed-profile change → forget the previous controller's set + layer
+            // Viewed-layout change → forget the previous controller's set + layer
             // selection. Keyed on the resolved viewed id, so ACTIVATING the viewed layout
-            // (activeProfile flips to it, viewed id unchanged) keeps the selections.
-            viewedProfile.map { it?.id }.distinctUntilChanged().collect {
+            // (activeLayout flips to it, viewed id unchanged) keeps the selections.
+            viewedLayout.map { it?.id }.distinctUntilChanged().collect {
                 _viewingActionSetId.value = null
                 _viewingLayerId.value = null
             }
@@ -390,9 +391,8 @@ class MainViewModel @Inject constructor(
             _viewingActionSetId.collect { _viewingLayerId.value = null }
         }
         viewModelScope.launch {
-            combine(appProfileBindings, ignoredPackages, _profiles) { bindings, ignored, profs ->
+            combine(appLayoutBindings, _allLayouts) { bindings, profs ->
                 bindings.mapTo(mutableSetOf()) { it.packageName }.apply {
-                    addAll(ignored)
                     // Layouts carry their parent application directly now — the drawer
                     // header and cards need those labels even for unbound packages.
                     profs.forEach { p -> p.packageName?.let(::add) }
@@ -409,10 +409,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // ── Profile ───────────────────────────────────────────────────────────────
+    // ── Layout ───────────────────────────────────────────────────────────────
 
-    fun selectProfile(profile: Profile) {
-        profileRepository.setActiveProfile(profile)
+    fun selectLayout(layout: Layout) {
+        layoutRepository.setActiveLayout(layout)
         keyboardController.setSelectedIndex(0)
     }
 
@@ -420,8 +420,23 @@ class MainViewModel @Inject constructor(
      * Point the controls screen at a specific layout WITHOUT activating it (the layouts
      * view's tap), or back at the active layout with null (the home instance).
      */
-    fun setViewingProfile(profileId: Long?) {
-        _viewingProfileId.value = profileId
+    fun setViewingLayout(layoutId: Long?) {
+        _viewingLayoutId.value = layoutId
+    }
+
+    /**
+     * "Select application" (an applications-drawer card): move the ACTIVE APPLICATION
+     * pointer — valid with or without layouts (2026-08-26: the core flow is opening
+     * Mappo over a fresh game and creating/installing its first layout from the
+     * no-layout state). When the app has an active layout, it activates too.
+     */
+    fun activateApplication(packageName: String) {
+        activeApplicationStore.setActiveApplication(packageName)
+        viewModelScope.launch {
+            val binding = appLayoutBindingRepository.getForPackageOnce(packageName)
+            val layout = binding?.let { b -> _allLayouts.value.firstOrNull { it.id == b.layoutId } }
+            if (layout != null) activateLayoutManually(layout)
+        }
     }
 
     /**
@@ -437,15 +452,19 @@ class MainViewModel @Inject constructor(
      * default-layout concept (2026-08-24) — the activated layout IS the app's functional
      * default.
      */
-    fun activateLayoutManually(profile: Profile) {
+    fun activateLayoutManually(layout: Layout) {
         // Read the detected app BEFORE selecting — selection moves the active pointer.
-        val detectedPackage = activeProfile.value?.packageName
-        if (profile.packageName != detectedPackage) {
+        val detectedPackage = activeApplicationStore.activeAppPackage.value
+            ?: activeLayout.value?.packageName
+        if (layout.packageName != detectedPackage) {
             autoSwitchSettings.setAutoSwitchEnabled(false)
         }
-        selectProfile(profile)
-        profile.packageName?.let { pkg ->
-            viewModelScope.launch { appProfileBindingRepository.bind(pkg, profile.id) }
+        // A layout activation IS an application activation — the layout carries its one
+        // parent application (2026-08-26).
+        activeApplicationStore.setActiveApplication(layout.packageName)
+        selectLayout(layout)
+        layout.packageName?.let { pkg ->
+            viewModelScope.launch { appLayoutBindingRepository.bind(pkg, layout.id) }
         }
     }
 
@@ -454,46 +473,47 @@ class MainViewModel @Inject constructor(
         autoSwitchSettings.setActivateWarningSuppressed(true)
     }
 
-    fun addProfile(name: String) {
-        viewModelScope.launch { profileRepository.addProfile(name) }
+    fun addLayout(name: String) {
+        viewModelScope.launch { layoutRepository.addLayout(name) }
     }
 
     /**
-     * The new-profile form's commit: create the profile under its parent application
-     * (the first picked package — membership lives on [Profile.packageName] since the
-     * 2026-08-21 model adjustment), then claim the app's auto-switch binding only where
-     * it's still free: the binding is the app's functional-default pointer (its last
-     * activated layout — 2026-08-24), and creating a second layout for an app must not
-     * silently steal it.
+     * The new-layout form's commit: create the layout under its ONE parent application
+     * (2026-08-26 model: a layout is only ever associated with one application — the
+     * multi-app coverage the old layout concept allowed is retired), then claim the
+     * app's active-layout binding only where it's still free: the binding is the app's
+     * functional-default pointer (its last activated layout — 2026-08-24), and creating
+     * a second layout for an app must not silently steal it.
      */
-    fun createProfile(name: String, packages: Set<String>) {
+    fun createLayout(name: String, packageName: String?) {
         viewModelScope.launch {
-            val newId = profileRepository.addProfile(name, packageName = packages.firstOrNull())
-            for (pkg in packages) {
-                if (appProfileBindingRepository.getForPackageOnce(pkg) == null) {
-                    appProfileBindingRepository.bind(pkg, newId)
-                }
+            val newId = layoutRepository.addLayout(name, packageName = packageName)
+            if (packageName != null &&
+                appLayoutBindingRepository.getForPackageOnce(packageName) == null
+            ) {
+                appLayoutBindingRepository.bind(packageName, newId)
             }
             // Jump the controls view to the fresh layout (2026-08-25) — creating from
             // the no-layout state / "+ New layout" card should land the user IN their
             // new layout, not back on the previously previewed one.
-            _viewingProfileId.value = newId
+            _viewingLayoutId.value = newId
         }
     }
 
-    fun duplicateProfile(source: Profile) {
+    fun duplicateLayout(source: Layout) {
         viewModelScope.launch {
-            profileRepository.duplicateProfile(source, "Copy of ${source.name}")
+            layoutRepository.duplicateLayout(source, "Copy of ${source.name}")
         }
     }
 
-    fun deleteProfile(profile: Profile) {
-        val defaultProfile = _profiles.value.firstOrNull { it.isDefault }
+    fun deleteLayout(layout: Layout) {
         viewModelScope.launch {
-            profileRepository.deleteProfile(profile)
-            if (activeProfile.value?.id == profile.id && defaultProfile != null) {
-                profileRepository.setActiveProfile(defaultProfile)
-                keyboardController.setSelectedIndex(0)
+            // The app binding row cascades away with the layout; deleting the ACTIVE
+            // layout leaves nothing active (no default-layout fallback — the app's
+            // no-layout state is first-class, 2026-08-26).
+            layoutRepository.deleteLayout(layout)
+            if (activeLayout.value?.id == layout.id) {
+                layoutRepository.clearActiveLayout()
             }
         }
     }
@@ -519,10 +539,6 @@ class MainViewModel @Inject constructor(
         autoSwitchSettings.setAutoSwitchEnabled(enabled)
     }
 
-    fun setAutoCreateProfilesEnabled(enabled: Boolean) {
-        autoSwitchSettings.setAutoCreateProfilesEnabled(enabled)
-    }
-
     // ── Frame style ───────────────────────────────────────────────────────────
 
     /** Live-preview a frame restyle (slider drag) without persisting. */
@@ -544,26 +560,13 @@ class MainViewModel @Inject constructor(
         autoSwitcher.reevaluate()
     }
 
-    fun unignorePackage(pkg: String) {
-        autoSwitchSettings.removeIgnoredPackage(pkg)
-    }
-
-    fun deleteBinding(packageName: String, subId: String = "") {
-        viewModelScope.launch { appProfileBindingRepository.unbind(packageName, subId) }
-    }
-
     /**
-     * Bind every package in [packages] to [profileId]. Used by the
+     * Bind every package in [packages] to [layoutId]. Used by the
      * Auto-Switch app-picker sheet (Brick 2). Existing bindings on those
-     * packages are silently re-pointed to the new profile, mirroring
+     * packages are silently re-pointed to the new layout, mirroring
      * single-bind semantics — the picker UI shows the user the override
      * before they confirm.
      */
-    fun bindAppsToProfile(profileId: Long, packages: Set<String>) {
-        if (packages.isEmpty()) return
-        viewModelScope.launch { appProfileBindingRepository.bindMany(profileId, packages) }
-    }
-
     /**
      * Populate [installedApps] for the app-picker sheet. Cheap to call
      * repeatedly — the repo does a single PackageManager pass off the IO
@@ -579,12 +582,12 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * Replaces the single binding on [activatorId] with [output]. Active-profile guard
-     * means picker round-trips that fire after the profile is gone become no-ops
+     * Replaces the single binding on [activatorId] with [output]. Active-layout guard
+     * means picker round-trips that fire after the layout is gone become no-ops
      * rather than throwing.
      */
     fun setControllerBinding(activatorId: Long, output: BindingOutput) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.setBinding(activatorId, output) }
     }
 
@@ -594,19 +597,19 @@ class MainViewModel @Inject constructor(
      * editor when each command row owns its own picker result.
      */
     fun setControllerCommand(bindingId: Long, output: BindingOutput) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.setCommand(bindingId, output) }
     }
 
     /** Append a new Unbound command to [activatorId]. See `addCommand` in the repository. */
     fun addControllerCommand(activatorId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.addCommand(activatorId) }
     }
 
     /** Delete a specific command (Binding row). The UI guards against removing the last. */
     fun removeControllerCommand(bindingId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.removeCommand(bindingId) }
     }
 
@@ -614,25 +617,25 @@ class MainViewModel @Inject constructor(
 
     /** Add an input row of [type] to a group input (defaults to a regular press). */
     fun addInputRow(groupInputId: Long, type: com.mappo.data.model.steam.ActivatorType = com.mappo.data.model.steam.ActivatorType.FULL_PRESS) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.addInputRow(groupInputId, type) }
     }
 
     /** Change an input row's press type (reparents the binding into the type's bucket). */
     fun setInputRowPressType(bindingId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.setInputRowPressType(bindingId, type) }
     }
 
     /** Set an input row's user label ([com.mappo.data.model.steam.Binding.label]). */
     fun setInputRowLabel(bindingId: Long, label: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.setInputRowLabel(bindingId, label) }
     }
 
     /** Delete an input row. UI disables this when it's the group input's last remaining row. */
     fun deleteInputRow(bindingId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.deleteInputRow(bindingId) }
     }
 
@@ -654,16 +657,16 @@ class MainViewModel @Inject constructor(
      */
     fun addControllerActionSet(name: String, title: String, inheritFromSetId: Long? = null) {
         val cpId = viewedControllerConfig.value?.controllerProfile?.id ?: return
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.addActionSet(cpId, name, title, inheritFromSetId)
             _viewingActionSetId.value = newId
         }
     }
 
-    /** Rename action set [actionSetId]. No-op for unknown ids or when no profile is active. */
+    /** Rename action set [actionSetId]. No-op for unknown ids or when no layout is active. */
     fun renameControllerActionSet(actionSetId: Long, name: String, title: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.renameActionSet(actionSetId, name, title) }
     }
 
@@ -673,7 +676,7 @@ class MainViewModel @Inject constructor(
      * hunting for it.
      */
     fun duplicateControllerActionSet(sourceSetId: Long, name: String, title: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.duplicateActionSet(sourceSetId, name, title)
             _viewingActionSetId.value = newId
@@ -687,7 +690,7 @@ class MainViewModel @Inject constructor(
      * `activeControllerConfig` collector when the deletion lands.
      */
     fun deleteControllerActionSet(actionSetId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.deleteActionSet(actionSetId) }
     }
 
@@ -709,16 +712,16 @@ class MainViewModel @Inject constructor(
      * `addControllerActionSet` flips the set pointer to the new set).
      */
     fun addControllerActionLayer(actionSetId: Long, name: String, title: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.addLayer(actionSetId, name, title)
             _viewingLayerId.value = newId
         }
     }
 
-    /** Rename layer [layerId]. No-op for unknown ids or when no profile is active. */
+    /** Rename layer [layerId]. No-op for unknown ids or when no layout is active. */
     fun renameControllerActionLayer(layerId: Long, name: String, title: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.renameLayer(layerId, name, title) }
     }
 
@@ -727,7 +730,7 @@ class MainViewModel @Inject constructor(
      * so the user can immediately tweak the copy.
      */
     fun duplicateControllerActionLayer(sourceLayerId: Long, name: String, title: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.duplicateLayer(sourceLayerId, name, title)
             _viewingLayerId.value = newId
@@ -740,7 +743,7 @@ class MainViewModel @Inject constructor(
      * here.
      */
     fun deleteControllerActionLayer(layerId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.deleteLayer(layerId) }
     }
 
@@ -752,14 +755,14 @@ class MainViewModel @Inject constructor(
      * id so callers (e.g., the per-input editor) can immediately route picker results
      * to the new override.
      *
-     * No-op (returns null) when no profile is active.
+     * No-op (returns null) when no layout is active.
      */
     suspend fun materializeLayerOverride(
         layerId: Long,
         inputSource: com.mappo.data.model.steam.InputSource,
         groupInputKey: String,
     ): Long? {
-        if (activeProfile.value == null) return null
+        if (activeLayout.value == null) return null
         return controllerConfigRepository.materializeLayerOverride(
             layerId = layerId,
             inputSource = inputSource,
@@ -778,7 +781,7 @@ class MainViewModel @Inject constructor(
         inputSource: com.mappo.data.model.steam.InputSource,
         groupInputKey: String,
     ) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.clearLayerOverride(layerId, inputSource, groupInputKey)
         }
@@ -792,7 +795,7 @@ class MainViewModel @Inject constructor(
      * filters them, so a mode switch is reversible by picking the original back.
      */
     fun setBindingGroupMode(bindingGroupId: Long, mode: com.mappo.data.model.steam.BindingMode) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateBindingGroupMode(bindingGroupId, mode)
         }
@@ -803,7 +806,7 @@ class MainViewModel @Inject constructor(
      * settings cog on each Remap Controls source row.
      */
     fun setBindingGroupSettings(bindingGroupId: Long, settingsJson: String) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateBindingGroupSettings(bindingGroupId, settingsJson)
         }
@@ -818,7 +821,7 @@ class MainViewModel @Inject constructor(
      * its row.
      */
     fun addModeShiftToSet(actionSetId: Long, ownerSource: com.mappo.data.model.steam.InputSource) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.addModeShiftToSet(actionSetId, ownerSource)
         }
@@ -826,7 +829,7 @@ class MainViewModel @Inject constructor(
 
     /** Layer-owned variant of [addModeShiftToSet]. */
     fun addModeShiftToLayer(actionLayerId: Long, ownerSource: com.mappo.data.model.steam.InputSource) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.addModeShiftToLayer(actionLayerId, ownerSource)
         }
@@ -834,7 +837,7 @@ class MainViewModel @Inject constructor(
 
     /** Remove [modeShiftId]; its target binding group cascade-deletes too. */
     fun removeModeShift(modeShiftId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.removeModeShift(modeShiftId) }
     }
 
@@ -847,7 +850,7 @@ class MainViewModel @Inject constructor(
         triggerSource: com.mappo.data.model.steam.InputSource?,
         triggerSubInput: String?,
     ) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.setModeShiftTrigger(modeShiftId, triggerSource, triggerSubInput)
         }
@@ -861,7 +864,7 @@ class MainViewModel @Inject constructor(
      * await before navigating.
      */
     suspend fun materializeModeShiftInput(modeShiftId: Long, groupInputKey: String): Long {
-        if (activeProfile.value == null) return 0L
+        if (activeLayout.value == null) return 0L
         return controllerConfigRepository.materializeModeShiftInput(modeShiftId, groupInputKey)
     }
 
@@ -870,19 +873,19 @@ class MainViewModel @Inject constructor(
      * Used by the per-input editor screen's `[+ Add Activator]` action.
      */
     fun addControllerActivator(groupInputId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.addActivator(groupInputId, type) }
     }
 
     /** Delete an activator from the active config. */
     fun removeControllerActivator(activatorId: Long) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.removeActivator(activatorId) }
     }
 
     /** Change an activator's [com.mappo.data.model.steam.ActivatorType]. Bindings preserved. */
     fun setControllerActivatorType(activatorId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch { controllerConfigRepository.updateActivatorType(activatorId, type) }
     }
 
@@ -895,7 +898,7 @@ class MainViewModel @Inject constructor(
         activatorId: Long,
         settings: com.mappo.service.input.CompiledActivatorSettings,
     ) {
-        if (activeProfile.value == null) return
+        if (activeLayout.value == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateActivatorSettings(activatorId, settings.toJson())
         }
@@ -982,11 +985,11 @@ class MainViewModel @Inject constructor(
         buttonId: String,
         transform: (GridLayout) -> GridLayout?,
     ) {
-        val profileId = activeProfile.value?.id ?: return
+        val layoutId = activeLayout.value?.id ?: return
         val current = keyboardController.layouts.value.find { l -> l.buttons.any { it.id == buttonId } }
             ?: return
         val updated = transform(current) ?: return
-        persistLayoutFields(updated, profileId)
+        persistLayoutFields(updated, layoutId)
     }
 
     /**
@@ -994,19 +997,19 @@ class MainViewModel @Inject constructor(
      * where the only meaningful target is the visible tab — these are only triggered
      * from the visible keyboard's edit-mode UI in the first place.
      *
-     * Resolves the displayed layout from `_layouts` + `_selectedIndex` directly rather
+     * Resolves the displayed layout from `_allLayouts` + `_selectedIndex` directly rather
      * than reading [displayLayout].value — that StateFlow uses WhileSubscribed and
      * returns its initial fallback when there are no active collectors (e.g. in unit
      * tests), which would silently route writes to the default layout instead of the
      * one the user is editing.
      */
     private inline fun mutateDisplayedLayout(transform: (GridLayout) -> GridLayout?) {
-        val profileId = activeProfile.value?.id ?: return
+        val layoutId = activeLayout.value?.id ?: return
         val layouts = keyboardController.layouts.value
         val current = layouts.getOrNull(keyboardController.selectedIndex.value)
             ?: layouts.firstOrNull() ?: return
         val updated = transform(current) ?: return
-        persistLayoutFields(updated, profileId)
+        persistLayoutFields(updated, layoutId)
     }
 
     /**
@@ -1219,9 +1222,9 @@ class MainViewModel @Inject constructor(
             if (newIdx >= 0) keyboardController.setSelectedIndex(newIdx)
         }
 
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val idToPosition = reordered.mapIndexed { idx, layout -> layout.id to idx }.toMap()
-        viewModelScope.launch { layoutRepository.reorder(profileId, idToPosition) }
+        viewModelScope.launch { keyLayoutRepository.reorder(activeLayoutId, idToPosition) }
     }
 
     /**
@@ -1230,8 +1233,8 @@ class MainViewModel @Inject constructor(
      * must go through [tryResizeLayout] so an overflow check has a chance to fire.
      */
     fun updateLayoutInstant(updated: GridLayout) {
-        val profileId = activeProfile.value?.id ?: return
-        persistLayoutFields(updated, profileId)
+        val activeLayoutId = activeLayout.value?.id ?: return
+        persistLayoutFields(updated, activeLayoutId)
     }
 
     /**
@@ -1241,7 +1244,7 @@ class MainViewModel @Inject constructor(
      * [applyResizeWithAutoFit] if the user opts to drop the offending buttons.
      */
     fun tryResizeLayout(layoutId: Long, columns: Int, rows: Int): List<String>? {
-        val profileId = activeProfile.value?.id ?: return null
+        val activeLayoutId = activeLayout.value?.id ?: return null
         val layout = keyboardController.layouts.value.find { it.id == layoutId } ?: return null
         val offending = layout.buttonsExceeding(columns, rows)
         if (offending.isNotEmpty()) {
@@ -1252,7 +1255,7 @@ class MainViewModel @Inject constructor(
             columns,
             rows,
         )
-        persistLayoutFields(clamped, profileId)
+        persistLayoutFields(clamped, activeLayoutId)
         if (defaultsShrunk) {
             emitToast("Default button size adjusted to fit new Keyboard dimensions")
         }
@@ -1264,7 +1267,7 @@ class MainViewModel @Inject constructor(
      * the requested dimensions. Emits a toast with the drop count.
      */
     fun applyResizeWithAutoFit(layoutId: Long, columns: Int, rows: Int) {
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val layout = keyboardController.layouts.value.find { it.id == layoutId } ?: return
         val resized = autoFitButtons(layout.buttons, columns, rows)
         val dropped = layout.buttons.size - resized.size
@@ -1273,7 +1276,7 @@ class MainViewModel @Inject constructor(
             columns,
             rows,
         )
-        persistLayoutFields(clamped, profileId)
+        persistLayoutFields(clamped, activeLayoutId)
         if (dropped > 0) {
             emitToast("$dropped ${if (dropped == 1) "button" else "buttons"} removed")
         }
@@ -1323,11 +1326,11 @@ class MainViewModel @Inject constructor(
     }
 
     fun resetKeyboard(layoutId: Long) {
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val current = keyboardController.layouts.value.find { it.id == layoutId } ?: return
         val previousName = current.name
         viewModelScope.launch {
-            val row = layoutRepository.getById(layoutId) ?: return@launch
+            val row = keyLayoutRepository.getById(layoutId) ?: return@launch
             val snapshot: LayoutSnapshot = row.parseOriginalSnapshot() ?: run {
                 emitToast("No original config to revert to")
                 return@launch
@@ -1335,9 +1338,9 @@ class MainViewModel @Inject constructor(
             val reverted = snapshot.toGridLayout(layoutId)
             // Optimistic update.
             keyboardController.replaceLayoutById(reverted)
-            layoutRepository.saveLayout(
+            keyLayoutRepository.saveLayout(
                 reverted.toKeyLayout(
-                    profileId = profileId,
+                    layoutId = activeLayoutId,
                     position = row.position,
                     originalSnapshotJson = row.originalSnapshotJson
                 )
@@ -1347,7 +1350,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun duplicateKeyboard(layoutId: Long) {
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val layoutsNow = keyboardController.layouts.value
         val sourceIdx = layoutsNow.indexOfFirst { it.id == layoutId }
         if (sourceIdx < 0) return
@@ -1359,7 +1362,7 @@ class MainViewModel @Inject constructor(
         val newSnapshotJson = draftLayout.toSnapshot().toJson()
 
         viewModelScope.launch {
-            val current = layoutRepository.getLayoutsByProfileOnce(profileId)
+            val current = keyLayoutRepository.getKeyLayoutsByLayoutOnce(activeLayoutId)
             val newPosition = current.firstOrNull { it.id == layoutId }?.let { it.position + 1 }
                 ?: current.size
 
@@ -1367,17 +1370,17 @@ class MainViewModel @Inject constructor(
             val shifts = current
                 .filter { it.position >= newPosition }
                 .associate { it.id to it.position + 1 }
-            if (shifts.isNotEmpty()) layoutRepository.reorder(profileId, shifts)
+            if (shifts.isNotEmpty()) keyLayoutRepository.reorder(activeLayoutId, shifts)
 
             val draft = draftLayout.toKeyLayout(
-                profileId = profileId,
+                layoutId = activeLayoutId,
                 position = newPosition,
                 originalSnapshotJson = newSnapshotJson
             ).copy(id = 0L)
-            layoutRepository.saveLayout(draft)
+            keyLayoutRepository.saveLayout(draft)
 
             // Resolve the newly inserted row's id and select it.
-            val refreshed = layoutRepository.getLayoutsByProfileOnce(profileId)
+            val refreshed = keyLayoutRepository.getKeyLayoutsByLayoutOnce(activeLayoutId)
             val newIdx = refreshed.indexOfFirst { it.position == newPosition && it.name == newName }
             if (newIdx >= 0) keyboardController.setSelectedIndex(newIdx)
             emitToast("\"$newName\" copied")
@@ -1393,7 +1396,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun removeKeyboard(layoutId: Long) {
-        val profile = activeProfile.value ?: return
+        val layout = activeLayout.value ?: return
         val current = keyboardController.layouts.value
         val idx = current.indexOfFirst { it.id == layoutId }
         if (idx < 0) return
@@ -1407,14 +1410,14 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            layoutRepository.deleteById(layoutId)
-            val refreshed = layoutRepository.getLayoutsByProfileOnce(profile.id)
+            keyLayoutRepository.deleteById(layoutId)
+            val refreshed = keyLayoutRepository.getKeyLayoutsByLayoutOnce(layout.id)
             val compacted = refreshed
                 .mapIndexed { i, row -> row.id to i }
                 .filter { (id, pos) -> refreshed.first { it.id == id }.position != pos }
                 .toMap()
-            if (compacted.isNotEmpty()) layoutRepository.reorder(profile.id, compacted)
-            emitToast("\"$name\" removed from \"${profile.name}\" profile")
+            if (compacted.isNotEmpty()) keyLayoutRepository.reorder(layout.id, compacted)
+            emitToast("\"$name\" removed from \"${layout.name}\" layout")
         }
     }
 
@@ -1448,14 +1451,14 @@ class MainViewModel @Inject constructor(
     }
 
     fun addBlankKeyboard() {
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val name = nextNumberedName("New Keyboard", keyboardController.layouts.value.map { it.name }.toSet())
         val draft = GridLayout(name = name, columns = 6, rows = 4, buttons = emptyList())
-        appendNewLayout(draft, profileId)
+        appendNewLayout(draft, activeLayoutId)
     }
 
     fun addKeyboardFromTemplate(template: TemplateRef) {
-        val profileId = activeProfile.value?.id ?: return
+        val activeLayoutId = activeLayout.value?.id ?: return
         val existing = keyboardController.layouts.value.map { it.name }.toSet()
         val name = if (template.name in existing)
             nextNumberedName(template.name, existing)
@@ -1501,27 +1504,27 @@ class MainViewModel @Inject constructor(
             defaultButtonAnimationMotionEnabled = template.defaultButtonAnimationMotionEnabled,
             defaultButtonRegions = template.defaultButtonRegions,
         ).withFreshButtonIds()
-        appendNewLayout(draft, profileId)
+        appendNewLayout(draft, activeLayoutId)
     }
 
-    fun addKeyboardFromProfile(sourceLayoutId: Long) {
-        val profileId = activeProfile.value?.id ?: return
+    fun addKeyboardFromLayout(sourceLayoutId: Long) {
+        val activeLayoutId = activeLayout.value?.id ?: return
         viewModelScope.launch {
-            val sourceRow = layoutRepository.getById(sourceLayoutId) ?: return@launch
+            val sourceRow = keyLayoutRepository.getById(sourceLayoutId) ?: return@launch
             val sourceGrid = sourceRow.toGridLayout()
             val existing = keyboardController.layouts.value.map { it.name }.toSet()
             val name = if (sourceGrid.name in existing)
                 nextNumberedName(sourceGrid.name, existing)
             else sourceGrid.name
             // Fresh UUIDs so this keyboard is editable independently of the source
-            // (whose buttons may also exist in the active profile via a prior copy).
+            // (whose buttons may also exist in the active layout via a prior copy).
             val draft = sourceGrid.copy(name = name, id = 0L).withFreshButtonIds()
-            appendNewLayoutSuspending(draft, profileId)
+            appendNewLayoutSuspending(draft, activeLayoutId)
         }
     }
 
-    suspend fun layoutsForProfile(profileId: Long): List<GridLayout> =
-        layoutRepository.getLayoutsByProfileOnce(profileId).map { it.toGridLayout() }
+    suspend fun keyLayoutsForLayout(layoutId: Long): List<GridLayout> =
+        keyLayoutRepository.getKeyLayoutsByLayoutOnce(layoutId).map { it.toGridLayout() }
 
     internal fun nextNumberedName(base: String, existing: Set<String>): String {
         if (base !in existing) return base
@@ -1530,17 +1533,17 @@ class MainViewModel @Inject constructor(
         return "$base $i"
     }
 
-    private fun appendNewLayout(draft: GridLayout, profileId: Long) {
-        viewModelScope.launch { appendNewLayoutSuspending(draft, profileId) }
+    private fun appendNewLayout(draft: GridLayout, layoutId: Long) {
+        viewModelScope.launch { appendNewLayoutSuspending(draft, layoutId) }
     }
 
-    private suspend fun appendNewLayoutSuspending(draft: GridLayout, profileId: Long) {
-        val current = layoutRepository.getLayoutsByProfileOnce(profileId)
+    private suspend fun appendNewLayoutSuspending(draft: GridLayout, layoutId: Long) {
+        val current = keyLayoutRepository.getKeyLayoutsByLayoutOnce(layoutId)
         val newPosition = current.size
         val snapshotJson = draft.toSnapshot().toJson()
-        val newRow = draft.copy(id = 0L).toKeyLayout(profileId, newPosition, snapshotJson)
-        layoutRepository.saveLayout(newRow)
-        val refreshed = layoutRepository.getLayoutsByProfileOnce(profileId)
+        val newRow = draft.copy(id = 0L).toKeyLayout(layoutId, newPosition, snapshotJson)
+        keyLayoutRepository.saveLayout(newRow)
+        val refreshed = keyLayoutRepository.getKeyLayoutsByLayoutOnce(layoutId)
         val newIdx = refreshed.indexOfFirst { it.position == newPosition && it.name == draft.name }
         if (newIdx >= 0) keyboardController.setSelectedIndex(newIdx)
         // Committing to add a new keyboard ends the edit context. Cancel/dismiss paths
@@ -1553,15 +1556,15 @@ class MainViewModel @Inject constructor(
         _toastMessage.tryEmit(message)
     }
 
-    private fun persistLayoutFields(updated: GridLayout, profileId: Long) {
+    private fun persistLayoutFields(updated: GridLayout, layoutId: Long) {
         // Optimistic in-memory update.
         keyboardController.replaceLayoutById(updated)
         val idx = keyboardController.layouts.value.indexOfFirst { it.id == updated.id }
         viewModelScope.launch {
-            val existing = layoutRepository.getById(updated.id)
-            layoutRepository.saveLayout(
+            val existing = keyLayoutRepository.getById(updated.id)
+            keyLayoutRepository.saveLayout(
                 updated.toKeyLayout(
-                    profileId = profileId,
+                    layoutId = layoutId,
                     position = existing?.position ?: idx.coerceAtLeast(0),
                     originalSnapshotJson = existing?.originalSnapshotJson
                 )

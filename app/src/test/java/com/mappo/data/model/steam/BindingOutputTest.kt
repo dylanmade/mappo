@@ -103,7 +103,7 @@ class BindingOutputTest {
         val output = BindingOutput.ControllerAction("CHANGE_PRESET", listOf("20"))
         val config = ControllerConfig(
             controllerProfile = ControllerProfile(
-                id = 1L, profileId = 1L,
+                id = 1L, layoutId = 1L,
                 controllerType = ControllerType.GENERIC_ANDROID, name = "Default",
             ),
             actionSets = listOf(
@@ -126,7 +126,7 @@ class BindingOutputTest {
         val output = BindingOutput.ControllerAction("CHANGE_PRESET", listOf("999"))
         val config = ControllerConfig(
             controllerProfile = ControllerProfile(
-                id = 1L, profileId = 1L,
+                id = 1L, layoutId = 1L,
                 controllerType = ControllerType.GENERIC_ANDROID, name = "Default",
             ),
             actionSets = emptyList(),
@@ -185,7 +185,7 @@ class BindingOutputTest {
 
     private fun configWithLayers(layers: List<Pair<Long, String>>) = ControllerConfig(
         controllerProfile = ControllerProfile(
-            id = 1L, profileId = 1L,
+            id = 1L, layoutId = 1L,
             controllerType = ControllerType.GENERIC_ANDROID, name = "Default",
         ),
         actionSets = listOf(

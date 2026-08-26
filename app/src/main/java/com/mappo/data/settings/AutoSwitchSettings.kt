@@ -10,10 +10,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Persistent settings for the auto-switch feature. The primary toggle gates both
- * profile auto-switching and the create-profile-for-unbound-app prompt. The
- * auto-create toggle, when enabled, replaces that prompt with silent
- * create-and-bind for any package not on the blocklist.
+ * Persistent settings for the auto-switch feature. [ignoredPackages] is a DETECTION
+ * blocklist (2026-08-26 repurposing — the create-prompt it used to gate is retired):
+ * packages here never move the active-application pointer or switch layouts, seeded with
+ * launcher packages that briefly grab focus during app switches. (Its management UI —
+ * BlocklistScreen — retired with the layout concept; the seeded set still filters.)
  */
 @Singleton
 class AutoSwitchSettings @Inject constructor(
@@ -27,11 +28,6 @@ class AutoSwitchSettings @Inject constructor(
         prefs.getBoolean(KEY_AUTO_SWITCH_ENABLED, false)
     )
     val autoSwitchEnabled: StateFlow<Boolean> = _autoSwitchEnabled.asStateFlow()
-
-    private val _autoCreateProfilesEnabled = MutableStateFlow(
-        prefs.getBoolean(KEY_AUTO_CREATE_PROFILES_ENABLED, false)
-    )
-    val autoCreateProfilesEnabled: StateFlow<Boolean> = _autoCreateProfilesEnabled.asStateFlow()
 
     private val _ignoredPackages = MutableStateFlow(
         prefs.getStringSet(KEY_IGNORED_PACKAGES, emptySet())?.toSet() ?: emptySet()
@@ -49,9 +45,6 @@ class AutoSwitchSettings @Inject constructor(
         when (key) {
             KEY_AUTO_SWITCH_ENABLED ->
                 _autoSwitchEnabled.value = sp.getBoolean(KEY_AUTO_SWITCH_ENABLED, false)
-            KEY_AUTO_CREATE_PROFILES_ENABLED ->
-                _autoCreateProfilesEnabled.value =
-                    sp.getBoolean(KEY_AUTO_CREATE_PROFILES_ENABLED, false)
             KEY_IGNORED_PACKAGES ->
                 _ignoredPackages.value =
                     sp.getStringSet(KEY_IGNORED_PACKAGES, emptySet())?.toSet() ?: emptySet()
@@ -87,10 +80,6 @@ class AutoSwitchSettings @Inject constructor(
         prefs.edit().putBoolean(KEY_AUTO_SWITCH_ENABLED, enabled).apply()
     }
 
-    fun setAutoCreateProfilesEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_AUTO_CREATE_PROFILES_ENABLED, enabled).apply()
-    }
-
     fun setActivateWarningSuppressed(suppressed: Boolean) {
         prefs.edit().putBoolean(KEY_ACTIVATE_WARNING_SUPPRESSED, suppressed).apply()
     }
@@ -108,7 +97,6 @@ class AutoSwitchSettings @Inject constructor(
     companion object {
         private const val PREFS_NAME = "mappo_settings"
         private const val KEY_AUTO_SWITCH_ENABLED = "auto_switch_enabled"
-        private const val KEY_AUTO_CREATE_PROFILES_ENABLED = "auto_create_profiles_enabled"
         private const val KEY_IGNORED_PACKAGES = "ignored_packages"
         private const val KEY_BLOCKLIST_SEEDED = "blocklist_seeded_v1"
         private const val KEY_ACTIVATE_WARNING_SUPPRESSED = "activate_warning_suppressed"
@@ -118,7 +106,7 @@ class AutoSwitchSettings @Inject constructor(
          * `ForegroundAppFilter` already excludes the *resolved default* launcher, but on
          * dual-display devices the launcher can briefly grab focus during app-switch
          * animations on the primary screen, slipping past that filter; the blocklist
-         * acts as a final defense so we never prompt to bind a profile to one.
+         * acts as a final defense so one never becomes the active application.
          */
         private val DEFAULT_BLOCKED_LAUNCHERS: Set<String> = setOf(
             // Google / AOSP

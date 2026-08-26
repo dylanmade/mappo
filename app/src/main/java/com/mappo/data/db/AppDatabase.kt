@@ -18,11 +18,11 @@ import com.mappo.data.db.steam.LayerPresetBindingDao
 import com.mappo.data.db.steam.PresetBindingDao
 import com.mappo.data.db.steam.SourceModeShiftDao
 import com.mappo.data.db.steam.SteamTypeConverters
-import com.mappo.data.model.AppProfileBinding
+import com.mappo.data.model.AppLayoutBinding
 import com.mappo.data.model.KeyLayout
 import com.mappo.data.model.KeyboardTemplate
 import com.mappo.data.model.OverlayElement
-import com.mappo.data.model.Profile
+import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionSet
 import com.mappo.data.model.steam.Activator
@@ -38,8 +38,8 @@ import com.mappo.data.model.steam.SourceModeShift
 @Database(
     entities = [
         KeyLayout::class,
-        Profile::class,
-        AppProfileBinding::class,
+        Layout::class,
+        AppLayoutBinding::class,
         KeyboardTemplate::class,
         OverlayElement::class,
         ControllerProfile::class,
@@ -54,15 +54,15 @@ import com.mappo.data.model.steam.SourceModeShift
         LayerPresetBinding::class,
         SourceModeShift::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 @TypeConverters(SteamTypeConverters::class)
 abstract class AppDatabase : RoomDatabase() {
 
+    abstract fun keyLayoutDao(): KeyLayoutDao
     abstract fun layoutDao(): LayoutDao
-    abstract fun profileDao(): ProfileDao
-    abstract fun appProfileBindingDao(): AppProfileBindingDao
+    abstract fun appLayoutBindingDao(): AppLayoutBindingDao
     abstract fun keyboardTemplateDao(): KeyboardTemplateDao
     abstract fun overlayElementDao(): OverlayElementDao
 
@@ -81,19 +81,6 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
 
-        private val seedCallback = object : RoomDatabase.Callback() {
-            override fun onOpen(db: SupportSQLiteDatabase) {
-                super.onOpen(db)
-                db.execSQL(
-                    // Raw SQL, so every NOT NULL column needs an explicit value (Room only
-                    // bakes SQL defaults in via @ColumnInfo(defaultValue), not Kotlin ones).
-                    "INSERT INTO profiles (name, isDefault, description, author, likeCount) " +
-                    "SELECT 'Profile 1', 1, '', '', 0 " +
-                    "WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE isDefault = 1)"
-                )
-            }
-        }
-
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -102,7 +89,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "mappo.db"
                 )
                     .fallbackToDestructiveMigration(dropAllTables = true)
-                    .addCallback(seedCallback)
+                    
                     .build()
                     .also { INSTANCE = it }
             }

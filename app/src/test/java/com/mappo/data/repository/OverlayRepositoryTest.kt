@@ -33,13 +33,13 @@ class OverlayRepositoryTest {
 
     private fun element(
         id: Long = 0,
-        profileId: Long = 1L,
+        layoutId: Long = 1L,
         label: String = "",
         zIndex: Int = 0,
         tapTarget: String = RemapTarget.Unbound.encode(),
     ) = OverlayElement(
         id = id,
-        profileId = profileId,
+        layoutId = layoutId,
         label = label,
         x = 0.1f, y = 0.2f, width = 0.15f, height = 0.15f,
         tapTarget = tapTarget,
@@ -54,9 +54,9 @@ class OverlayRepositoryTest {
 
     @Test
     fun elementsByProfile_filtersToProfile_andOrdersByZIndex() = runTest {
-        subject.add(element(profileId = 1L, label = "front", zIndex = 5))
-        subject.add(element(profileId = 1L, label = "back", zIndex = 1))
-        subject.add(element(profileId = 2L, label = "other", zIndex = 0))
+        subject.add(element(layoutId = 1L, label = "front", zIndex = 5))
+        subject.add(element(layoutId = 1L, label = "back", zIndex = 1))
+        subject.add(element(layoutId = 2L, label = "other", zIndex = 0))
 
         val p1 = subject.elementsByProfile(1L).first()
         assertEquals(listOf("back", "front"), p1.map { it.label })
@@ -81,12 +81,12 @@ class OverlayRepositoryTest {
     }
 
     @Test
-    fun clearForProfile_removesOnlyThatProfile() = runTest {
-        subject.add(element(profileId = 1L))
-        subject.add(element(profileId = 1L))
-        subject.add(element(profileId = 2L))
+    fun clearForLayout_removesOnlyThatLayout() = runTest {
+        subject.add(element(layoutId = 1L))
+        subject.add(element(layoutId = 1L))
+        subject.add(element(layoutId = 2L))
 
-        subject.clearForProfile(1L)
+        subject.clearForLayout(1L)
 
         assertTrue(subject.elementsByProfileOnce(1L).isEmpty())
         assertEquals(1, subject.elementsByProfileOnce(2L).size)
@@ -110,11 +110,11 @@ private class FakeOverlayElementDao : OverlayElementDao {
     private fun sorted(elements: Collection<OverlayElement>) =
         elements.sortedWith(compareBy({ it.zIndex }, { it.id }))
 
-    override fun getByProfile(profileId: Long): Flow<List<OverlayElement>> =
-        rows.map { sorted(it.values.filter { row -> row.profileId == profileId }) }
+    override fun getByLayout(layoutId: Long): Flow<List<OverlayElement>> =
+        rows.map { sorted(it.values.filter { row -> row.layoutId == layoutId }) }
 
-    override suspend fun getByProfileOnce(profileId: Long): List<OverlayElement> =
-        sorted(rows.value.values.filter { it.profileId == profileId })
+    override suspend fun getByLayoutOnce(layoutId: Long): List<OverlayElement> =
+        sorted(rows.value.values.filter { it.layoutId == layoutId })
 
     override fun getBySet(actionSetId: Long): Flow<List<OverlayElement>> =
         rows.map { sorted(it.values.filter { row -> row.actionSetId == actionSetId }) }
@@ -160,7 +160,7 @@ private class FakeOverlayElementDao : OverlayElementDao {
         rows.value = rows.value - id
     }
 
-    override suspend fun deleteAllForProfile(profileId: Long) {
-        rows.value = rows.value.filterValues { it.profileId != profileId }
+    override suspend fun deleteAllForLayout(layoutId: Long) {
+        rows.value = rows.value.filterValues { it.layoutId != layoutId }
     }
 }

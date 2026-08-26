@@ -3,7 +3,7 @@ package com.mappo.ui.nav
 import android.net.Uri
 
 /**
- * Top-level navigation destinations. Reached from the profile drawer (or the keyboard grid
+ * Top-level navigation destinations. Reached from the layout drawer (or the keyboard grid
  * for the per-button configure flow). Each destination owns its own Scaffold + TopAppBar;
  * the drawer wraps the NavHost so it stays available across destinations.
  *
@@ -14,11 +14,11 @@ import android.net.Uri
 object MappoRoute {
     // ── The browse chain (2026-08-20 flow re-imagining) ───────────────────────────
     //
-    // REMAP_CONTROLS with no profile arg is the START DESTINATION — the home is the
+    // REMAP_CONTROLS with no layout arg is the START DESTINATION — the home is the
     // controls view of the currently ACTIVE layout. "View layouts" opens the LAYOUTS
     // view; picking a layout there opens a second REMAP_CONTROLS entry that VIEWS it
-    // (profileId arg set) without activating — the top bar's "Activate layout" does
-    // that. APPLICATIONS (the Profiles list) remains the browse fallback when the
+    // (layoutId arg set) without activating — the top bar's "Activate layout" does
+    // that. APPLICATIONS (the Layouts list) remains the browse fallback when the
     // active layout has no bound application.
     const val APPLICATIONS = "applications"
 
@@ -30,22 +30,20 @@ object MappoRoute {
     fun layouts(appPackage: String, appLabel: String): String =
         "layouts/${Uri.encode(appPackage)}?$ARG_APP_LABEL=${Uri.encode(appLabel)}"
 
-    /** Which layout (Profile id) a controls entry VIEWS. `0` is the sentinel for "follow
+    /** Which layout (Layout id) a controls entry VIEWS. `0` is the sentinel for "follow
      *  the active layout" — the home instance. */
-    const val ARG_PROFILE_ID = "profileId"
+    const val ARG_LAYOUT_ID = "layoutId"
     const val REMAP_CONTROLS = "remap_controls?$ARG_APP_PACKAGE={$ARG_APP_PACKAGE}" +
-        "&$ARG_APP_LABEL={$ARG_APP_LABEL}&$ARG_PROFILE_ID={$ARG_PROFILE_ID}"
+        "&$ARG_APP_LABEL={$ARG_APP_LABEL}&$ARG_LAYOUT_ID={$ARG_LAYOUT_ID}"
     fun remapControls(
         appPackage: String? = null,
         appLabel: String? = null,
-        profileId: Long = 0L,
+        layoutId: Long = 0L,
     ): String =
-        if (appPackage == null && profileId == 0L) "remap_controls"
+        if (appPackage == null && layoutId == 0L) "remap_controls"
         else "remap_controls?$ARG_APP_PACKAGE=${Uri.encode(appPackage ?: "")}" +
             "&$ARG_APP_LABEL=${Uri.encode(appLabel ?: "")}" +
-            "&$ARG_PROFILE_ID=$profileId"
-    const val AUTO_SWITCH = "auto_switch"
-    const val BLOCKLIST = "blocklist"
+            "&$ARG_LAYOUT_ID=$layoutId"
     const val THEME_STUDIO = "theme_studio"
     const val FRAME_STYLE = "frame_style"
     const val SHIZUKU_SETUP = "shizuku_setup"
@@ -184,7 +182,7 @@ object MappoRoute {
     // the layout live from the ViewModel and dispatches edits via [MainViewModel.updateLayoutInstant]
     // / [MainViewModel.tryResizeLayout]. The shrink-conflict prompt lives inside the
     // screen as a sub-dialog (no out-of-screen dialog routing required).
-    const val ARG_LAYOUT_ID = "layoutId"
-    const val CONFIGURE_KEYBOARD = "configure_keyboard/{$ARG_LAYOUT_ID}"
-    fun configureKeyboard(layoutId: Long): String = "configure_keyboard/$layoutId"
+    const val ARG_KEY_LAYOUT_ID = "keyLayoutId"
+    const val CONFIGURE_KEYBOARD = "configure_keyboard/{$ARG_KEY_LAYOUT_ID}"
+    fun configureKeyboard(keyLayoutId: Long): String = "configure_keyboard/$keyLayoutId"
 }

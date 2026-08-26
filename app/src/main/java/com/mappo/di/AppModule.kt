@@ -2,11 +2,11 @@ package com.mappo.di
 
 import android.content.Context
 import com.mappo.data.db.AppDatabase
-import com.mappo.data.db.AppProfileBindingDao
+import com.mappo.data.db.AppLayoutBindingDao
 import com.mappo.data.db.KeyboardTemplateDao
-import com.mappo.data.db.LayoutDao
+import com.mappo.data.db.KeyLayoutDao
 import com.mappo.data.db.OverlayElementDao
-import com.mappo.data.db.ProfileDao
+import com.mappo.data.db.LayoutDao
 import com.mappo.data.db.steam.ActionLayerDao
 import com.mappo.data.db.steam.ActionSetDao
 import com.mappo.data.db.steam.ActivatorDao
@@ -36,15 +36,15 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideKeyLayoutDao(db: AppDatabase): KeyLayoutDao = db.keyLayoutDao()
+
+    @Provides
+    @Singleton
     fun provideLayoutDao(db: AppDatabase): LayoutDao = db.layoutDao()
 
     @Provides
     @Singleton
-    fun provideProfileDao(db: AppDatabase): ProfileDao = db.profileDao()
-
-    @Provides
-    @Singleton
-    fun provideAppProfileBindingDao(db: AppDatabase): AppProfileBindingDao = db.appProfileBindingDao()
+    fun provideAppLayoutBindingDao(db: AppDatabase): AppLayoutBindingDao = db.appLayoutBindingDao()
 
     @Provides
     @Singleton

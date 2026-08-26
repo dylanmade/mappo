@@ -50,11 +50,11 @@ internal enum class AppSort(val label: String, val naturalAscending: Boolean) {
 }
 
 /**
- * The Profiles view (retitled "Profiles" 2026-08-15 — each row is an application's
- * profile; the code keeps the Applications names): every launchable app on the device
+ * The Layouts view (retitled "Layouts" 2026-08-15 — each row is an application's
+ * layout; the code keeps the Applications names): every launchable app on the device
  * (games join the list when the planned library scanning lands — local-folder scraping
  * plus installed-game lists from frontends like GameNative / GameHub), behind its own
- * search + sort row. Picking a profile opens its [LayoutsScreen]. No longer the home
+ * search + sort row. Picking a layout opens its [LayoutsScreen]. No longer the home
  * (2026-08-20 — the controls view of the active layout is): reached as the "View
  * layouts" fallback when the viewed layout has no bound application.
  *
@@ -80,7 +80,7 @@ fun ApplicationsScreen(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize()) {
             // The shared browse-chain bar.
-            RemapTopBar(overline = "Profiles", onBack = onBack)
+            RemapTopBar(overline = "Layouts", onBack = onBack)
             // The filter row: search + sort + direction.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -97,7 +97,7 @@ fun ApplicationsScreen(
                 MinputTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = "Search profiles",
+                    placeholder = "Search layouts",
                     leadingIcon = Icons.Filled.Search,
                     clearable = true,
                     // Top-of-screen field — the sanctioned modal-less variant.
@@ -110,7 +110,7 @@ fun ApplicationsScreen(
                     options = AppSort.entries,
                     optionLabel = { it.label },
                     onPick = { sort = it; ascending = it.naturalAscending },
-                    onClickLabel = "Sort profiles",
+                    onClickLabel = "Sort layouts",
                 )
                 SortDirectionButton(ascending = ascending, onToggle = { ascending = !ascending })
             }
@@ -141,7 +141,7 @@ fun ApplicationsScreen(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = if (installedApps.isEmpty()) "Loading profiles…" else "No profiles match",
+                                text = if (installedApps.isEmpty()) "Loading layouts…" else "No layouts match",
                                 style = minputMiniTextStyle(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

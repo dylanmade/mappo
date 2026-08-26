@@ -20,22 +20,22 @@ class FakeControllerProfileDao : ControllerProfileDao {
     val rows = MutableStateFlow<List<ControllerProfile>>(emptyList())
     private var nextId = 1L
 
-    override fun observeByProfile(profileId: Long): Flow<List<ControllerProfile>> =
-        rows.map { all -> all.filter { it.profileId == profileId } }
+    override fun observeByProfile(layoutId: Long): Flow<List<ControllerProfile>> =
+        rows.map { all -> all.filter { it.layoutId == layoutId } }
 
-    override suspend fun getByProfile(profileId: Long): List<ControllerProfile> =
-        rows.value.filter { it.profileId == profileId }
+    override suspend fun getByLayout(layoutId: Long): List<ControllerProfile> =
+        rows.value.filter { it.layoutId == layoutId }
 
     override suspend fun getById(id: Long): ControllerProfile? = rows.value.firstOrNull { it.id == id }
 
-    override suspend fun insert(profile: ControllerProfile): Long {
+    override suspend fun insert(layout: ControllerProfile): Long {
         val id = nextId++
-        rows.value = rows.value + profile.copy(id = id)
+        rows.value = rows.value + layout.copy(id = id)
         return id
     }
 
-    override suspend fun update(profile: ControllerProfile) {
-        rows.value = rows.value.map { if (it.id == profile.id) profile else it }
+    override suspend fun update(layout: ControllerProfile) {
+        rows.value = rows.value.map { if (it.id == layout.id) layout else it }
     }
 
     override suspend fun deleteById(id: Long) {

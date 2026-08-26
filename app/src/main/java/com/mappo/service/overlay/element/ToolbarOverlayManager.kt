@@ -23,7 +23,7 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.mappo.MainActivity
-import com.mappo.data.repository.ProfileRepository
+import com.mappo.data.repository.LayoutRepository
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.keyboard.KeyboardController
@@ -48,7 +48,7 @@ import javax.inject.Singleton
  * input flows past it — the inverse of the in-activity home, which owns focus.
  *
  * Brick 1 is **touch-only and coexists** with the in-activity toolbar (nothing deleted):
- * the master switch + the profile / options menus all work by touch; gamepad navigation
+ * the master switch + the layout / options menus all work by touch; gamepad navigation
  * of this non-focusable window (Implementation B) lands in Brick 3. Navigation items that
  * need a full screen launch [MainActivity] for now; precise deep-route launching is Brick 2.
  *
@@ -66,7 +66,7 @@ import javax.inject.Singleton
 @Singleton
 class ToolbarOverlayManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val profileRepository: ProfileRepository,
+    private val layoutRepository: LayoutRepository,
     private val steamCredentialStore: SteamCredentialStore,
     private val keyboardController: KeyboardController,
     private val overlayPresenter: OverlayPresenter,
@@ -188,7 +188,7 @@ class ToolbarOverlayManager @Inject constructor(
 
     @androidx.compose.runtime.Composable
     private fun ToolbarContent() {
-        val profile by profileRepository.activeProfile.collectAsState()
+        val layout by layoutRepository.activeLayout.collectAsState()
         val steamName by steamCredentialStore.credentials
             .map { it?.accountName }
             .collectAsState(initial = null)
@@ -206,7 +206,7 @@ class ToolbarOverlayManager @Inject constructor(
         }
 
         MainBottomToolbar(
-            profileName = profile?.name ?: "None",
+            layoutName = layout?.name ?: "None",
             steamAccountName = steamName,
             // Master toggle drives remap AND the button overlay to the same value in lockstep,
             // mirroring the in-activity home (MainScreen).
@@ -221,10 +221,8 @@ class ToolbarOverlayManager @Inject constructor(
             // with arg placeholders now, not a navigable string.
             onEditControls = { launchRoute(MappoRoute.remapControls()) },
             // Layout selection lives on the applications → layouts browse chain now (the
-            // controls-screen profile panel is gone) — land on the applications home.
-            onOpenProfile = { launchRoute(MappoRoute.APPLICATIONS) },
-            onOpenAutoSwitch = { launchRoute(MappoRoute.AUTO_SWITCH) },
-            onOpenBlocklist = { launchRoute(MappoRoute.BLOCKLIST) },
+            // controls-screen layout panel is gone) — land on the applications home.
+            onOpenApplications = { launchRoute(MappoRoute.APPLICATIONS) },
             onOpenThemeStudio = { launchRoute(MappoRoute.THEME_STUDIO) },
             onOpenShizukuSetup = { launchRoute(MappoRoute.SHIZUKU_SETUP) },
             onOpenSteamSetup = { launchRoute(MappoRoute.STEAM_SETUP) },
