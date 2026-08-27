@@ -347,10 +347,11 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun applicationsButton_opensApplicationsDrawer_withAppCards() {
-        // The applications button (the change button's right-corner mirror) slides in the
-        // applications drawer: same category headers, a card per detected app with its
-        // active layout named on bound apps.
+    fun applicationsButton_entersApplicationsMode_withAppCards() {
+        // The layouts drawer's full-width Applications button (2026-08-27: the retired
+        // right-side applications drawer folded into the layouts drawer) radiates the
+        // pane into applications mode: a card per detected app under the same category
+        // headers. Picking an app transitions back to layouts mode scoped to it.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -383,18 +384,23 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithContentDescription("Change application").performClick()
+        // The layouts drawer first — the Applications button lives inside it, wearing
+        // the viewed application's identity ("Alpha Game": the active layout's app).
+        composeRule.onNodeWithContentDescription("Change layout").performClick()
         composeRule.waitForIdle()
 
-        // Cards are name-only (2026-08-26: the active-layout subtitle retired).
-        // "Alpha Game" appears twice: its drawer card AND the bar's application
-        // identity — the bar always shows the ACTIVE APPLICATION (falling back to the
-        // active layout's app), independent of any preview.
+        composeRule.onNodeWithText("Alpha Game", useUnmergedTree = true).performClick()
+        composeRule.waitForIdle()
+
+        // Applications mode: cards are name-only (2026-08-26: the active-layout
+        // subtitle retired). "Alpha Game" appears twice — its app card AND the
+        // Applications button itself, which still shows the viewed application.
         composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
 
-        // Picking the unbound app pins its context: the content plane swaps to the
-        // no-layout state with the two route tiles.
+        // Picking the unbound app repoints the VIEWING context (no activation) and
+        // transitions back to layouts mode: the content plane swaps to the no-layout
+        // state with the two route tiles.
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("No layout assigned for Beta Game", useUnmergedTree = true)

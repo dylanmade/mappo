@@ -1,7 +1,9 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -36,21 +38,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowUpDown
+import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Layout
+import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
+import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
@@ -66,6 +75,8 @@ import com.mappo.ui.minput.minputMicroTextStyle
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 import kotlinx.collections.immutable.ImmutableList
+import kotlin.math.hypot
+import kotlin.math.max
 
 /**
  * The layouts drawer (2026-08-21) — the layouts view rebuilt as a push pane in the
@@ -77,28 +88,45 @@ import kotlinx.collections.immutable.ImmutableList
  * bars (2026-08-24): the top bar and the frame's bottom bar both keep their full width
  * above/below it.
  *
- * Anatomy: a Search · Sort controls row (the sort button opens the standard minput
- * option menu — Recent/Likes/A to Z/Z to A), then the card list in two categories:
- * **Installed** (on-device layouts for this app, ending with the "+ New layout" card) and
- * **Community** (published, not-yet-installed layouts — empty until community sharing
- * lands). The active layout's card wears the highlight plane — no separate default-layout
- * concept: the active layout IS its application's functional default.
+ * Anatomy: the full-width **Applications button** (the viewed application's icon + name),
+ * then a Search · Sort controls row (the sort button opens the standard minput option
+ * menu — Recent/Likes/A to Z/Z to A), then the card list in two categories: **Installed**
+ * (on-device layouts for this app, ending with the "+ New layout" card) and **Community**
+ * (published, not-yet-installed layouts — empty until community sharing lands). The
+ * active layout's card wears the highlight plane — no separate default-layout concept:
+ * the active layout IS its application's functional default.
  *
- * Tapping a card runs the standard activate flow (the caller wraps [onActivateLayout] in
- * the auto-detection warning gate); a future submenu replaces the direct activation.
+ * **Applications mode** (2026-08-27, replacing the retired right-side applications
+ * drawer): pressing the Applications button TRANSITIONS this same pane into the
+ * applications list — the higher surface color radiates outward from the button until it
+ * covers the drawer, the button wears the highlight plane (the design language's open
+ * marking), and the same controls re-target: search filters apps, sort offers
+ * [ApplicationSort], and Installed/Community list applications. Focusing or tapping an
+ * application previews it (tap also radiates back into layouts mode, now scoped to the
+ * picked app) — selection is a VIEWING move only; auto detection is only disabled when a
+ * LAYOUT of a non-active app is actually activated (the caller's cross-app gate).
  *
- * Back handling is HOISTED to the caller (2026-08-25): one back press dismisses this
- * drawer AND the applications drawer together.
+ * Tapping a layout card runs the standard activate flow (the caller wraps
+ * [onActivateLayout] in the auto-detection warning gate); a future submenu replaces the
+ * direct activation.
+ *
+ * Back handling is HOISTED to the caller (2026-08-25): back dismisses the drawer whole —
+ * apps mode resets with it (the content decomposes fully closed), and the caller reverts
+ * the viewing context to the active application, which resets the Applications button.
  */
 @Composable
 internal fun LayoutsDrawerPane(
     open: Boolean,
     appPackage: String?,
+    apps: List<InstalledApp>,
+    activeAppPackage: String?,
     layouts: ImmutableList<Layout>,
     activeLayoutId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
+    onPreviewApplication: (String) -> Unit,
+    onSelectApplication: (InstalledApp) -> Unit,
     onFullyClosed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -110,11 +138,15 @@ internal fun LayoutsDrawerPane(
     ) {
         LayoutsDrawerContent(
             appPackage = appPackage,
+            apps = apps,
+            activeAppPackage = activeAppPackage,
             layouts = layouts,
             activeLayoutId = activeLayoutId,
             onPreviewLayout = onPreviewLayout,
             onActivateLayout = onActivateLayout,
             onNewLayout = onNewLayout,
+            onPreviewApplication = onPreviewApplication,
+            onSelectApplication = onSelectApplication,
         )
     }
 }
@@ -185,19 +217,90 @@ internal fun SideDrawerShell(
 @Composable
 private fun LayoutsDrawerContent(
     appPackage: String?,
+    apps: List<InstalledApp>,
+    activeAppPackage: String?,
     layouts: ImmutableList<Layout>,
     activeLayoutId: Long?,
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
+    onPreviewApplication: (String) -> Unit,
+    onSelectApplication: (InstalledApp) -> Unit,
 ) {
-    // Live name filter — local so a fresh open starts clean isn't wanted here: the drawer
-    // stays composed across open/close, which conveniently keeps the query while browsing.
+    // Applications mode (the Applications button pressed) — plain remember on purpose:
+    // the content decomposes when the drawer fully closes, so a reopened drawer always
+    // starts back in layouts mode.
+    var appsMode by remember { mutableStateOf(false) }
+    // The query is shared between modes but resets on every mode flip — a layouts filter
+    // has no meaning over the apps list and vice versa. Each mode keeps its OWN sort.
     var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(LayoutSort.RECENT) }
+    var layoutSort by remember { mutableStateOf(LayoutSort.RECENT) }
+    var appSort by remember { mutableStateOf(ApplicationSort.RECENT) }
     var sortMenuOpen by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxWidth()) {
+    // The apps-mode reveal: the higher surface color radiates outward from the
+    // Applications button until it covers the drawer background (and retreats back into
+    // the button on the way out) — the mode visibly GROWS out of the control that owns it.
+    val revealProgress by animateFloatAsState(
+        targetValue = if (appsMode) 1f else 0f,
+        animationSpec = tween(AppsRevealMillis, easing = FastOutSlowInEasing),
+        label = "appsReveal",
+    )
+    val revealColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    var rootCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var revealCenter by remember { mutableStateOf(Offset.Zero) }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { rootCoords = it }
+            .drawBehind {
+                if (revealProgress > 0f) {
+                    // Radius runs to the drawer corner FARTHEST from the button center so
+                    // full progress always covers the whole pane.
+                    val maxRadius = hypot(
+                        max(revealCenter.x, size.width - revealCenter.x),
+                        max(revealCenter.y, size.height - revealCenter.y),
+                    )
+                    drawCircle(
+                        color = revealColor,
+                        radius = revealProgress * maxRadius,
+                        center = revealCenter,
+                    )
+                }
+            },
+    ) {
+        // The Applications button: the viewed application's identity (icon + name) and
+        // the way into applications mode; wears the highlight plane while open — the
+        // design language's open/selected marking (the drawer summons' treatment).
+        val viewedApp = appPackage?.let { pkg -> apps.firstOrNull { it.packageName == pkg } }
+        val appIcon = rememberAppIconPainter(appPackage)
+        MinputPillButton(
+            text = viewedApp?.label ?: appPackage ?: "No application",
+            onClick = {
+                appsMode = !appsMode
+                query = ""
+            },
+            leadingIcon = appIcon ?: rememberVectorPainter(Lucide.LayoutGrid),
+            // Launcher icons carry fixed colors (never re-tint); the Lucide fallback
+            // glyph tints like any concept icon.
+            leadingIconTint = if (appIcon != null) {
+                Color.Unspecified
+            } else MaterialTheme.colorScheme.onSurfaceVariant,
+            highlighted = appsMode,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PanelContentPadding,
+                    top = PanelContentPadding,
+                    end = PanelContentPadding,
+                )
+                // AFTER the placement-shifting padding, so the captured bounds are the
+                // button's real ones. The reveal radiates from the button's center.
+                .onGloballyPositioned { coords ->
+                    rootCoords?.let { revealCenter = it.localBoundingBoxOf(coords).center }
+                },
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
@@ -205,7 +308,7 @@ private fun LayoutsDrawerContent(
                 .fillMaxWidth()
                 .padding(
                     start = PanelContentPadding,
-                    top = PanelContentPadding,
+                    top = DrawerControlGap,
                     end = PanelContentPadding,
                     bottom = MinputPanelDividerContentGap,
                 ),
@@ -213,7 +316,7 @@ private fun LayoutsDrawerContent(
             MinputTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = "Search layouts",
+                placeholder = if (appsMode) "Search apps" else "Search layouts",
                 leadingIcon = Lucide.Search,
                 clearable = true,
                 // Top-of-screen field — the sanctioned modal-less variant.
@@ -226,73 +329,133 @@ private fun LayoutsDrawerContent(
                 MinputPillButton(
                     onClick = { sortMenuOpen = true },
                     leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
-                    contentDescription = "Sort layouts",
+                    contentDescription = if (appsMode) "Sort applications" else "Sort layouts",
                     // Invisible at rest (2026-08-26 trial, matching the drawer summons).
                     bare = true,
                     highlighted = sortMenuOpen,
                 )
-                MinputDropdownMenu(
-                    expanded = sortMenuOpen,
-                    onDismissRequest = { sortMenuOpen = false },
-                    current = sort,
-                    options = LayoutSort.entries,
-                    optionLabel = { it.label },
-                    onPick = { sort = it },
-                )
+                if (appsMode) {
+                    MinputDropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { sortMenuOpen = false },
+                        current = appSort,
+                        options = ApplicationSort.entries,
+                        optionLabel = { it.label },
+                        onPick = { appSort = it },
+                    )
+                } else {
+                    MinputDropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { sortMenuOpen = false },
+                        current = layoutSort,
+                        options = LayoutSort.entries,
+                        optionLabel = { it.label },
+                        onPick = { layoutSort = it },
+                    )
+                }
             }
         }
 
-        // Category assembly. Membership = Layout.packageName (2026-08-21 model). No app
-        // context → every layout under Installed. Community stays empty until sharing
-        // lands. (The Default category retired with the default-layout concept —
-        // 2026-08-24: the active layout IS the app's functional default.)
-        val children = if (appPackage != null) {
-            layouts.filter { it.packageName == appPackage }
-        } else layouts
-        val trimmed = query.trim()
-        val filtered = if (trimmed.isEmpty()) children
-        else children.filter { it.name.contains(trimmed, ignoreCase = true) }
-        val installed = filtered.sortedWith(sort.comparator)
-        val community = emptyList<Layout>()
-
-        // Preview triggers are DELIBERATE only (2026-08-26): card focus (d-pad, via
-        // each card's focus observer) or tap — the scroll-position-driven preview
-        // (topmost visible card = previewed) is retired; merely scrolling past cards
-        // churned the controls view and read as phantom focus.
-        val listState = rememberLazyListState()
-
-        LazyColumn(
-            state = listState,
+        // The two lists crossfade on the reveal's clock, so the applications list
+        // resolves in as the radiating plane covers the drawer (and out as it retreats).
+        Crossfade(
+            targetState = appsMode,
+            animationSpec = tween(AppsRevealMillis),
+            label = "drawerList",
             modifier = Modifier.fillMaxWidth().weight(1f),
-            verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-            contentPadding = PaddingValues(
-                start = PanelContentPadding,
-                end = PanelContentPadding,
-                bottom = PanelContentPadding,
-            ),
-        ) {
-            drawerSection("Installed", installed, emptyHint = "No layouts yet") { layout ->
-                LayoutCard(
-                    layout = layout,
-                    active = layout.id == activeLayoutId,
-                    onPreview = { onPreviewLayout(layout.id) },
-                    onActivate = { onActivateLayout(layout) },
+        ) { showApps ->
+            if (showApps) {
+                ApplicationsList(
+                    apps = apps,
+                    activeAppPackage = activeAppPackage,
+                    query = query,
+                    sort = appSort,
+                    onPreviewApplication = onPreviewApplication,
+                    onSelectApplication = { app ->
+                        // Radiate back into layouts mode — the layouts list rescopes to
+                        // the picked application "behind" the retreating plane.
+                        appsMode = false
+                        query = ""
+                        onSelectApplication(app)
+                    },
+                )
+            } else {
+                LayoutsList(
+                    appPackage = appPackage,
+                    layouts = layouts,
+                    activeLayoutId = activeLayoutId,
+                    query = query,
+                    sort = layoutSort,
+                    onPreviewLayout = onPreviewLayout,
+                    onActivateLayout = onActivateLayout,
+                    onNewLayout = onNewLayout,
                 )
             }
-            // Always the Installed section's last card — the empty "+ New layout" card
-            // routing into the create flow. Key deliberately outside CardKeyPrefix so the
-            // scroll-preview scan skips it.
-            item(key = "new-layout", contentType = "new") {
-                NewLayoutCard(onClick = onNewLayout)
-            }
-            drawerSection("Community", community, emptyHint = "No community layouts yet") { layout ->
-                LayoutCard(
-                    layout = layout,
-                    active = layout.id == activeLayoutId,
-                    onPreview = { onPreviewLayout(layout.id) },
-                    onActivate = { onActivateLayout(layout) },
-                )
-            }
+        }
+    }
+}
+
+@Composable
+private fun LayoutsList(
+    appPackage: String?,
+    layouts: ImmutableList<Layout>,
+    activeLayoutId: Long?,
+    query: String,
+    sort: LayoutSort,
+    onPreviewLayout: (Long) -> Unit,
+    onActivateLayout: (Layout) -> Unit,
+    onNewLayout: () -> Unit,
+) {
+    // Category assembly. Membership = Layout.packageName (2026-08-21 model). No app
+    // context → every layout under Installed. Community stays empty until sharing
+    // lands. (The Default category retired with the default-layout concept —
+    // 2026-08-24: the active layout IS the app's functional default.)
+    val children = if (appPackage != null) {
+        layouts.filter { it.packageName == appPackage }
+    } else layouts
+    val trimmed = query.trim()
+    val filtered = if (trimmed.isEmpty()) children
+    else children.filter { it.name.contains(trimmed, ignoreCase = true) }
+    val installed = filtered.sortedWith(sort.comparator)
+    val community = emptyList<Layout>()
+
+    // Preview triggers are DELIBERATE only (2026-08-26): card focus (d-pad, via
+    // each card's focus observer) or tap — the scroll-position-driven preview
+    // (topmost visible card = previewed) is retired; merely scrolling past cards
+    // churned the controls view and read as phantom focus.
+    val listState = rememberLazyListState()
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
+        contentPadding = PaddingValues(
+            start = PanelContentPadding,
+            end = PanelContentPadding,
+            bottom = PanelContentPadding,
+        ),
+    ) {
+        drawerSection("Installed", installed, emptyHint = "No layouts yet") { layout ->
+            LayoutCard(
+                layout = layout,
+                active = layout.id == activeLayoutId,
+                onPreview = { onPreviewLayout(layout.id) },
+                onActivate = { onActivateLayout(layout) },
+            )
+        }
+        // Always the Installed section's last card — the empty "+ New layout" card
+        // routing into the create flow. Key deliberately outside CardKeyPrefix so the
+        // scroll-preview scan skips it.
+        item(key = "new-layout", contentType = "new") {
+            NewLayoutCard(onClick = onNewLayout)
+        }
+        drawerSection("Community", community, emptyHint = "No community layouts yet") { layout ->
+            LayoutCard(
+                layout = layout,
+                active = layout.id == activeLayoutId,
+                onPreview = { onPreviewLayout(layout.id) },
+                onActivate = { onActivateLayout(layout) },
+            )
         }
     }
 }
@@ -505,6 +668,9 @@ private const val LayoutsDrawerWidthPx = 320
 
 /** Slide duration for the pane's open/close resize. */
 private const val DrawerSlideMillis = 300
+
+/** Duration of the applications-mode radial reveal (and the list crossfade riding it). */
+private const val AppsRevealMillis = 300
 
 /** Gap between the drawer's control-row members and between list cards (the filter rows'
  *  6dp rhythm). */

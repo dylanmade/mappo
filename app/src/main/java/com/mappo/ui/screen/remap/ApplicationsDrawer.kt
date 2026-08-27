@@ -3,8 +3,6 @@ package com.mappo.ui.screen.remap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,30 +19,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Search
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
-import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputPanelDividerContentGap
-import com.mappo.ui.minput.MinputPillButton
-import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputHighlightContainer
@@ -55,137 +44,68 @@ import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
- * The applications drawer (2026-08-25) — the layouts drawer's right-side mirror: the top
- * bar's applications button slides it in from the RIGHT, compressing the controls content
- * beside it. Focusing (d-pad) or tapping an application card previews that application's
- * ACTIVE layout in the controls view (via [onPreviewApplication] — the caller resolves
- * the app's binding to a layout), the way the layouts drawer previews layouts.
+ * The applications list (2026-08-27) — the layouts drawer's APPLICATIONS MODE content.
+ * (The standalone right-side applications drawer this file used to host is retired: the
+ * drawer's full-width Applications button now radiates this list into the same pane —
+ * see [LayoutsDrawerPane].)
  *
- * Same anatomy as the layouts drawer: a Search · Sort controls row, then **Installed**
- * (applications detected on this device — Android packages for now; local-directory game
- * scanning and verified-source metadata (IGDB/ScreenScraper-class) come later) and
- * **Community** (empty until community sharing lands). The application whose layout is
- * currently ACTIVE wears the highlight plane.
+ * Focusing (d-pad) or tapping an application card previews that application's ACTIVE
+ * layout in the controls view (via [onPreviewApplication] — the caller resolves the
+ * app's binding to a layout), the way the layouts list previews layouts. **Installed** =
+ * applications detected on this device — Android packages for now; local-directory game
+ * scanning and verified-source metadata (IGDB/ScreenScraper-class) come later.
+ * **Community** stays empty until community sharing lands. The application whose layout
+ * is currently ACTIVE wears the highlight plane.
  *
- * Tapping a card selects that application (the caller wraps [onSelectApplication] in the
- * cross-app auto-detection warning gate and activates the app's active layout).
+ * Tapping a card SELECTS the application as the viewing context — a preview-equivalent
+ * move (no activation, no auto-detection change); the drawer transitions back to layouts
+ * mode scoped to it.
  */
 @Composable
-internal fun ApplicationsDrawerPane(
-    open: Boolean,
+internal fun ApplicationsList(
     apps: List<InstalledApp>,
     activeAppPackage: String?,
+    query: String,
+    sort: ApplicationSort,
     onPreviewApplication: (String) -> Unit,
     onSelectApplication: (InstalledApp) -> Unit,
-    onFullyClosed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SideDrawerShell(
-        open = open,
-        fromEnd = true,
-        onFullyClosed = onFullyClosed,
-        modifier = modifier,
+    val trimmed = query.trim()
+    val filtered = if (trimmed.isEmpty()) apps
+    else apps.filter { it.label.contains(trimmed, ignoreCase = true) }
+    val installed = filtered.sortedWith(sort.comparator)
+    val community = emptyList<InstalledApp>()
+
+    // Preview triggers are DELIBERATE only (2026-08-26): card focus or tap —
+    // scroll-position-driven preview retired (see the layouts drawer's note).
+    val listState = rememberLazyListState()
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
+        contentPadding = PaddingValues(
+            start = PanelContentPadding,
+            end = PanelContentPadding,
+            bottom = PanelContentPadding,
+        ),
     ) {
-        ApplicationsDrawerContent(
-            apps = apps,
-            activeAppPackage = activeAppPackage,
-            onPreviewApplication = onPreviewApplication,
-            onSelectApplication = onSelectApplication,
-        )
-    }
-}
-
-@Composable
-private fun ApplicationsDrawerContent(
-    apps: List<InstalledApp>,
-    activeAppPackage: String?,
-    onPreviewApplication: (String) -> Unit,
-    onSelectApplication: (InstalledApp) -> Unit,
-) {
-    // Query/sort persist across open/close like the layouts drawer's (the pane stays
-    // composed, its content merely leaves while fully closed).
-    var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(ApplicationSort.RECENT) }
-    var sortMenuOpen by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = PanelContentPadding,
-                    top = PanelContentPadding,
-                    end = PanelContentPadding,
-                    bottom = MinputPanelDividerContentGap,
-                ),
-        ) {
-            MinputTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Search apps",
-                leadingIcon = Lucide.Search,
-                clearable = true,
-                // Top-of-screen field — the sanctioned modal-less variant.
-                inlineEdit = true,
-                modifier = Modifier.weight(1f),
+        appSection("Installed", installed, emptyHint = "No applications detected") { app ->
+            ApplicationCard(
+                app = app,
+                active = app.packageName == activeAppPackage,
+                onPreview = { onPreviewApplication(app.packageName) },
+                onSelect = { onSelectApplication(app) },
             )
-            Box {
-                MinputPillButton(
-                    onClick = { sortMenuOpen = true },
-                    leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
-                    contentDescription = "Sort applications",
-                    bare = true,
-                    highlighted = sortMenuOpen,
-                )
-                MinputDropdownMenu(
-                    expanded = sortMenuOpen,
-                    onDismissRequest = { sortMenuOpen = false },
-                    current = sort,
-                    options = ApplicationSort.entries,
-                    optionLabel = { it.label },
-                    onPick = { sort = it },
-                )
-            }
         }
-
-        val trimmed = query.trim()
-        val filtered = if (trimmed.isEmpty()) apps
-        else apps.filter { it.label.contains(trimmed, ignoreCase = true) }
-        val installed = filtered.sortedWith(sort.comparator)
-        val community = emptyList<InstalledApp>()
-
-        // Preview triggers are DELIBERATE only (2026-08-26): card focus or tap —
-        // scroll-position-driven preview retired (see the layouts drawer's note).
-        val listState = rememberLazyListState()
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-            contentPadding = PaddingValues(
-                start = PanelContentPadding,
-                end = PanelContentPadding,
-                bottom = PanelContentPadding,
-            ),
-        ) {
-            appSection("Installed", installed, emptyHint = "No applications detected") { app ->
-                ApplicationCard(
-                    app = app,
-                    active = app.packageName == activeAppPackage,
-                    onPreview = { onPreviewApplication(app.packageName) },
-                    onSelect = { onSelectApplication(app) },
-                )
-            }
-            appSection("Community", community, emptyHint = "No community applications yet") { app ->
-                ApplicationCard(
-                    app = app,
-                    active = false,
-                    onPreview = { onPreviewApplication(app.packageName) },
-                    onSelect = { onSelectApplication(app) },
-                )
-            }
+        appSection("Community", community, emptyHint = "No community applications yet") { app ->
+            ApplicationCard(
+                app = app,
+                active = false,
+                onPreview = { onPreviewApplication(app.packageName) },
+                onSelect = { onSelectApplication(app) },
+            )
         }
     }
 }

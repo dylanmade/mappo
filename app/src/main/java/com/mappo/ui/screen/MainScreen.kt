@@ -515,7 +515,6 @@ fun MainScreen(
                     onCreateLayout = viewModel::createLayout,
                     // ── Active application (first-class, 2026-08-26) ──
                     activeAppPackage = activeAppPackage,
-                    onActivateApplication = viewModel::activateApplication,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->

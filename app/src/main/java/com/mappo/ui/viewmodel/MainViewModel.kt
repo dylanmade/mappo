@@ -424,20 +424,9 @@ class MainViewModel @Inject constructor(
         _viewingLayoutId.value = layoutId
     }
 
-    /**
-     * "Select application" (an applications-drawer card): move the ACTIVE APPLICATION
-     * pointer — valid with or without layouts (2026-08-26: the core flow is opening
-     * Mappo over a fresh game and creating/installing its first layout from the
-     * no-layout state). When the app has an active layout, it activates too.
-     */
-    fun activateApplication(packageName: String) {
-        activeApplicationStore.setActiveApplication(packageName)
-        viewModelScope.launch {
-            val binding = appLayoutBindingRepository.getForPackageOnce(packageName)
-            val layout = binding?.let { b -> _allLayouts.value.firstOrNull { it.id == b.layoutId } }
-            if (layout != null) activateLayoutManually(layout)
-        }
-    }
+    // (activateApplication retired 2026-08-27 with the standalone applications drawer:
+    // picking an app in the layouts drawer's applications mode is a VIEWING move only —
+    // the active-application pointer moves via detection and activateLayoutManually.)
 
     /**
      * "Activate layout" (the bar pill or a drawer card): promote the layout to active,
