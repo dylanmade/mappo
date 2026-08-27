@@ -165,9 +165,21 @@ private const val InputFieldOutlineStrength = BevelTopHighlightStrength
 fun minputInputFieldOutline(base: Color): Color =
     lerp(base, Color.White, (InputFieldOutlineStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
 
+/** The bevel's three layers, each with an independently tunable alpha: a uniform
+ *  full-perimeter outline underneath (side light on a raised element), and the top/bottom
+ *  highlights compositing over it. The highlights keep emphasis at any alpha mix because
+ *  they render additively ON TOP of the outline. */
+private const val BevelOutlineAlpha = 0.35f
+private const val BevelTopHighlightAlpha = 1f
+private const val BevelBottomHighlightAlpha = 1f
+
+/** How far the outline deviates from the base fill — same white-nudge family as the
+ *  highlights, so all three layers read as one light source. */
+private const val BevelOutlineStrength = BevelTopHighlightStrength
+
 /** Where along the corner arc the bevel finishes fading: 1−cos(45°) of the radius — the
  *  point where the outline's tangent passes 45° and "top" geometrically becomes "side". */
-private const val BevelFadeOfRadius = 0.9f
+private const val BevelFadeOfRadius = 0.6f
 
 /** Fade run for a squared(-ish) corner, applied as a floor on the 45°-point run above: a
  *  physically square corner sheds the top face's light almost immediately, so its side
@@ -187,12 +199,20 @@ private val BevelSquareCornerFade = 1.dp
  * a group-button end segment mixes a pill end with squared inner edges): each side edge
  * fades over ITS corner's run, so a squared edge darkens much sooner than a rounded one
  * (floored at [BevelSquareCornerFade] rather than collapsing to zero).
+ *
+ * [outline] (2026-08-27, default ON): a uniform full-perimeter ring ([BevelOutlineAlpha])
+ * rendered UNDERNEATH the highlights, which still fade to nothing and composite over it —
+ * a whisper of side reflection completing the lit-physical read on every raised element
+ * (buttons, group boxes, cards, modals). Three independently tunable layer alphas
+ * (outline, top, bottom) live above. Pass `outline = false` for the rare surface that
+ * wants the bare fade-to-nothing bevel.
  */
 @Composable
 fun minputBevelBorder(
     base: Color,
     cornerRadius: Dp,
     endCornerRadius: Dp = cornerRadius,
+    outline: Boolean = true,
 ): BorderStroke {
     val density = LocalDensity.current
     fun fadePx(radius: Dp): Float = with(density) {
@@ -202,11 +222,16 @@ fun minputBevelBorder(
     val endFadePx = fadePx(endCornerRadius)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val boost = bevelStrengthBoost(base)
+    fun layer(strength: Float, alpha: Float): Color =
+        lerp(base, Color.White, (strength * boost).coerceAtMost(1f)).copy(alpha = alpha)
     return BorderStroke(
         MinputBoxStroke,
         BevelBrush(
-            topHighlight = lerp(base, Color.White, (BevelTopHighlightStrength * boost).coerceAtMost(1f)),
-            bottomHighlight = lerp(base, Color.White, (BevelBottomHighlightStrength * boost).coerceAtMost(1f)),
+            topHighlight = layer(BevelTopHighlightStrength, BevelTopHighlightAlpha),
+            bottomHighlight = layer(BevelBottomHighlightStrength, BevelBottomHighlightAlpha),
+            // Alpha 0 (no outline) keeps the highlight hue so the fade stays clean —
+            // never transparent-black.
+            outline = layer(BevelOutlineStrength, if (outline) BevelOutlineAlpha else 0f),
             fadeLeftPx = if (rtl) endFadePx else startFadePx,
             fadeRightPx = if (rtl) startFadePx else endFadePx,
         ),
@@ -222,6 +247,7 @@ fun minputBevelBorder(
 private class BevelBrush(
     private val topHighlight: Color,
     private val bottomHighlight: Color,
+    private val outline: Color,
     private val fadeLeftPx: Float,
     private val fadeRightPx: Float,
 ) : ShaderBrush() {
@@ -244,10 +270,19 @@ private class BevelBrush(
 
     private fun verticalShader(size: Size, fadePx: Float): Shader {
         val fade = (fadePx / size.height).coerceIn(0.01f, 0.49f)
+        // Layered render, baked into one gradient: the uniform outline ring underneath, the
+        // highlights compositing over it at the solid top/bottom rows and fading down to
+        // just-the-outline by the corner arcs. The highlight fade over a constant underlay
+        // is linear, so per-stop compositing reproduces the true two-layer stack.
         return LinearGradientShader(
             from = Offset.Zero,
             to = Offset(0f, size.height),
-            colors = listOf(topHighlight, topHighlight.copy(alpha = 0f), bottomHighlight.copy(alpha = 0f), bottomHighlight),
+            colors = listOf(
+                topHighlight.compositeOver(outline),
+                outline,
+                outline,
+                bottomHighlight.compositeOver(outline),
+            ),
             colorStops = listOf(0f, fade, 1f - fade, 1f),
         )
     }
