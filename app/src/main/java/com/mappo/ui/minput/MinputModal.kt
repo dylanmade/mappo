@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -171,6 +173,9 @@ fun MinputModal(
                 // that reads as the surface overextending.
                 .softDropShadow(cornerRadius = MinputMorphCorner, offsetY = 0.dp)
                 .clip(shape)
+                // The card swallows its own taps so they can't fall through to the sibling
+                // scrim beneath and dismiss the modal (same guard as MinputDialog's card).
+                .pointerInput(Unit) { detectTapGestures { } }
                 .background(container)
                 .border(minputBevelBorder(container, MinputMorphCorner), shape)
                 // Focus containment, both directions, gated on intent: topmost → nothing
