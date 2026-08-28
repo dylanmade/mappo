@@ -253,10 +253,12 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     @Test
-    fun topBar_viewingLayout_showsActivate_noBack() {
-        // 2026-08-21 bar: no Back arrow in any state — the change button (the layouts
-        // drawer's summon) leads. Viewing a non-active layout grows the Activate pill
-        // after Layout settings; the add-set affordance is the set row's "+" segment.
+    fun topBar_viewingLayout_showsPreviewOverline_noBack() {
+        // 2026-08-27 bar: no Back arrow in any state — the change button (the layouts
+        // drawer's summon) leads. The Layout settings and Activate pills are retired
+        // (options = Start key; activation = drawer cards); a non-active layout is
+        // marked by the "(Preview)" overline suffix instead. The add-set affordance
+        // is the set row's "+" segment.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -278,8 +280,10 @@ class RemapControlsScreenTest {
 
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Activate layout").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Layout settings").assertCountEquals(1)
+        // No app context in this setup — the overline falls back to plain "Layout".
+        composeRule.onNodeWithText("LAYOUT (PREVIEW)", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
     }
 
@@ -310,7 +314,9 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Layout settings").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
+        // The home state's overline carries no "(Preview)" suffix.
+        composeRule.onNodeWithText("LAYOUT", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -340,8 +346,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithContentDescription("Change layout").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("INSTALLED", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("COMMUNITY", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("INSTALLED LAYOUTS", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("COMMUNITY LAYOUTS", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Beta layout", useUnmergedTree = true).assertExists()
     }

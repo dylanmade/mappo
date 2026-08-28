@@ -39,6 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
  *  - [bare] — no container chrome at all (transparent, borderless): the utility-glyph
  *    look for header cogs, kebabs, and steppers ([MinputIconButton] delegates here).
  *  - default — the surface-1 box treatment, for buttons sitting on the background plane.
+ *    (A transparent-fill "outlined" tier was trialed between bare and this on 2026-08-27
+ *    and rejected same-day — a chromed button carries the fill AND the bevel ring.)
  *  - [elevated] — the topmost button plane, for buttons sitting on a box/card background.
  *  - [highlighted] — the highlight plane. RESERVED in the design language for marking
  *    SELECTED/ACTIVE state (the open drawer's summon, the active member of a set) — never
@@ -53,6 +55,13 @@ import androidx.compose.ui.text.style.TextOverflow
  * tintable concept icons. Icon-only mode treats Unspecified as "follow the button's
  * content color" instead — an icon-only button has no text to carry the variant's color,
  * so the glyph must (fixed-color art in icon-only form isn't a real case yet).
+ *
+ * [trailingIcon] renders a glyph at the button's END — dropdown arrows and their kin. It
+ * always follows the button's content color (trailing glyphs are concept icons; there is
+ * no fixed-color-art case on that side). [alignStart] (2026-08-27) packs the icon+label
+ * to the START and pushes the trailing glyph to the far end — for full-width buttons
+ * (the layouts drawer's Applications button) whose centered content would float away
+ * from its edges; wrap-width buttons keep the centered default.
  */
 @Composable
 fun MinputPillButton(
@@ -66,6 +75,8 @@ fun MinputPillButton(
     bare: Boolean = false,
     leadingIcon: Painter? = null,
     leadingIconTint: Color = Color.Unspecified,
+    trailingIcon: Painter? = null,
+    alignStart: Boolean = false,
     contentDescription: String? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
@@ -125,19 +136,22 @@ fun MinputPillButton(
         } else {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = if (alignStart) Arrangement.Start else Arrangement.Center,
                 modifier = Modifier
                     .height(MinputPillHeight)
                     // A leading glyph inks less than its box (Material live area, Lucide
                     // stroke inset), so with symmetric padding the icon flank reads wider
                     // than the text flank — pull the start inset in by the family's
                     // icon-side bias to cancel it (the wrap-width sibling of
-                    // MinputPillIconSideBias's fixed-width treatment).
+                    // MinputPillIconSideBias's fixed-width treatment; mirrored on the
+                    // trailing side).
                     .padding(
                         start = if (leadingIcon != null) {
                             MinputPillContentPadding - MinputPillIconSideBias
                         } else MinputPillContentPadding,
-                        end = MinputPillContentPadding,
+                        end = if (trailingIcon != null) {
+                            MinputPillContentPadding - MinputPillIconSideBias
+                        } else MinputPillContentPadding,
                     ),
             ) {
                 if (leadingIcon != null) {
@@ -155,7 +169,19 @@ fun MinputPillButton(
                     color = content,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    // Start-aligned: the label claims the slack so a trailing glyph is
+                    // pushed to the far end of a stretched button.
+                    modifier = if (alignStart) Modifier.weight(1f) else Modifier,
                 )
+                if (trailingIcon != null) {
+                    Spacer(Modifier.width(MinputGlyphLabelGap))
+                    Icon(
+                        trailingIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(MinputPillIconSize),
+                        tint = content,
+                    )
+                }
             }
         }
     }

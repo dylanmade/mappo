@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowUpDown
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
@@ -110,9 +113,11 @@ import kotlin.math.max
  * [onActivateLayout] in the auto-detection warning gate); a future submenu replaces the
  * direct activation.
  *
- * Back handling is HOISTED to the caller (2026-08-25): back dismisses the drawer whole —
- * apps mode resets with it (the content decomposes fully closed), and the caller reverts
- * the viewing context to the active application, which resets the Applications button.
+ * Back handling is layered (2026-08-27): while applications mode is open, back steps
+ * OUT of it first (the drawer's own [BackHandler] — the reveal retreats, the layouts
+ * list returns); the next back reaches the caller's hoisted handler and dismisses the
+ * drawer whole, and the caller reverts the viewing context to the active application,
+ * which resets the Applications button.
  */
 @Composable
 internal fun LayoutsDrawerPane(
@@ -237,6 +242,15 @@ private fun LayoutsDrawerContent(
     var layoutSort by remember { mutableStateOf(LayoutSort.RECENT) }
     var appSort by remember { mutableStateOf(ApplicationSort.RECENT) }
     var sortMenuOpen by remember { mutableStateOf(false) }
+    // Back steps OUT of applications mode first (2026-08-27) — the radiating plane
+    // retreats into the button and the layouts list returns; only the NEXT back
+    // dismisses the drawer whole. Registered when this content mounts, so it wins over
+    // the caller's close-the-drawer handler while the drawer is open (and unregisters
+    // with the content when the drawer fully closes).
+    BackHandler(enabled = appsMode) {
+        appsMode = false
+        query = ""
+    }
 
     // The apps-mode reveal: the higher surface color radiates outward from the
     // Applications button until it covers the drawer background (and retreats back into
@@ -287,6 +301,10 @@ private fun LayoutsDrawerContent(
             leadingIconTint = if (appIcon != null) {
                 Color.Unspecified
             } else MaterialTheme.colorScheme.onSurfaceVariant,
+            // Identity packed to the start, dropdown arrow pinned to the far end
+            // (2026-08-27 trial vs the centered stack — flip alignStart to compare).
+            trailingIcon = rememberVectorPainter(Lucide.ChevronDown),
+            alignStart = true,
             highlighted = appsMode,
             modifier = Modifier
                 .fillMaxWidth()
@@ -321,6 +339,8 @@ private fun LayoutsDrawerContent(
                 clearable = true,
                 // Top-of-screen field — the sanctioned modal-less variant.
                 inlineEdit = true,
+                // Experimental bevel-on-fields trial (2026-08-27) — judged here first.
+                bevel = true,
                 modifier = Modifier.weight(1f),
             )
             Box {
@@ -330,8 +350,8 @@ private fun LayoutsDrawerContent(
                     onClick = { sortMenuOpen = true },
                     leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
                     contentDescription = if (appsMode) "Sort applications" else "Sort layouts",
-                    // Invisible at rest (2026-08-26 trial, matching the drawer summons).
-                    bare = true,
+                    // Standard box chrome (2026-08-27, replacing the bare trial): the
+                    // family fill + bevel ring, matching the buttons around it.
                     highlighted = sortMenuOpen,
                 )
                 if (appsMode) {
@@ -355,6 +375,11 @@ private fun LayoutsDrawerContent(
                 }
             }
         }
+
+        // Inset divider under the controls block (2026-08-27) — separates the fixed
+        // search/sort chrome from the scrolling card list in BOTH modes (it sits
+        // outside the crossfade, over the radiating reveal plane).
+        HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
 
         // The two lists crossfade on the reveal's clock, so the applications list
         // resolves in as the radiating plane covers the drawer (and out as it retreats).
@@ -435,7 +460,9 @@ private fun LayoutsList(
             bottom = PanelContentPadding,
         ),
     ) {
-        drawerSection("Installed", installed, emptyHint = "No layouts yet") { layout ->
+        // No empty hint (2026-08-27): the ever-present "+ New layout" card below IS the
+        // empty section's affordance — a "no layouts" line above it just restated it.
+        drawerSection("Installed layouts", installed, emptyHint = null) { layout ->
             LayoutCard(
                 layout = layout,
                 active = layout.id == activeLayoutId,
@@ -449,7 +476,7 @@ private fun LayoutsList(
         item(key = "new-layout", contentType = "new") {
             NewLayoutCard(onClick = onNewLayout)
         }
-        drawerSection("Community", community, emptyHint = "No community layouts yet") { layout ->
+        drawerSection("Community layouts", community, emptyHint = "No community layouts yet") { layout ->
             LayoutCard(
                 layout = layout,
                 active = layout.id == activeLayoutId,
@@ -460,11 +487,12 @@ private fun LayoutsList(
     }
 }
 
-/** One category of the card list: overline header, then cards (or a muted empty hint). */
+/** One category of the card list: overline header, then cards (or a muted empty hint —
+ *  null for a section whose empty state is carried by a permanent card instead). */
 private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
     title: String,
     sectionLayouts: List<Layout>,
-    emptyHint: String,
+    emptyHint: String?,
     card: @Composable (Layout) -> Unit,
 ) {
     item(key = "header:$title", contentType = "header") {
@@ -476,13 +504,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
         )
     }
     if (sectionLayouts.isEmpty()) {
-        item(key = "empty:$title", contentType = "empty") {
-            Text(
-                text = emptyHint,
-                style = minputMicroTextStyle(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = MinputGlyphLabelGap),
-            )
+        if (emptyHint != null) {
+            item(key = "empty:$title", contentType = "empty") {
+                Text(
+                    text = emptyHint,
+                    style = minputMicroTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = MinputGlyphLabelGap),
+                )
+            }
         }
     } else {
         items(sectionLayouts, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { card(it) }

@@ -469,15 +469,29 @@ class MainViewModel @Inject constructor(
     /**
      * The new-layout form's commit: create the layout under its ONE parent application
      * (2026-08-26 model: a layout is only ever associated with one application — the
-     * multi-app coverage the old layout concept allowed is retired), then claim the
-     * app's active-layout binding only where it's still free: the binding is the app's
-     * functional-default pointer (its last activated layout — 2026-08-24), and creating
-     * a second layout for an app must not silently steal it.
+     * multi-app coverage the old layout concept allowed is retired). A layout created
+     * for the ACTIVE application auto-activates (2026-08-27 — a same-app move that keeps
+     * auto detection on); for any other app the binding is claimed only where it's still
+     * free: the binding is the app's functional-default pointer (its last activated
+     * layout — 2026-08-24), and creating a second layout for a non-active app must not
+     * silently steal it.
      */
     fun createLayout(name: String, packageName: String?) {
         viewModelScope.launch {
             val newId = layoutRepository.addLayout(name, packageName = packageName)
-            if (packageName != null &&
+            val activePackage = activeApplicationStore.activeAppPackage.value
+                ?: activeLayout.value?.packageName
+            if (packageName != null && packageName == activePackage) {
+                // A new layout for the ACTIVE application activates immediately
+                // (2026-08-27): the user is standing in that app's context, so the fresh
+                // layout becomes its functional default — a same-app move, so auto
+                // detection stays on (activateLayoutManually's cross-app gate wouldn't
+                // fire here either) and the binding repoints unconditionally.
+                layoutRepository.setActiveLayoutById(newId)?.let {
+                    keyboardController.setSelectedIndex(0)
+                    appLayoutBindingRepository.bind(packageName, newId)
+                }
+            } else if (packageName != null &&
                 appLayoutBindingRepository.getForPackageOnce(packageName) == null
             ) {
                 appLayoutBindingRepository.bind(packageName, newId)

@@ -91,7 +91,7 @@ internal fun ApplicationsList(
             bottom = PanelContentPadding,
         ),
     ) {
-        appSection("Installed", installed, emptyHint = "No applications detected") { app ->
+        appSection("Installed apps", installed, emptyHint = "No applications detected") { app ->
             ApplicationCard(
                 app = app,
                 active = app.packageName == activeAppPackage,
@@ -99,7 +99,7 @@ internal fun ApplicationsList(
                 onSelect = { onSelectApplication(app) },
             )
         }
-        appSection("Community", community, emptyHint = "No community applications yet") { app ->
+        appSection("Community apps", community, emptyHint = "No community applications yet") { app ->
             ApplicationCard(
                 app = app,
                 active = false,

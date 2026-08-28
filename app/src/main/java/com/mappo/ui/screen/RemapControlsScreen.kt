@@ -2,11 +2,6 @@ package com.mappo.ui.screen
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.key.Key
@@ -69,10 +63,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeftRight
-import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
-import com.composables.icons.lucide.Settings
 import com.mappo.R
 import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActivatorType
@@ -280,6 +272,11 @@ fun RemapControlsScreen(
         effectiveAppPackage.let { pkg ->
             appBindings[pkg]?.let { id -> layouts.firstOrNull { it.id == id } }
         } == null
+    // The viewed application's display label (launcher label, package-name fallback) —
+    // feeds the bar's "<application> layout" overline and the no-layout state.
+    val effectiveAppLabel = installedApps
+        .firstOrNull { it.packageName == effectiveAppPackage }?.label
+        ?: effectiveAppPackage
     // Revert fires when the drawer's close animation completes (the guard covers a
     // reopen racing the animation): the viewing context returns to the active
     // application — which also resets the drawer's Applications button for next open.
@@ -387,17 +384,9 @@ fun RemapControlsScreen(
     // (a focused container that spatially contains everything is a directional-search dead
     // end — and worse, d-pad moves from it search OUTWARD, past the screen into the frame
     // chrome; a focusable root Box shipped exactly that bug). The initial seat lands on the
-    // top-left group box inside RemapSimpleView; this requester hands focus back to the
-    // summoning corner pill when the options panel closes (the return-to-home-box pattern).
-    val optionsPillFocus = remember { FocusRequester() }
-    var lastOpenPanel by remember { mutableStateOf(openPanel) }
-    LaunchedEffect(openPanel) {
-        val closed = lastOpenPanel
-        lastOpenPanel = openPanel
-        if (openPanel == null && closed != null) {
-            runCatching { optionsPillFocus.requestFocus() }
-        }
-    }
+    // top-left group box inside RemapSimpleView. (The options panel's return-to-summoning-
+    // pill focus hand-back retired 2026-08-27 with the bar's Layout settings pill — the
+    // panel is Start-key-only until Edit Overlay and friends get their new home.)
 
     // Root Box: the Scaffold plus the options panel overlay, which must cover the top bar —
     // hence hosted HERE rather than inside the Scaffold content. The Box also owns the
@@ -467,61 +456,44 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
             topBar = {
-                // The 2026-08-21 bar: the change button (the layouts drawer's summon),
-                // the layout identity, then Layout settings + the conditional Activate
-                // pill on the left; the Auto-detect stack on the right. The action-set
-                // tabs that lived here moved into RemapSimpleView's set row.
+                // The 2026-08-27 bar: the change button (the layouts drawer's summon),
+                // then the viewed application's identity — icon + "<app> layout"
+                // overline over the layout name — as a BUTTON that also toggles the
+                // drawer (the identity-button experiment); the Auto-detect stack on the
+                // right. The Layout settings / Activate pills retired 2026-08-27 (the
+                // options panel is Start-key-only until Edit Overlay's next home;
+                // activation lives on the drawer's cards). The action-set tabs that
+                // lived here moved into RemapSimpleView's set row.
                 RemapTopBar(
-                    overline = if (isActiveLayout) "Current layout" else "Previewing layout",
+                    // "<application> layout", "(Preview)"-suffixed while inspecting a
+                    // non-active layout; no app context reads plain "Layout".
+                    overline = buildString {
+                        append(effectiveAppLabel?.let { "$it layout" } ?: "Layout")
+                        if (!isActiveLayout) append(" (Preview)")
+                    },
                     // An application with no layout reads "None" — not the stale name of
                     // another app's layout (2026-08-26 audit).
                     title = if (effectiveAppHasNoLayout) "None" else layoutName ?: "Layout",
-                    // Null on purpose (2026-08-25): the application identity — icon
-                    // included — lives in the bar's RIGHT corner now.
-                    appPackage = null,
+                    // The viewed application's icon leads the stack again (2026-08-27 —
+                    // the bar's right-corner app cluster retired with the standalone
+                    // applications drawer).
+                    appPackage = effectiveAppPackage,
+                    onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
+                    identityHighlighted = layoutsDrawerOpen,
                     onBack = onBack,
                     navigation = {
                         // The universal way into the layouts view: toggles the drawer.
-                        // Elevated at rest; wears the highlight plane while its drawer
-                        // is open — the design language's selected/active marking.
+                        // Wears the highlight plane while its drawer is open — the
+                        // design language's selected/active marking.
                         MinputPillButton(
                             onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
                             leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
                             contentDescription = "Change layout",
                             // Invisible at rest (2026-08-26 trial vs the box variant's
                             // bevel highlights); the highlight plane still marks open.
-                            bare = true,
+                            // bare = true,
                             highlighted = layoutsDrawerOpen,
                         )
-                    },
-                    leadingActions = {
-                        MinputPillButton(
-                            text = "Layout settings",
-                            onClick = {
-                                openPanel =
-                                    if (openPanel == RemapPanel.OPTIONS) null else RemapPanel.OPTIONS
-                            },
-                            leadingIcon = rememberVectorPainter(Lucide.Settings),
-                            leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.focusRequester(optionsPillFocus),
-                        )
-                        AnimatedVisibility(
-                            visible = !isActiveLayout,
-                            enter = fadeIn() + expandHorizontally(),
-                            exit = fadeOut() + shrinkHorizontally(),
-                        ) {
-                            // Gap rides inside the visibility wrapper so it animates away
-                            // with the pill.
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Spacer(Modifier.width(TopBarPillGap))
-                                MinputPillButton(
-                                    text = "Activate layout",
-                                    onClick = { requestActivate(viewedAppPackage, onActivateLayout) },
-                                    leadingIcon = rememberVectorPainter(Lucide.Check),
-                                    leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
                     },
                     actions = {
                         // Just the compact Auto row (2026-08-27): the application
@@ -581,9 +553,7 @@ fun RemapControlsScreen(
                     // once sharing lands).
                     if (effectiveAppHasNoLayout) {
                         NoLayoutAssignedView(
-                            appLabel = installedApps
-                                .firstOrNull { it.packageName == effectiveAppPackage }?.label
-                                ?: effectiveAppPackage.orEmpty(),
+                            appLabel = effectiveAppLabel.orEmpty(),
                             onCreateLayout = { addLayoutOpen = true },
                             onBrowseLayouts = { layoutsDrawerOpen = true },
                         )
