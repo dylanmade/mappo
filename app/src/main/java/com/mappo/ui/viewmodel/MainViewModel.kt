@@ -1601,9 +1601,12 @@ class MainViewModel @Inject constructor(
     /**
      * Brick C spike: launch the live on-overlay editor (candidate C2). The in-app canvas
      * editor (C1) is reached by navigation instead; both write the same elements.
+     *
+     * [returnToApp] — the caller backgrounded Mappo to get out of the editor's way, so
+     * exiting the editor should hand the user back to the screen they left.
      */
-    fun startLiveOverlayEdit() {
-        overlayLiveEditController.requestEdit()
+    fun startLiveOverlayEdit(returnToApp: Boolean = false) {
+        overlayLiveEditController.requestEdit(returnToApp)
     }
 
     /**

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,9 +48,14 @@ import androidx.compose.ui.unit.dp
  * radio-button roles) comes from foundation's selectableGroup/selectable — the same base
  * the M3 component uses.
  *
- * Segments share the width equally; size the group via [modifier] (typically
+ * Segments WRAP their label by default — a group of buttons is a row of buttons, and a
+ * stretched segment reads as a banner (2026-08-29: the action-set row's "Default Map"
+ * sprawled the full content width). Pass [equalWidths] for the stretched form: every
+ * segment takes an equal share of whatever [modifier] sizes the group to (typically
  * `fillMaxWidth()`).
  *
+ * @param equalWidths stretch every segment to an equal share of the group's width (the
+ *   pre-2026-08-29 behavior); default wraps each label.
  * @param trailingActionIcon optional ACTION segment closing the group — a deliberate break
  *   from single-choice convention: a narrow fixed-width segment (it takes the group's outer
  *   end rounding) that fires [onTrailingAction] instead of selecting. Born for the action-set
@@ -63,6 +69,7 @@ fun <T> MinputGroupButton(
     optionLabel: (T) -> String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    equalWidths: Boolean = false,
     trailingActionIcon: ImageVector? = null,
     trailingActionDescription: String? = null,
     onTrailingAction: () -> Unit = {},
@@ -105,7 +112,7 @@ fun <T> MinputGroupButton(
                     endCornerRadius = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
                 ),
                 modifier = Modifier
-                    .weight(1f)
+                    .then(if (equalWidths) Modifier.weight(1f) else Modifier)
                     .minputInteractiveMotion(interaction)
                     .fillMaxHeight()
                     .then(
@@ -132,6 +139,10 @@ fun <T> MinputGroupButton(
                         color = content,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        // Wrap-width segments are otherwise unbounded (set titles are
+                        // user-typed); cap them at the family's label width so one long
+                        // name can't run the group off its bar.
+                        modifier = Modifier.widthIn(max = MinputPillLabelMaxWidth),
                     )
                 }
             }
@@ -169,7 +180,15 @@ fun <T> MinputGroupButton(
                         } else Modifier.alpha(0.55f),
                     ),
             ) {
-                Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+                Box(
+                    // Optical centering: this segment's end is a full pill arc while its
+                    // start is square, so the shape's visual mass sits START of its
+                    // geometric center — a geometrically centered glyph reads pushed
+                    // toward the round end, leaving a fat left flank (Dylan, 2026-08-29).
+                    // End padding pulls it back by half the bias.
+                    modifier = Modifier.fillMaxHeight().padding(end = GroupActionGlyphBias),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(
                         trailingActionIcon,
                         contentDescription = trailingActionDescription,
@@ -189,5 +208,9 @@ private val GroupSegmentGap = 4.dp
 private val GroupInnerCorner = 2.dp
 
 /** Fixed width of the trailing ACTION segment — icon-only, deliberately narrower than the
- *  equal-weight selection segments so it reads as an appendix, not a peer. */
-private val GroupActionSegmentWidth = 30.dp
+ *  selection segments so it reads as an appendix, not a peer. */
+private val GroupActionSegmentWidth = 26.dp
+
+/** Total extra END padding inside the action segment: shifts its glyph half this far toward
+ *  the squared start edge, canceling the round end's optical pull (see the Box above). */
+private val GroupActionGlyphBias = 2.dp

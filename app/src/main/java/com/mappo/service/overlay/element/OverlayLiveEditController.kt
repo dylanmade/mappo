@@ -166,6 +166,7 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.compose.ui.res.painterResource
+import com.mappo.MainActivity
 import com.mappo.R
 import com.mappo.data.model.OverlayElement
 import com.mappo.data.model.OverlayGesture
@@ -353,12 +354,24 @@ class OverlayLiveEditController @Inject constructor(
     fun isEditing(): Boolean = _editing.value
 
     /**
+     * True while the session that is running was started from inside Mappo, which asked to
+     * be returned to when editing ends (see [requestEdit]).
+     */
+    private var returnToAppOnExit = false
+
+    /**
      * Public entry point for editing. Captures a backdrop screenshot (the game, when
      * triggered over it via the QS tile), then launches the foreground [OverlayEditActivity]
      * — which enters lock-task to block home/recents and calls [start]. From the in-app
      * drawer Mappo is foreground, so the backdrop is whatever Mappo was showing (or null).
+     *
+     * [returnToApp] (2026-08-29): entering from Mappo's own chrome (the controls bar's Edit
+     * overlay button, the Layout settings panel) backgrounds Mappo so the editor sits over
+     * the game — so exiting the editor has to bring it back, or the user is dumped on
+     * whatever was underneath. Set for those entries only; a QS-tile session over a game
+     * exits to the game, as it should.
      */
-    fun requestEdit() {
+    fun requestEdit(returnToApp: Boolean = false) {
         if (_editing.value) return
         if (!canShow()) {
             Log.w(TAG, "requestEdit() skipped: overlay permission not granted")
@@ -379,6 +392,7 @@ class OverlayLiveEditController @Inject constructor(
         } else {
             launch(null)
         }
+        returnToAppOnExit = returnToApp
     }
 
     fun start() {
@@ -414,6 +428,7 @@ class OverlayLiveEditController @Inject constructor(
 
     fun stop() {
         runOnMain {
+            val wasEditing = _editing.value
             collectJob?.cancel()
             collectJob = null
             selectionJob?.cancel()
@@ -432,7 +447,26 @@ class OverlayLiveEditController @Inject constructor(
             _editing.value = false
             backdropBitmap = null
             Log.i(TAG, "live edit stopped")
+            // Started from inside Mappo (which backgrounded itself to get out of the way):
+            // hand the user back to the screen they left. Guarded on wasEditing so the
+            // activity's onDestroy re-entry can't fire a second launch.
+            if (wasEditing && returnToAppOnExit) {
+                returnToAppOnExit = false
+                reopenMappo()
+            }
         }
+    }
+
+    /**
+     * Re-foreground Mappo after an in-app edit session. MainActivity is `singleTask`, so this
+     * routes to the existing instance (onNewIntent → onResume, which restores the home frame)
+     * on the route the user left — never a second copy.
+     */
+    private fun reopenMappo() {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        runCatching { context.startActivity(intent) }
+            .onFailure { Log.e(TAG, "return to Mappo failed", it) }
     }
 
     fun toggle() {

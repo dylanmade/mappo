@@ -279,9 +279,12 @@ class RemapControlsScreenTest {
         }
 
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
-        composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
-        // No app context in this setup — the overline falls back to plain "Layout".
-        composeRule.onNodeWithText("LAYOUT (PREVIEW)", useUnmergedTree = true).assertExists()
+        // The identity button (the drawer summon since 2026-08-27, ArrowLeftRight
+        // pill deleted; a plain pill carrying the LAYOUT name since the 2026-08-29 bar
+        // redesign collapsed the two-line stack — the application rides the icon).
+        composeRule.onNodeWithTag("bar:identity").assertExists()
+        // No layout name in this setup — the label falls back to "Layout".
+        composeRule.onNodeWithText("Layout (Preview)", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
@@ -313,10 +316,10 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("AUTO").assertCountEquals(1)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
-        composeRule.onAllNodesWithContentDescription("Change layout").assertCountEquals(1)
+        composeRule.onNodeWithTag("bar:identity").assertExists()
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        // The home state's overline carries no "(Preview)" suffix.
-        composeRule.onNodeWithText("LAYOUT", useUnmergedTree = true).assertExists()
+        // The home state's identity label carries no "(Preview)" suffix.
+        composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -343,7 +346,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithContentDescription("Change layout").performClick()
+        composeRule.onNodeWithTag("bar:identity").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("INSTALLED LAYOUTS", useUnmergedTree = true).assertExists()
@@ -392,7 +395,7 @@ class RemapControlsScreenTest {
 
         // The layouts drawer first — the Applications button lives inside it, wearing
         // the viewed application's identity ("Alpha Game": the active layout's app).
-        composeRule.onNodeWithContentDescription("Change layout").performClick()
+        composeRule.onNodeWithTag("bar:identity").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("Alpha Game", useUnmergedTree = true).performClick()

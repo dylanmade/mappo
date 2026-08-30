@@ -24,11 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -82,8 +79,6 @@ import com.mappo.data.model.steam.displayNameFor
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.roundToInt
-import com.mappo.ui.minput.MinputGroupButton
-import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -108,9 +103,6 @@ internal fun RemapSimpleView(
     onMap: () -> Unit,
     editorCallbacks: RemapGroupEditorCallbacks,
     modifier: Modifier = Modifier,
-    // The action-set row above the group boxes (rehomed from the retired top-bar tabs).
-    onSelectActionSet: (Long) -> Unit = {},
-    onAddSet: () -> Unit = {},
     // Rendered directly beneath the three-column band (the Gyro/Overlay strip); band + strip
     // center vertically on the view as one unit.
     bottomContent: @Composable () -> Unit = {},
@@ -224,12 +216,6 @@ internal fun RemapSimpleView(
                 ),
         ) {
             Spacer(Modifier.height(BlockTopGap))
-            ActionSetRow(
-                config = config,
-                viewingSet = viewingSet,
-                onSelectActionSet = onSelectActionSet,
-                onAddSet = onAddSet,
-            )
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center,
@@ -440,48 +426,6 @@ internal fun RemapSimpleView(
                 }
             }
         }
-    }
-}
-
-/**
- * The action-set switcher, rehomed from the retired top-bar tabs: one segment per set on a
- * centered [MinputGroupButton], closed by the "+" action segment (add a set — the library's
- * sanctioned convention break), with a dormant cog for future set management (rename /
- * duplicate / delete / layers return there; those actions lost their tab long-press surface
- * in this move). Layers are deliberately absent from this row for now.
- */
-@Composable
-private fun ActionSetRow(
-    config: ControllerConfig?,
-    viewingSet: ActionSetGraph?,
-    onSelectActionSet: (Long) -> Unit,
-    onAddSet: () -> Unit,
-) {
-    val sets = config?.actionSets.orEmpty()
-    if (sets.isEmpty()) return
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 8.dp, end = 8.dp, bottom = ActionSetRowGap),
-    ) {
-        MinputGroupButton(
-            options = sets.map { it.actionSet.id },
-            selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
-            onSelect = onSelectActionSet,
-            optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
-            trailingActionIcon = Icons.Filled.Add,
-            trailingActionDescription = "Add action set",
-            onTrailingAction = onAddSet,
-            modifier = Modifier.widthIn(max = ActionSetRowMaxWidth),
-        )
-        MinputIconButton(
-            icon = Icons.Filled.Settings,
-            contentDescription = "Manage action sets",
-            onClick = {},
-            enabled = false,
-        )
     }
 }
 
@@ -826,10 +770,6 @@ private val BadgeFirstRowAlignPadding = 7.5.dp
 /** Fixed downward nudge of the inputs block from the tab bar (its "margin-top"). */
 private val BlockTopGap = 14.dp
 private val BlockBottomGap = 14.dp
-
-/** Width cap for the action-set switcher, and its gap down to the group-box band. */
-private val ActionSetRowMaxWidth = 320.dp
-private val ActionSetRowGap = 6.dp
 
 /** Column-edge reserve for the zero-footprint +N badges (badge width + its 4dp gap) — kept as
  *  tight as the badge allows so the group boxes get the widest possible footprint. */

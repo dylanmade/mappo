@@ -255,6 +255,15 @@ fun MainScreen(
     // on launch. `frameVisible` drives its fade-in entrance / fade-out exit; dismissing it on
     // MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
     var frameVisible by remember { mutableStateOf(true) }
+    // Entering live overlay editing (the controls bar's Edit overlay button and the Layout
+    // settings panel's entry both land here): editing happens over the GAME, so Mappo slides
+    // away first — dismissing the frame backgrounds the task via the frameVisible effect
+    // below. `returnToApp` makes the editor hand the user back here on exit rather than
+    // leaving them on whatever was underneath.
+    val startOverlayEdit = {
+        viewModel.startLiveOverlayEdit(returnToApp = true)
+        frameVisible = false
+    }
     // Dev tooling: the floating Theme Studio font picker (wordmark-drawer toggle).
     // Saveable so the text-size recreate doesn't drop it mid-test session.
     var fontDebugEnabled by rememberSaveable { mutableStateOf(false) }
@@ -475,13 +484,12 @@ fun MainScreen(
                     // options moved to the wordmark drawer) ──
                     optionsEntries = listOf(
                         RemapOptionEntry("edit_overlay", "Edit overlay", Icons.Filled.Layers) {
-                            // Live overlay editing happens over the game — slide the handheld
-                            // away (backgrounding Mappo via the frameVisible effect) so the
-                            // editor chrome sits over the app underneath.
-                            viewModel.startLiveOverlayEdit()
-                            frameVisible = false
+                            startOverlayEdit()
                         },
                     ),
+                    // The controls bar's Edit overlay button (2026-08-29) — the same entry
+                    // the panel carries, given a real home.
+                    onEditOverlay = { startOverlayEdit() },
                     // ── Viewing vs active (2026-08-20) ──
                     isActiveLayout = isActiveLayout,
                     autoSwitchEnabled = autoSwitchEnabled,

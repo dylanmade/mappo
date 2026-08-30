@@ -34,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -52,7 +51,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -99,7 +97,7 @@ import com.mappo.ui.screen.remap.RemapPanel
 import com.mappo.ui.screen.remap.RemapPanelOverlay
 import com.mappo.ui.screen.remap.RemapSections
 import com.mappo.ui.screen.remap.RemapSimpleView
-import com.mappo.ui.screen.remap.RemapTopBar
+import com.mappo.ui.screen.remap.RemapControlsTopBar
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -181,8 +179,11 @@ fun RemapControlsScreen(
     // ── The viewed application context (rides the route from the layouts view; the home
     // instance derives it from the active layout's binding) ────────────────────────
     viewedAppPackage: String? = null,
-    // ── Layout settings panel (the top-bar summon; physical Start) ─────────────────
+    // ── Layout settings panel (physical Start) ─────────────────────────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
+    // The bar's Edit overlay button (2026-08-29): enters live overlay editing, which
+    // returns HERE on exit (see OverlayLiveEditController.requestEdit).
+    onEditOverlay: () -> Unit = {},
     // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
     // True when the layout on screen IS the runtime-active layout (the home state);
     // false = a layout under inspection — the bar grows the Activate pill.
@@ -455,55 +456,40 @@ fun RemapControlsScreen(
                             .focusGroup()
                     } else Modifier,
                 ),
+            // The bar's ground matches the content plane beneath it: the redesigned
+            // top bar paints no strip of its own, so a Scaffold container in the
+            // default `background` role would band across the top.
+            containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
-                // The 2026-08-27 bar: the change button (the layouts drawer's summon),
-                // then the viewed application's identity — icon + "<app> layout"
-                // overline over the layout name — as a BUTTON that also toggles the
-                // drawer (the identity-button experiment); the Auto-detect stack on the
-                // right. The Layout settings / Activate pills retired 2026-08-27 (the
-                // options panel is Start-key-only until Edit Overlay's next home;
-                // activation lives on the drawer's cards). The action-set tabs that
-                // lived here moved into RemapSimpleView's set row.
-                RemapTopBar(
-                    // "<application> layout", "(Preview)"-suffixed while inspecting a
-                    // non-active layout; no app context reads plain "Layout".
-                    overline = buildString {
-                        append(effectiveAppLabel?.let { "$it layout" } ?: "Layout")
+                // The 2026-08-29 bar: transparent, with each cluster on its own pill pod
+                // (see RemapControlsTopBar) — the identity pill (the layouts drawer's
+                // summon) at the start, the action-set switcher centered (up out of
+                // RemapSimpleView's content column), Auto-detect + Edit overlay at the
+                // end. Edit overlay is the options panel's lone entry given a real home
+                // (the panel stays on the Start key).
+                RemapControlsTopBar(
+                    // The layout being viewed, "(Preview)"-suffixed while inspecting a
+                    // non-active one; an application with no layout reads "None" — not
+                    // the stale name of another app's layout (2026-08-26 audit). The
+                    // application itself is carried by the leading launcher icon since
+                    // the two-line identity stack collapsed into a pill (2026-08-29).
+                    layoutLabel = buildString {
+                        append(if (effectiveAppHasNoLayout) "None" else layoutName ?: "Layout")
                         if (!isActiveLayout) append(" (Preview)")
                     },
-                    // An application with no layout reads "None" — not the stale name of
-                    // another app's layout (2026-08-26 audit).
-                    title = if (effectiveAppHasNoLayout) "None" else layoutName ?: "Layout",
-                    // The viewed application's icon leads the stack again (2026-08-27 —
-                    // the bar's right-corner app cluster retired with the standalone
-                    // applications drawer).
                     appPackage = effectiveAppPackage,
-                    onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
                     identityHighlighted = layoutsDrawerOpen,
-                    onBack = onBack,
-                    navigation = {
-                        // The universal way into the layouts view: toggles the drawer.
-                        // Wears the highlight plane while its drawer is open — the
-                        // design language's selected/active marking.
-                        MinputPillButton(
-                            onClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
-                            leadingIcon = rememberVectorPainter(Lucide.ArrowLeftRight),
-                            contentDescription = "Change layout",
-                            // Invisible at rest (2026-08-26 trial vs the box variant's
-                            // bevel highlights); the highlight plane still marks open.
-                            // bare = true,
-                            highlighted = layoutsDrawerOpen,
-                        )
+                    onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
+                    config = config,
+                    viewingSet = viewingSet,
+                    onSelectActionSet = { id ->
+                        onSelectActionSet(id)
+                        onSelectLayer(null)
                     },
-                    actions = {
-                        // Just the compact Auto row (2026-08-27): the application
-                        // identity moved into the layouts drawer's Applications button —
-                        // the right-side applications drawer and its bar cluster retired.
-                        AutoDetectRow(
-                            enabled = autoSwitchEnabled,
-                            onChange = onAutoSwitchChange,
-                        )
-                    },
+                    onAddSet = { dialog = ActionSetDialogState.Add },
+                    autoDetectEnabled = autoSwitchEnabled,
+                    onAutoDetectChange = onAutoSwitchChange,
+                    onEditOverlay = onEditOverlay,
                 )
             },
         ) { innerPadding ->
@@ -567,11 +553,6 @@ fun RemapControlsScreen(
                             config = config,
                             onMap = { /* input-mapping wizard — UI-only CTA for now */ },
                             editorCallbacks = editorCallbacks,
-                            onSelectActionSet = { id ->
-                                onSelectActionSet(id)
-                                onSelectLayer(null)
-                            },
-                            onAddSet = { dialog = ActionSetDialogState.Add },
                             // While the drawer is open, controller focus lives on its
                             // cards; browsing can remount this view (no-layout ↔ controls
                             // flip), and an ungated entry-seat stole focus from the drawer.
@@ -952,37 +933,6 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
 }
 
 /**
- * The bar's Auto row (2026-08-25, replacing the 2026-08-21 stacked "AUTO-DETECT" +
- * hand-rolled [com.mappo.ui.minput.MinputSwitch], which never sat right): a compact
- * horizontal overline "AUTO" beside a stock M3 switch — the drawer settings rows'
- * halo-stripped scaled-switch treatment, at bar scale.
- */
-@Composable
-private fun AutoDetectRow(
-    enabled: Boolean,
-    onChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
-    ) {
-        Text(
-            text = "Auto".uppercase(),
-            style = minputOverlineTextStyle(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            Switch(
-                checked = enabled,
-                onCheckedChange = onChange,
-                modifier = Modifier.scaledLayout(AutoSwitchScale),
-            )
-        }
-    }
-}
-
-/**
  * The content plane's empty state for an application with no layout (2026-08-25): shown
  * while the apps drawer previews or picks an app whose binding resolves to nothing.
  * Two tile routes out: create a layout (the "+ New layout" modal, pre-associated with
@@ -1156,4 +1106,3 @@ private const val WarningCheckboxScale = 0.75f
 
 /** Scale for the bar's halo-stripped Auto switch (M3's 52×32 shrunk well under the bar
  *  height — Dylan sized it down from 0.8, 2026-08-26). */
-private const val AutoSwitchScale = 0.5f
