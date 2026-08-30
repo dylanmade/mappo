@@ -328,8 +328,12 @@ val MinputPillMinWidth = 62.dp
 /** Icon edge inside the pills. */
 val MinputPillIconSize = 13.dp
 
-/** Horizontal content inset shared by every pill control (buttons, dropdowns, label fields). */
-val MinputPillContentPadding = 10.dp
+/** Horizontal content inset shared by every pill control (buttons, dropdowns, label fields).
+ *  Widened 10dp → 12dp (Dylan, 2026-08-29): the family read pinched, labels crowding their
+ *  own chrome. Deliberately ONE value across the family — a button and the dropdown beside
+ *  it must measure alike. Icon-ONLY buttons never consult it (they pin to a perfect
+ *  [MinputPillHeight] circle), so they are unaffected. */
+val MinputPillContentPadding = 12.dp
 
 /** Gap between a leading glyph and its label (pills, headers, captions). */
 val MinputGlyphLabelGap = 5.dp
@@ -404,3 +408,21 @@ val MinputBarIconTextGap = 6.dp
 
 /** Vertical gap inside a bar widget's text stack, between the overline and the value. */
 val MinputBarStackGap = 1.dp
+
+// ── Pod anatomy ──────────────────────────────────────────────────────────────────────────
+// [MinputPod]: the pill-shaped plate a cluster of controls rides on, for chrome that floats
+// over content instead of banding across it (born with the remap controls view's transparent
+// top bar). Metrics live here so every pod in the app measures alike.
+
+/** Inset between a pod's rim and the controls it carries. */
+val MinputPodPadding = 4.dp
+
+/** Resting height of a pod: a pill control plus [MinputPodPadding] above and below. A floor,
+ *  not a cap — taller content grows the plate. */
+val MinputPodHeight = MinputPillHeight + MinputPodPadding * 2
+
+/** Gap between controls riding the SAME pod. */
+val MinputPodItemGap = 4.dp
+
+/** Gap between adjacent pods. */
+val MinputPodGap = 6.dp
