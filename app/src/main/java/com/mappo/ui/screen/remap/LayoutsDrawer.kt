@@ -297,10 +297,11 @@ private fun LayoutsDrawerContent(
             },
             leadingIcon = appIcon ?: rememberVectorPainter(Lucide.LayoutGrid),
             // Launcher icons carry fixed colors (never re-tint); the Lucide fallback
-            // glyph tints like any concept icon.
+            // glyph tints like any concept icon — at the label's strength (2026-08-30:
+            // chromed button labels moved to onSurface).
             leadingIconTint = if (appIcon != null) {
                 Color.Unspecified
-            } else MaterialTheme.colorScheme.onSurfaceVariant,
+            } else MaterialTheme.colorScheme.onSurface,
             // Identity packed to the start, dropdown arrow pinned to the far end
             // (2026-08-27 trial vs the centered stack — flip alignStart to compare).
             trailingIcon = rememberVectorPainter(Lucide.ChevronDown),

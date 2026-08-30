@@ -113,7 +113,9 @@ internal fun RemapControlsTopBar(
                     onClick = onEditOverlay,
                     elevated = true,
                     leadingIcon = rememberVectorPainter(Icons.Outlined.Layers),
-                    leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Follows the label's strength (2026-08-30): chromed button labels
+                    // moved to onSurface, so a pinned onSurfaceVariant glyph would lag.
+                    leadingIconTint = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }

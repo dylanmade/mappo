@@ -46,8 +46,12 @@ import androidx.compose.ui.text.style.TextOverflow
  *    SELECTED/ACTIVE state (the open drawer's summon, the active member of a set) — never
  *    idle emphasis; an idle button wants [elevated] or [filled] instead.
  *
- * [filled] (a primary/commit action) keeps its emphasis through the stronger text color
- * only. Disabled = dimmed + inert.
+ * [filled] marks a primary/commit action (Save, Done). NB it is currently a NO-OP on a
+ * chromed button: its only ever effect was the stronger onSurface text, which every chromed
+ * button now carries (2026-08-30) — it still lifts a `bare` button's label out of the
+ * recessive utility grey, and it remains the semantic marker for the commit button in a
+ * dialog/panel pair, so call sites keep passing it. Give it a real treatment (its own fill?)
+ * when the family next needs a louder CTA. Disabled = dimmed + inert.
  *
  * [leadingIcon] renders a small glyph before the label (or alone, icon-only mode).
  * [leadingIconTint] defaults to Unspecified because the primary use is hardware button
@@ -80,10 +84,17 @@ fun MinputPillButton(
     contentDescription: String? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
+    // Label strength (2026-08-30, Dylan): a chromed button's label reads at onSurface — the
+    // same weight as the controls view's input legend and [MinputGroupButton]'s unselected
+    // segments, which were already onSurface while these were the dimmer onSurfaceVariant.
+    // The two are the SAME typeface, size, and weight; the gap was pure contrast, and at
+    // 12sp on a small screen the dimmer grey read as a lighter, mushier face. `bare` keeps
+    // onSurfaceVariant: a chrome-less utility glyph (a header cog, a kebab) is deliberately
+    // recessive, and it has no label to carry.
     val content = when {
         highlighted -> MaterialTheme.colorScheme.onPrimary
-        filled -> MaterialTheme.colorScheme.onSurface
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+        bare && !filled -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
     }
     // Highlighted beats bare (2026-08-26): the highlight plane marks SELECTED/ACTIVE
     // state, which must read even on a chrome-less button (a bare drawer summon while
