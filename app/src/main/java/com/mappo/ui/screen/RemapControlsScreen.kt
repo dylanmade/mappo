@@ -459,7 +459,10 @@ fun RemapControlsScreen(
             // The bar's ground matches the content plane beneath it: the redesigned
             // top bar paints no strip of its own, so a Scaffold container in the
             // default `background` role would band across the top.
-            containerColor = MaterialTheme.colorScheme.surface,
+            // PLANE EXPERIMENT (2026-08-30) — see controlsPodColor() in
+            // RemapControlsTopBar: the view drops from `surface` to the lowest plane so
+            // the pods (now `surface`) sit above it. Revert both sites together.
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             topBar = {
                 // The 2026-08-29 bar: transparent, with each cluster on its own pill pod
                 // (see RemapControlsTopBar) — the identity pill (the layouts drawer's
@@ -528,7 +531,9 @@ fun RemapControlsScreen(
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
-                    color = MaterialTheme.colorScheme.surface,
+                    // PLANE EXPERIMENT (2026-08-30) — was `surface`; see the Scaffold
+                    // container above.
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 ) {
                     // The viewed application has no layout — the ACTIVE app fresh from
                     // detection (the core flow: shortcut-open Mappo over a new game), an

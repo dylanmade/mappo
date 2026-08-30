@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
@@ -34,6 +35,7 @@ import com.mappo.ui.minput.MinputPillButton
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.MinputPodHeight
+import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
@@ -75,14 +77,13 @@ internal fun RemapControlsTopBar(
             .padding(horizontal = MinputBarEdgePadding, vertical = TopBarVerticalPadding)
     ) {
         // ── start: the identity pill (the layouts drawer's summon) ──
-        MinputPod(modifier = Modifier.align(Alignment.CenterStart)) {
+        MinputPod(color = controlsPodColor(), modifier = Modifier.align(Alignment.CenterStart)) {
             MinputPillButton(
                 text = layoutLabel,
                 onClick = onIdentityClick,
-                // Sits ON the pod, so it takes the plane above it — the same fill the
-                // group button's segments wear. Highlighted while the drawer is open
-                // (the design language's open/selected marking).
-                elevated = true,
+                // PLANE EXPERIMENT: was `elevated = true` (surface 2); now the default
+                // surface-1 box fill, one plane down. Highlighted while the drawer is
+                // open (the design language's open/selected marking).
                 highlighted = identityHighlighted,
                 // The application's launcher icon, untinted (leadingIconTint defaults to
                 // Unspecified, which Icon renders as "no color filter").
@@ -106,12 +107,12 @@ internal fun RemapControlsTopBar(
             horizontalArrangement = Arrangement.spacedBy(MinputPodGap),
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
-            MinputPod { AutoDetectRow(enabled = autoDetectEnabled, onChange = onAutoDetectChange) }
-            MinputPod {
+            MinputPod(color = controlsPodColor()) { AutoDetectRow(enabled = autoDetectEnabled, onChange = onAutoDetectChange) }
+            MinputPod(color = controlsPodColor()) {
                 MinputPillButton(
                     text = "Edit overlay",
                     onClick = onEditOverlay,
-                    elevated = true,
+                    // PLANE EXPERIMENT: was `elevated = true`.
                     leadingIcon = rememberVectorPainter(Icons.Outlined.Layers),
                     // Follows the label's strength (2026-08-30): chromed button labels
                     // moved to onSurface, so a pinned onSurfaceVariant glyph would lag.
@@ -139,22 +140,25 @@ private fun ActionSetPod(
 ) {
     val sets = config?.actionSets.orEmpty()
     if (sets.isEmpty()) return
-    MinputPod(modifier = modifier) {
+    MinputPod(color = controlsPodColor(), modifier = modifier) {
         MinputGroupButton(
             options = sets.map { it.actionSet.id },
             selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
             onSelect = onSelectActionSet,
             optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
+            // PLANE EXPERIMENT: unselected segments step down from surface 2 to the
+            // surface-1 box fill (the selected segment keeps the highlight plane).
+            container = minputBoxContainer(),
             trailingActionIcon = Lucide.Plus,
             trailingActionDescription = "Add action set",
             onTrailingAction = onAddSet,
         )
         // The cog wears the pill family's chromed icon-button form on the segments' plane
-        // (2026-08-29 — it was a bare utility glyph, which read as unfinished beside them).
+        // (2026-08-29 — it was a bare utility glyph, which read as unfinished beside them),
+        // so it follows them down a plane with the experiment.
         MinputPillButton(
             onClick = {},
             enabled = false,
-            elevated = true,
             leadingIcon = rememberVectorPainter(Lucide.Settings),
             leadingIconTint = MaterialTheme.colorScheme.onSurface,
             contentDescription = "Manage action sets",
@@ -193,6 +197,23 @@ private fun AutoDetectRow(
         }
     }
 }
+
+/**
+ * EXPERIMENT (2026-08-30, Dylan) — a plane shift across the whole controls view, to see how
+ * the stack reads one step darker:
+ *  1. pods take the view's FORMER background (`surface`) instead of `surfaceContainer` — this
+ *     function;
+ *  2. the view's background drops to `surfaceContainerLowest` (two sites in
+ *     `RemapControlsScreen`: the Scaffold container and the content plane);
+ *  3. every pod-borne button steps DOWN one plane — `elevated` (surface 2) → the default
+ *     surface-1 box fill (identity, the action-set segments + cog, Edit overlay).
+ *
+ * To revert: delete this, drop the `color =` arguments on the pods, restore `elevated = true`
+ * on those buttons (and the group button's `container =`), and put `surface` back in
+ * `RemapControlsScreen`.
+ */
+@Composable
+private fun controlsPodColor(): Color = MaterialTheme.colorScheme.surface
 
 /** Vertical inset between the bar's bounds and its pods. */
 private val TopBarVerticalPadding = 5.dp

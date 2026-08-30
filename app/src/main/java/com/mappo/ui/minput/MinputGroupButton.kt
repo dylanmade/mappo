@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +57,9 @@ import androidx.compose.ui.unit.dp
  *
  * @param equalWidths stretch every segment to an equal share of the group's width (the
  *   pre-2026-08-29 behavior); default wraps each label.
+ * @param container fill for the UNSELECTED segments (and the trailing action segment) —
+ *   surface 2 by default, overrideable for a group riding a plane where that would vanish
+ *   (the minput coloration rule: theme-derived, overrideable per view).
  * @param trailingActionIcon optional ACTION segment closing the group — a deliberate break
  *   from single-choice convention: a narrow fixed-width segment (it takes the group's outer
  *   end rounding) that fires [onTrailingAction] instead of selecting. Born for the action-set
@@ -70,6 +74,7 @@ fun <T> MinputGroupButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     equalWidths: Boolean = false,
+    container: Color = MinputElevatedContainer,
     trailingActionIcon: ImageVector? = null,
     trailingActionDescription: String? = null,
     onTrailingAction: () -> Unit = {},
@@ -91,7 +96,7 @@ fun <T> MinputGroupButton(
             )
             val isSelected = option == selected
             val fill by animateColorAsState(
-                targetValue = if (isSelected) minputHighlightContainer() else MinputElevatedContainer,
+                targetValue = if (isSelected) minputHighlightContainer() else container,
                 label = "minputGroupSegmentFill",
             )
             val content by animateColorAsState(
@@ -159,9 +164,9 @@ fun <T> MinputGroupButton(
             val interaction = remember { MutableInteractionSource() }
             Surface(
                 shape = shape,
-                color = MinputElevatedContainer,
+                color = container,
                 border = minputBevelBorder(
-                    MinputElevatedContainer,
+                    container,
                     cornerRadius = GroupInnerCorner,
                     endCornerRadius = outerCorner,
                 ),
