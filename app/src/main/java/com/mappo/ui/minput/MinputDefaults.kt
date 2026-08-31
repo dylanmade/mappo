@@ -72,7 +72,7 @@ fun minputOverlineTextStyle(): TextStyle =
  */
 @Composable
 fun minputBoxContainer(): Color =
-    MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainerLow)
 
 /**

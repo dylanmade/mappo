@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.Dp
 @Composable
 fun MinputPod(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.surface,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     corner: Dp = MinputPodHeight / 2,
     horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(MinputPodItemGap),
     content: @Composable RowScope.() -> Unit,
