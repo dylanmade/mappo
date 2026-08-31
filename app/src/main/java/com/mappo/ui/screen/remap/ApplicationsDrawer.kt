@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -33,7 +35,6 @@ import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputHighlightContainer
@@ -41,7 +42,6 @@ import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMicroTextStyle
 import com.mappo.ui.minput.minputMiniTextStyle
-import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
  * The applications list (2026-08-27) — the layouts drawer's APPLICATIONS MODE content.
@@ -85,72 +85,58 @@ internal fun ApplicationsList(
         state = listState,
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-        contentPadding = PaddingValues(
-            start = PanelContentPadding,
-            end = PanelContentPadding,
-            bottom = PanelContentPadding,
-        ),
+        // The pod supplies the surrounding inset now (2026-08-30) — only the gap up to
+        // the Applications button above is this list's to give.
+        contentPadding = PaddingValues(top = DrawerControlGap),
     ) {
-        appSection("Installed apps", installed, emptyHint = "No applications detected") { app ->
+        // Headerless (2026-08-30, matching the layouts list): the INSTALLED/COMMUNITY
+        // overlines retired — the download marker at a card's end says "installed on
+        // this device", and its absence says "community".
+        if (installed.isEmpty() && community.isEmpty()) {
+            item(key = "empty", contentType = "empty") {
+                Text(
+                    text = if (query.isBlank()) "No applications detected" else "No matches",
+                    style = minputMicroTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = MinputGlyphLabelGap),
+                )
+            }
+        }
+        items(installed, key = { AppCardKeyPrefix + it.packageName }, contentType = { "card" }) { app ->
             ApplicationCard(
                 app = app,
                 active = app.packageName == activeAppPackage,
+                installed = true,
                 onPreview = { onPreviewApplication(app.packageName) },
                 onSelect = { onSelectApplication(app) },
             )
         }
-        appSection("Community apps", community, emptyHint = "No community applications yet") { app ->
+        items(community, key = { AppCardKeyPrefix + it.packageName }, contentType = { "card" }) { app ->
             ApplicationCard(
                 app = app,
                 active = false,
+                installed = false,
                 onPreview = { onPreviewApplication(app.packageName) },
                 onSelect = { onSelectApplication(app) },
             )
-        }
-    }
-}
-
-/** One category of the application list: overline header, then cards (or a muted empty
- *  hint) — the layouts drawer's section anatomy. */
-private fun androidx.compose.foundation.lazy.LazyListScope.appSection(
-    title: String,
-    sectionApps: List<InstalledApp>,
-    emptyHint: String,
-    card: @Composable (InstalledApp) -> Unit,
-) {
-    item(key = "header:$title", contentType = "header") {
-        Text(
-            text = title.uppercase(),
-            style = minputOverlineTextStyle(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = MinputPanelDividerContentGap),
-        )
-    }
-    if (sectionApps.isEmpty()) {
-        item(key = "empty:$title", contentType = "empty") {
-            Text(
-                text = emptyHint,
-                style = minputMicroTextStyle(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = MinputGlyphLabelGap),
-            )
-        }
-    } else {
-        items(sectionApps, key = { AppCardKeyPrefix + it.packageName }, contentType = { "card" }) {
-            card(it)
         }
     }
 }
 
 /**
  * One application card: launcher icon beside the application name (2026-08-26: subtitle
- * retired — name only). Cards wear the layout cards' chrome; the application whose
- * layout is ACTIVE wears the highlight plane.
+ * retired — name only), closed by the [installed] marker. Cards wear the layout cards'
+ * chrome; the application whose layout is ACTIVE wears the highlight plane.
+ *
+ * [installed] draws the download glyph at the row's END (2026-08-30): it replaced the
+ * INSTALLED/COMMUNITY section headers, so the marker on the card is what separates an
+ * application detected on this device from a community entry.
  */
 @Composable
 private fun ApplicationCard(
     app: InstalledApp,
     active: Boolean,
+    installed: Boolean,
     onPreview: () -> Unit,
     onSelect: () -> Unit,
 ) {
@@ -202,6 +188,15 @@ private fun ApplicationCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (installed) {
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = "Installed",
+                    modifier = Modifier.size(InstalledIconSize),
+                    tint = secondaryContent,
+                )
+            }
         }
     }
 }
@@ -229,3 +224,6 @@ private val AppCardIconSize = 16.dp
 
 /** Gap between the launcher icon and the card's text stack. */
 private val AppCardIconTextGap = 6.dp
+
+/** The installed (download) marker closing an application card — the layout cards' size. */
+private val InstalledIconSize = 12.dp

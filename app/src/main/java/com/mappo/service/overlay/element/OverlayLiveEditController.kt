@@ -193,7 +193,7 @@ import com.mappo.ui.component.ColorPicker
 import com.mappo.ui.component.GradientEditor
 import com.mappo.ui.component.colorpicker.ColorPickerButton
 import com.mappo.ui.minput.MinputPercentSlider
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputSlider
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.screen.overlay.OverlayCommonCommands
@@ -2763,7 +2763,7 @@ class OverlayLiveEditController @Inject constructor(
     ) {
         val target = el.targetFor(gesture)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            MinputPillButton(
+            MinputButton(
                 text = gestureLabel(gesture),
                 onClick = { openSub("gesture-$gesture") { GesturePickEntries(el.id, gesture, draft) } },
             )
@@ -2774,7 +2774,7 @@ class OverlayLiveEditController @Inject constructor(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp).size(10.dp),
             )
-            MinputPillButton(
+            MinputButton(
                 text = outputLabel(target),
                 onClick = { openSub("output-$gesture") { OutputPickEntries(el.id, gesture, draft) } },
                 filled = target !is RemapTarget.Unbound,
@@ -2954,7 +2954,7 @@ class OverlayLiveEditController @Inject constructor(
                     modifier = Modifier.weight(1f),
                 )
                 if (el.contentColorArgb != null) {
-                    MinputPillButton("Reset", onClick = { overlayEditor.update(el.copy(contentColorArgb = null)) })
+                    MinputButton("Reset", onClick = { overlayEditor.update(el.copy(contentColorArgb = null)) })
                     Spacer(Modifier.width(8.dp))
                 }
                 ColorPickerButton(

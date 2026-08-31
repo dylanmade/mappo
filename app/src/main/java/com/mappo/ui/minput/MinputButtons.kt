@@ -26,14 +26,22 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 
 /**
  * Mappo's hand-rolled miniature button — the library's ONE button component (2026-08-24:
  * the former standalone icon button folded in so every variant/color option lives here).
  *
- * [text] is optional: with a [leadingIcon] and no text the button renders as a perfectly
- * CIRCULAR icon button ([MinputPillHeight] diameter) wearing the same container variants
- * as the pill form — pass a [contentDescription] since no label carries the semantics.
+ * Named `MinputButton` until 2026-08-30: a pill is now just its DEFAULT silhouette
+ * ([corner] = half the height), not its definition, so the component that owns every button
+ * in the app no longer claims one shape in its name. Pass a smaller [corner] for a rounded
+ * rectangle — the shape the drawer's cards want as they migrate onto this component instead
+ * of hand-rolling their own Surface + bevel + clickable.
+ *
+ * [text] is optional: with a [leadingIcon] and no text the button renders as a SQUARE icon
+ * button ([MinputPillHeight] a side — a perfect circle at the default [corner]) wearing the
+ * same container variants as the labelled form — pass a [contentDescription] since no label
+ * carries the semantics.
  *
  * Container variants, lowest plane to highest:
  *  - [bare] — no container chrome at all (transparent, borderless): the utility-glyph
@@ -60,6 +68,9 @@ import androidx.compose.ui.text.style.TextOverflow
  * content color" instead — an icon-only button has no text to carry the variant's color,
  * so the glyph must (fixed-color art in icon-only form isn't a real case yet).
  *
+ * [corner] is an ABSOLUTE radius (never a percentage — that would stretch a tall button into
+ * a capsule). The default is half the height: a pill.
+ *
  * [trailingIcon] renders a glyph at the button's END — dropdown arrows and their kin. It
  * always follows the button's content color (trailing glyphs are concept icons; there is
  * no fixed-color-art case on that side). [alignStart] (2026-08-27) packs the icon+label
@@ -68,7 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
  * from its edges; wrap-width buttons keep the centered default.
  */
 @Composable
-fun MinputPillButton(
+fun MinputButton(
     text: String? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -81,6 +92,7 @@ fun MinputPillButton(
     leadingIconTint: Color = Color.Unspecified,
     trailingIcon: Painter? = null,
     alignStart: Boolean = false,
+    corner: Dp = MinputPillHeight / 2,
     contentDescription: String? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
@@ -106,15 +118,18 @@ fun MinputPillButton(
         else -> minputBoxContainer()
     }
     val interaction = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(50)
+    // Absolute radius, never a percentage: a percentage corner turns any button taller than
+    // it is wide into a capsule (see MinputPod's note).
+    val shape = RoundedCornerShape(corner)
     Surface(
         shape = shape,
         color = container,
-        border = if (bare && !highlighted) null else minputBevelBorder(container, MinputPillHeight / 2),
+        border = if (bare && !highlighted) null else minputBevelBorder(container, corner),
         modifier = modifier
             .minputInteractiveMotion(interaction)
             .height(MinputPillHeight)
-            // Icon-only = a perfect circle: width pinned to the height.
+            // Icon-only = a square: width pinned to the height (a circle at the
+            // default corner).
             .then(if (iconOnly) Modifier.width(MinputPillHeight) else Modifier)
             .then(
                 if (enabled) {
@@ -200,7 +215,7 @@ fun MinputPillButton(
 
 /**
  * Convenience form of the chrome-less utility icon button (header cogs, kebabs, slider
- * steppers): delegates to [MinputPillButton]'s icon-only `bare` mode, so
+ * steppers): delegates to [MinputButton]'s icon-only `bare` mode, so
  * there is exactly ONE button implementation to maintain (2026-08-24 fold).
  */
 @Composable
@@ -210,7 +225,7 @@ fun MinputIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-) = MinputPillButton(
+) = MinputButton(
     onClick = onClick,
     modifier = modifier,
     enabled = enabled,

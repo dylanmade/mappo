@@ -324,10 +324,10 @@ class RemapControlsScreenTest {
 
     @Test
     fun changeButton_opensLayoutsDrawer_withSectionsAndCards() {
-        // The change button slides in the layouts drawer: the two category headers
-        // (Default retired with the default-layout concept, 2026-08-24; the identity
-        // header retired when the drawer moved between the bars) and a card per layout
-        // of the viewed application.
+        // The change button slides in the layouts drawer: the permanent "New layout"
+        // card, then a card per layout of the viewed application. Headerless since
+        // 2026-08-30 — the INSTALLED/COMMUNITY overlines retired in favour of a
+        // per-card download marker.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -349,8 +349,15 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("bar:identity").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("INSTALLED LAYOUTS", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("COMMUNITY LAYOUTS", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("INSTALLED LAYOUTS", useUnmergedTree = true)
+            .assertCountEquals(0)
+        composeRule.onAllNodesWithText("COMMUNITY LAYOUTS", useUnmergedTree = true)
+            .assertCountEquals(0)
+        // The create-layout affordance leads the list (2026-08-30), on a proper
+        // icon + label rather than the old "+ New layout" text glyph.
+        composeRule.onNodeWithText("New layout", useUnmergedTree = true).assertExists()
+        // Every listed layout is on-device, so each card carries the installed marker.
+        composeRule.onAllNodesWithContentDescription("Installed").assertCountEquals(2)
         composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Beta layout", useUnmergedTree = true).assertExists()
     }

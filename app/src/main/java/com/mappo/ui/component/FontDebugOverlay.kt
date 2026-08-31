@@ -55,7 +55,7 @@ import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Star
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillHeight
 import com.mappo.ui.minput.MinputTextField
@@ -177,7 +177,7 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                         )
                         Spacer(Modifier.width(SearchRowGap))
                         // Back to the list head — where favorites live.
-                        MinputPillButton(
+                        MinputButton(
                             onClick = { scope.launch { listState.animateScrollToItem(0) } },
                             leadingIcon = rememberVectorPainter(Lucide.ArrowUpToLine),
                             contentDescription = "Jump to top",

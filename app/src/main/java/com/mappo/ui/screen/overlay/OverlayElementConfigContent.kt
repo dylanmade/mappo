@@ -66,7 +66,7 @@ import com.mappo.ui.component.GradientEditor
 import com.mappo.ui.component.colorpicker.ColorPickerButton
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputPercentSlider
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPillDropdown
 import com.mappo.ui.minput.MinputSlider
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -194,7 +194,7 @@ fun OverlayElementConfigContent(
             commitAppearance(appearance.copy(corners = CornerRadii.uniform(it)))
         })
         var perCorner by remember(element.id) { mutableStateOf(false) }
-        MinputPillButton(
+        MinputButton(
             text = if (perCorner) "Hide per-corner radii" else "Per-corner radii",
             onClick = { perCorner = !perCorner },
         )
@@ -220,7 +220,7 @@ fun OverlayElementConfigContent(
         ) {
             SectionLabel("Layers")
             Spacer(Modifier.weight(1f))
-            MinputPillButton(
+            MinputButton(
                 text = "+ Fill",
                 onClick = {
                     commitAppearance(
@@ -232,7 +232,7 @@ fun OverlayElementConfigContent(
                 },
             )
             Spacer(Modifier.width(8.dp))
-            MinputPillButton(
+            MinputButton(
                 text = "+ Stroke",
                 onClick = {
                     commitAppearance(
@@ -281,7 +281,7 @@ fun OverlayElementConfigContent(
                 modifier = Modifier.weight(1f),
             )
             if (draft.contentColorArgb != null) {
-                MinputPillButton(text = "Reset", onClick = { commit(draft.copy(contentColorArgb = null)) })
+                MinputButton(text = "Reset", onClick = { commit(draft.copy(contentColorArgb = null)) })
                 Spacer(Modifier.width(8.dp))
             }
             ColorPickerButton(
@@ -306,8 +306,8 @@ fun OverlayElementConfigContent(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            MinputPillButton(text = "Delete", onClick = onDelete)
-            MinputPillButton(text = "Done", onClick = onDone, filled = true)
+            MinputButton(text = "Delete", onClick = onDelete)
+            MinputButton(text = "Done", onClick = onDone, filled = true)
         }
     }
 }

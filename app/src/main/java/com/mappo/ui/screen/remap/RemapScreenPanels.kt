@@ -68,7 +68,7 @@ import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelDividerInset
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillDropdown
 import com.mappo.ui.minput.MinputPillIconSize
@@ -505,8 +505,8 @@ internal fun AddLayoutModalContent(
             modifier = Modifier.fillMaxWidth().padding(PanelContentPadding),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
         ) {
-            MinputPillButton(text = "Cancel", onClick = onClose)
-            MinputPillButton(
+            MinputButton(text = "Cancel", onClick = onClose)
+            MinputButton(
                 text = "Create",
                 onClick = { onCreate(name.trim()); onClose() },
                 enabled = name.isNotBlank(),

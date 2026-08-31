@@ -43,7 +43,7 @@ import com.mappo.data.model.overlay.resolvedStops
 import com.mappo.data.model.overlay.sampleResolvedStops
 import com.mappo.ui.component.colorpicker.ColorPickerButton
 import com.mappo.ui.minput.MinputPercentSlider
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputSlider
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -167,11 +167,11 @@ fun GradientEditor(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    MinputPillButton(
+                    MinputButton(
                         text = "Remove",
                         onClick = {
                             val g = current
-                            if (g.stops.size <= 2) return@MinputPillButton
+                            if (g.stops.size <= 2) return@MinputButton
                             selection = GradientSelection.Stop((sel.index - 1).coerceAtLeast(0))
                             commit(g.copy(stops = g.stops.filterIndexed { i, _ -> i != sel.index }))
                         },

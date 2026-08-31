@@ -306,11 +306,11 @@ private fun MinputTextFieldEditDialog(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
         ) {
-            MinputPillButton(
+            MinputButton(
                 text = "Cancel",
                 onClick = onClose,
             )
-            MinputPillButton(
+            MinputButton(
                 text = "Save",
                 onClick = ::save,
                 filled = true,

@@ -85,7 +85,7 @@ import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputIconButtonSize
 import com.mappo.ui.minput.MinputPanelDividerInset
 import com.mappo.ui.minput.MinputPanelHeaderHeight
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.MinputPillContentPadding
 import com.mappo.ui.minput.MinputPillHeight
@@ -497,7 +497,7 @@ private fun EditorCommandRow(
             )
             // A hair of extra breathing room beyond the row's 6dp rhythm, both sides.
             EditorFlowArrow(Modifier.padding(horizontal = 2.dp))
-            MinputPillButton(
+            MinputButton(
                 text = outputLabel,
                 onClick = onTapOutput,
                 filled = true,

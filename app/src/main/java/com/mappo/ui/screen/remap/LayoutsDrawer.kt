@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -25,12 +26,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +60,7 @@ import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
@@ -66,8 +68,10 @@ import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.MinputPanelDividerContentGap
-import com.mappo.ui.minput.MinputPillButton
+import com.mappo.ui.minput.MinputButton
+import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputPod
+import com.mappo.ui.minput.MinputPodPadding
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
@@ -76,7 +80,6 @@ import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMicroTextStyle
 import com.mappo.ui.minput.minputMiniTextStyle
-import com.mappo.ui.minput.minputOverlineTextStyle
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.math.hypot
 import kotlin.math.max
@@ -159,8 +162,12 @@ internal fun LayoutsDrawerPane(
 /**
  * The shared side-pane skeleton behind BOTH drawers (layouts left, applications right):
  * an animated-width clipping box whose fixed-width sheet slides in from the pane's own
- * screen edge, on the chrome plane with a divider on its content-facing side. The
- * neighbor in the parent Row resizes as the pane animates — a push pane, not an overlay.
+ * screen edge. The neighbor in the parent Row resizes as the pane animates — a push pane,
+ * not an overlay.
+ *
+ * The sheet is TRANSPARENT (2026-08-30, following the top bar): no chrome fill, no
+ * content-facing divider — the pane is a layout tool, and its contents carry their own
+ * ground on [com.mappo.ui.minput.MinputPod]s.
  *
  * [onFullyClosed] fires when the CLOSE animation completes (not at close intent): callers
  * revert transient preview state there, so the drawer's content stays scoped and stable
@@ -193,7 +200,7 @@ internal fun SideDrawerShell(
     // leftward as the pane widens (sliding in from the right).
     Box(modifier.fillMaxHeight().width(animatedWidth).clipToBounds()) {
         if (animatedWidth > 0.dp) {
-            Row(
+            Box(
                 Modifier
                     .fillMaxHeight()
                     .width(drawerWidth)
@@ -204,16 +211,7 @@ internal fun SideDrawerShell(
                         )
                     },
             ) {
-                if (fromEnd) VerticalDivider()
-                // surfaceContainer — chrome pane, the bars' plane (a non-modal side panel,
-                // not an M3 modal drawer — no scrim, content beside it stays live).
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                ) {
-                    content()
-                }
-                if (!fromEnd) VerticalDivider()
+                content()
             }
         }
     }
@@ -266,72 +264,12 @@ private fun LayoutsDrawerContent(
 
     Column(
         Modifier
-            .fillMaxWidth()
-            .onGloballyPositioned { rootCoords = it }
-            .drawBehind {
-                if (revealProgress > 0f) {
-                    // Radius runs to the drawer corner FARTHEST from the button center so
-                    // full progress always covers the whole pane.
-                    val maxRadius = hypot(
-                        max(revealCenter.x, size.width - revealCenter.x),
-                        max(revealCenter.y, size.height - revealCenter.y),
-                    )
-                    drawCircle(
-                        color = revealColor,
-                        radius = revealProgress * maxRadius,
-                        center = revealCenter,
-                    )
-                }
-            },
+            .fillMaxSize()
+            .padding(PanelContentPadding),
+        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
     ) {
-        // The Applications button: the viewed application's identity (icon + name) and
-        // the way into applications mode; wears the highlight plane while open — the
-        // design language's open/selected marking (the drawer summons' treatment).
-        val viewedApp = appPackage?.let { pkg -> apps.firstOrNull { it.packageName == pkg } }
-        val appIcon = rememberAppIconPainter(appPackage)
-        MinputPillButton(
-            text = viewedApp?.label ?: appPackage ?: "No application",
-            onClick = {
-                appsMode = !appsMode
-                query = ""
-            },
-            leadingIcon = appIcon ?: rememberVectorPainter(Lucide.LayoutGrid),
-            // Launcher icons carry fixed colors (never re-tint); the Lucide fallback
-            // glyph tints like any concept icon — at the label's strength (2026-08-30:
-            // chromed button labels moved to onSurface).
-            leadingIconTint = if (appIcon != null) {
-                Color.Unspecified
-            } else MaterialTheme.colorScheme.onSurface,
-            // Identity packed to the start, dropdown arrow pinned to the far end
-            // (2026-08-27 trial vs the centered stack — flip alignStart to compare).
-            trailingIcon = rememberVectorPainter(Lucide.ChevronDown),
-            alignStart = true,
-            highlighted = appsMode,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = PanelContentPadding,
-                    top = PanelContentPadding,
-                    end = PanelContentPadding,
-                )
-                // AFTER the placement-shifting padding, so the captured bounds are the
-                // button's real ones. The reveal radiates from the button's center.
-                .onGloballyPositioned { coords ->
-                    rootCoords?.let { revealCenter = it.localBoundingBoxOf(coords).center }
-                },
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = PanelContentPadding,
-                    top = DrawerControlGap,
-                    end = PanelContentPadding,
-                    bottom = MinputPanelDividerContentGap,
-                ),
-        ) {
+        // ── Pod 1: the filter row ──────────────────────────────────────────────
+        MinputPod(modifier = Modifier.fillMaxWidth()) {
             MinputTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -347,7 +285,7 @@ private fun LayoutsDrawerContent(
             Box {
                 // Wears the highlight plane while its menu is up — the design language's
                 // selected/active marking (the change button's drawer-open treatment).
-                MinputPillButton(
+                MinputButton(
                     onClick = { sortMenuOpen = true },
                     leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
                     contentDescription = if (appsMode) "Sort applications" else "Sort layouts",
@@ -377,45 +315,112 @@ private fun LayoutsDrawerContent(
             }
         }
 
-        // Inset divider under the controls block (2026-08-27) — separates the fixed
-        // search/sort chrome from the scrolling card list in BOTH modes (it sits
-        // outside the crossfade, over the radiating reveal plane).
-        HorizontalDivider(Modifier.padding(horizontal = PanelContentPadding))
-
-        // The two lists crossfade on the reveal's clock, so the applications list
-        // resolves in as the radiating plane covers the drawer (and out as it retreats).
-        Crossfade(
-            targetState = appsMode,
-            animationSpec = tween(AppsRevealMillis),
-            label = "drawerList",
+        // ── Pod 2: the Applications button over the card list ──────────────────
+        // A tall plate, so it takes an explicit corner: the pod's default radius is half
+        // the RESTING height (a pill at bar scale), which on a full-height plate reads
+        // too round for a drawer. This one relates to the cards riding it — twice their
+        // corner (2026-08-30, Dylan: "a proper rectangular drawer with rounded corners").
+        MinputPod(
+            corner = DrawerPodCorner,
             modifier = Modifier.fillMaxWidth().weight(1f),
-        ) { showApps ->
-            if (showApps) {
-                ApplicationsList(
-                    apps = apps,
-                    activeAppPackage = activeAppPackage,
-                    query = query,
-                    sort = appSort,
-                    onPreviewApplication = onPreviewApplication,
-                    onSelectApplication = { app ->
-                        // Radiate back into layouts mode — the layouts list rescopes to
-                        // the picked application "behind" the retreating plane.
-                        appsMode = false
-                        query = ""
-                        onSelectApplication(app)
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onGloballyPositioned { rootCoords = it }
+                    .drawBehind {
+                        if (revealProgress > 0f) {
+                            // Radius runs to the pod corner FARTHEST from the button
+                            // center so full progress always covers the whole plate.
+                            // This node is the pod's PADDED interior, and drawBehind
+                            // isn't clipped to its own bounds — the pod's Surface clips
+                            // it to the pill instead — so the radius carries the pod's
+                            // inset as bleed, letting the plane reach the plate's rim
+                            // rather than stopping short of it.
+                            val bleed = MinputPodPadding.toPx()
+                            val maxRadius = hypot(
+                                max(revealCenter.x, size.width - revealCenter.x) + bleed,
+                                max(revealCenter.y, size.height - revealCenter.y) + bleed,
+                            )
+                            drawCircle(
+                                color = revealColor,
+                                radius = revealProgress * maxRadius,
+                                center = revealCenter,
+                            )
+                        }
                     },
+                verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
+            ) {
+                // The Applications button: the viewed application's identity (icon +
+                // name) and the way into applications mode; wears the highlight plane
+                // while open — the design language's open/selected marking (the drawer
+                // summons' treatment).
+                val viewedApp = appPackage?.let { pkg -> apps.firstOrNull { it.packageName == pkg } }
+                val appIcon = rememberAppIconPainter(appPackage)
+                MinputButton(
+                    text = viewedApp?.label ?: appPackage ?: "No application",
+                    onClick = {
+                        appsMode = !appsMode
+                        query = ""
+                    },
+                    leadingIcon = appIcon ?: rememberVectorPainter(Lucide.LayoutGrid),
+                    // Launcher icons carry fixed colors (never re-tint); the Lucide
+                    // fallback glyph tints like any concept icon — at the label's
+                    // strength (2026-08-30: chromed button labels moved to onSurface).
+                    leadingIconTint = if (appIcon != null) {
+                        Color.Unspecified
+                    } else MaterialTheme.colorScheme.onSurface,
+                    // Identity packed to the start, dropdown arrow pinned to the far end
+                    // (2026-08-27 trial vs the centered stack — flip alignStart to compare).
+                    trailingIcon = rememberVectorPainter(Lucide.ChevronDown),
+                    alignStart = true,
+                    highlighted = appsMode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // The reveal radiates from the button's center.
+                        .onGloballyPositioned { coords ->
+                            rootCoords?.let { revealCenter = it.localBoundingBoxOf(coords).center }
+                        },
                 )
-            } else {
-                LayoutsList(
-                    appPackage = appPackage,
-                    layouts = layouts,
-                    activeLayoutId = activeLayoutId,
-                    query = query,
-                    sort = layoutSort,
-                    onPreviewLayout = onPreviewLayout,
-                    onActivateLayout = onActivateLayout,
-                    onNewLayout = onNewLayout,
-                )
+
+                // The two lists crossfade on the reveal's clock, so the applications
+                // list resolves in as the radiating plane covers the pod (and out as it
+                // retreats).
+                Crossfade(
+                    targetState = appsMode,
+                    animationSpec = tween(AppsRevealMillis),
+                    label = "drawerList",
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                ) { showApps ->
+                    if (showApps) {
+                        ApplicationsList(
+                            apps = apps,
+                            activeAppPackage = activeAppPackage,
+                            query = query,
+                            sort = appSort,
+                            onPreviewApplication = onPreviewApplication,
+                            onSelectApplication = { app ->
+                                // Radiate back into layouts mode — the layouts list rescopes to
+                                // the picked application "behind" the retreating plane.
+                                appsMode = false
+                                query = ""
+                                onSelectApplication(app)
+                            },
+                        )
+                    } else {
+                        LayoutsList(
+                            appPackage = appPackage,
+                            layouts = layouts,
+                            activeLayoutId = activeLayoutId,
+                            query = query,
+                            sort = layoutSort,
+                            onPreviewLayout = onPreviewLayout,
+                            onActivateLayout = onActivateLayout,
+                            onNewLayout = onNewLayout,
+                        )
+                    }
+                }
             }
         }
     }
@@ -455,84 +460,58 @@ private fun LayoutsList(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-        contentPadding = PaddingValues(
-            start = PanelContentPadding,
-            end = PanelContentPadding,
-            bottom = PanelContentPadding,
-        ),
+        // The pod supplies the surrounding inset now (2026-08-30) — only the gap up to
+        // the Applications button above is this list's to give.
+        contentPadding = PaddingValues(top = DrawerControlGap),
     ) {
-        // No empty hint (2026-08-27): the ever-present "+ New layout" card below IS the
-        // empty section's affordance — a "no layouts" line above it just restated it.
-        drawerSection("Installed layouts", installed, emptyHint = null) { layout ->
-            LayoutCard(
-                layout = layout,
-                active = layout.id == activeLayoutId,
-                onPreview = { onPreviewLayout(layout.id) },
-                onActivate = { onActivateLayout(layout) },
-            )
-        }
-        // Always the Installed section's last card — the empty "+ New layout" card
-        // routing into the create flow. Key deliberately outside CardKeyPrefix so the
-        // scroll-preview scan skips it.
+        // FIRST in the list (2026-08-30, Dylan — it was the Installed section's last
+        // card): the create-layout route, in the layout cards' chrome.
         item(key = "new-layout", contentType = "new") {
             NewLayoutCard(onClick = onNewLayout)
         }
-        drawerSection("Community layouts", community, emptyHint = "No community layouts yet") { layout ->
+        // Installed then community, headerless (2026-08-30: the INSTALLED/COMMUNITY
+        // overlines retired — the download marker on a card says "installed" instead,
+        // and its absence says "community", so the two read apart without a header
+        // splitting the list). Keys keep their prefix for the card scan.
+        items(installed, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { layout ->
             LayoutCard(
                 layout = layout,
                 active = layout.id == activeLayoutId,
+                installed = true,
                 onPreview = { onPreviewLayout(layout.id) },
                 onActivate = { onActivateLayout(layout) },
             )
         }
-    }
-}
-
-/** One category of the card list: overline header, then cards (or a muted empty hint —
- *  null for a section whose empty state is carried by a permanent card instead). */
-private fun androidx.compose.foundation.lazy.LazyListScope.drawerSection(
-    title: String,
-    sectionLayouts: List<Layout>,
-    emptyHint: String?,
-    card: @Composable (Layout) -> Unit,
-) {
-    item(key = "header:$title", contentType = "header") {
-        Text(
-            text = title.uppercase(),
-            style = minputOverlineTextStyle(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = MinputPanelDividerContentGap),
-        )
-    }
-    if (sectionLayouts.isEmpty()) {
-        if (emptyHint != null) {
-            item(key = "empty:$title", contentType = "empty") {
-                Text(
-                    text = emptyHint,
-                    style = minputMicroTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = MinputGlyphLabelGap),
-                )
-            }
+        items(community, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { layout ->
+            LayoutCard(
+                layout = layout,
+                active = layout.id == activeLayoutId,
+                installed = false,
+                onPreview = { onPreviewLayout(layout.id) },
+                onActivate = { onActivateLayout(layout) },
+            )
         }
-    } else {
-        items(sectionLayouts, key = { CardKeyPrefix + it.id }, contentType = { "card" }) { card(it) }
     }
 }
 
 /**
- * One layout card: name over author on the left; the like count alone in the top-right
- * corner (filled heart + count, right edge pinned to the card padding so a growing count
- * expands LEFT while the icon→digit gap stays fixed); then the two-line description
- * strip. Cards are ELEVATED by default; the ACTIVE layout's card wears the highlight
- * plane — the design language's selected/active marking (which replaced the old "ACTIVE"
- * overline). [showDescription] is the seam for a future compact/full drawer density
- * setting — compact hides the strip.
+ * One layout card: name over author on the left; a right-hand corner stack — the like
+ * count (filled heart + count, right edge pinned to the card padding so a growing count
+ * expands LEFT while the icon→digit gap stays fixed) over the [installed] marker on the
+ * next row — then the two-line description strip. Cards are ELEVATED by default; the
+ * ACTIVE layout's card wears the highlight plane — the design language's selected/active
+ * marking (which replaced the old "ACTIVE" overline). [showDescription] is the seam for a
+ * future compact/full drawer density setting — compact hides the strip.
+ *
+ * [installed] draws the download glyph (2026-08-30): it replaced the INSTALLED/COMMUNITY
+ * section headers, so the marker on the card — not a header above a run of them — is what
+ * separates a layout already on this device from one that isn't.
  */
 @Composable
 private fun LayoutCard(
     layout: Layout,
     active: Boolean,
+    installed: Boolean,
     onPreview: () -> Unit,
     onActivate: () -> Unit,
     showDescription: Boolean = true,
@@ -582,21 +561,34 @@ private fun LayoutCard(
                     )
                 }
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                // Right edge rides the card padding; the count digits grow leftward.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        FilledHeartIcon,
-                        contentDescription = "Likes",
-                        modifier = Modifier.size(LikeIconSize),
-                        tint = secondaryContent,
-                    )
-                    Spacer(Modifier.width(LikeCountGap))
-                    Text(
-                        text = layout.likeCount.toString(),
-                        style = minputMicroTextStyle(),
-                        color = secondaryContent,
-                        maxLines = 1,
-                    )
+                // Right edge rides the card padding; the count digits grow leftward, and
+                // the installed marker sits on the next row under them.
+                Column(horizontalAlignment = Alignment.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            FilledHeartIcon,
+                            contentDescription = "Likes",
+                            modifier = Modifier.size(LikeIconSize),
+                            tint = secondaryContent,
+                        )
+                        Spacer(Modifier.width(LikeCountGap))
+                        Text(
+                            text = layout.likeCount.toString(),
+                            // The card TITLE's variant (2026-08-30, Dylan): at micro
+                            // scale the digits were hard to make out.
+                            style = minputMiniTextStyle(),
+                            color = secondaryContent,
+                            maxLines = 1,
+                        )
+                    }
+                    if (installed) {
+                        Icon(
+                            Icons.Filled.Download,
+                            contentDescription = "Installed",
+                            modifier = Modifier.size(InstalledIconSize),
+                            tint = secondaryContent,
+                        )
+                    }
                 }
             }
             if (showDescription) {
@@ -617,12 +609,16 @@ private fun LayoutCard(
 }
 
 /**
- * The Installed section's permanent last card: an empty card in the layout cards' chrome,
- * carrying only the "+ New layout" affordance and routing into the create-layout flow.
- * The plus is a TEXT glyph, not a leading [Icon]: a single string self-centers on both
- * axes, where an icon + gap + label row is only geometrically centered — the eye anchors
- * on the label, which sits (icon + gap)/2 right of true center (device report,
- * 2026-08-25).
+ * The list's permanent FIRST card (2026-08-30 — it used to close the Installed section):
+ * an empty card in the layout cards' chrome, carrying only the "New layout" affordance
+ * and routing into the create-layout flow.
+ *
+ * A real leading [Icon] — the action-set group button's Lucide plus — replaces the
+ * 2026-08-25 TEXT-glyph "+ ": that note (a single string self-centers on both axes, where
+ * an icon + gap + label row is only geometrically centered, so the eye reads the label
+ * (icon + gap)/2 right of true center) still holds, and Dylan chose the proper glyph over
+ * it. If the offset reads badly on device, bias the Row's end padding rather than going
+ * back to the text plus.
  */
 @Composable
 private fun NewLayoutCard(onClick: () -> Unit) {
@@ -643,14 +639,22 @@ private fun NewLayoutCard(onClick: () -> Unit) {
                 onClick = onClick,
             ),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth().height(NewLayoutCardHeight),
         ) {
+            Icon(
+                Lucide.Plus,
+                contentDescription = null,
+                modifier = Modifier.size(MinputPillIconSize),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.width(MinputGlyphLabelGap))
             Text(
-                text = "+ New layout",
+                text = "New layout",
                 style = minputMiniTextStyle(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurface,
             )
         }
     }
@@ -707,11 +711,19 @@ private const val AppsRevealMillis = 300
  *  6dp rhythm). */
 internal val DrawerControlGap = 6.dp
 
+/** Corner of the drawer's tall list plate — twice the cards' [MinputMorphCorner], so the
+ *  plate reads as their container rather than a peer. */
+private val DrawerPodCorner = MinputMorphCorner * 2
+
 /** Interior padding of a layout card. */
 internal val CardPadding = 8.dp
 
-/** The like heart, sized to the micro text line beside it. */
-private val LikeIconSize = 10.dp
+/** The like heart, sized to the mini text line beside it (2026-08-30: the count moved up
+ *  from the micro variant, so the glyph followed). */
+private val LikeIconSize = 12.dp
+
+/** The installed (download) marker under the like count. */
+private val InstalledIconSize = 12.dp
 
 /** Fixed gap between the heart and the count's first digit. */
 private val LikeCountGap = 4.dp
