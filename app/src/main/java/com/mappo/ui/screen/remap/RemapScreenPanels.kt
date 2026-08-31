@@ -58,6 +58,7 @@ import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.TextSize
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Radar
 import com.composables.icons.lucide.Type
 import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputIconButton
@@ -428,6 +429,55 @@ internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) 
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
             text = "Font debug overlay",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        // Strip the 48dp interactive halo + scale down so the switch fits the compact row.
+        // The row owns the tap target; the switch itself stays interactive for thumb drags.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.scaledLayout(0.8f),
+            )
+        }
+    }
+}
+
+/**
+ * Auto-detect toggle: when on, foregrounding an application switches Mappo to the layout
+ * bound to it ([com.mappo.service.autoswitch.ApplicationAutoSwitcher]).
+ *
+ * Rehomed here 2026-08-30 (Dylan) from the remap controls top bar, where it rode a pod of
+ * its own beside Edit overlay. It never belonged there: the bar's other controls all act on
+ * the layout ON SCREEN, while this is one app-wide switch — and activating a layout manually
+ * turns it off from anywhere, so a control scoped to one view read as narrower than it is.
+ * Same switch treatment as [PowerRow] / [FontDebugRow]; the drawer's switch rows must read
+ * as siblings.
+ */
+@Composable
+internal fun AutoDetectRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onEnabledChange(!enabled) }
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            // Radar — the app-watching sweep. (The bar form carried no glyph at all, just an
+            // "AUTO" overline; a settings row needs one to sit with its siblings.)
+            Lucide.Radar,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Auto-detect layout",
             style = minputMiniTextStyle(),
             color = MaterialTheme.colorScheme.onSurface,
         )

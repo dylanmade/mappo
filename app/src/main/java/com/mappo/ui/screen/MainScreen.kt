@@ -1052,6 +1052,11 @@ fun MainScreen(
                         if (remapEnabled != target) viewModel.toggleRemap()
                         if (overlayShowing != target) viewModel.toggleOverlay()
                     },
+                    // Auto-detect layout switching — the same state the controls screen
+                    // gates its activate warning on; it lived on that screen's top bar
+                    // until 2026-08-30.
+                    autoDetectEnabled = autoSwitchEnabled,
+                    onAutoDetectChange = viewModel::setAutoSwitchEnabled,
                     textSize = textSize,
                     onTextSizeChange = { size ->
                         if (size != textSize) {

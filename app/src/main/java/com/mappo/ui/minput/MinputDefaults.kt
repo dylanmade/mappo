@@ -426,3 +426,17 @@ val MinputPodItemGap = 4.dp
 
 /** Gap between adjacent pods. */
 val MinputPodGap = 6.dp
+
+/** The TALL pod/button pair (2026-08-30): one step up from the resting scale, for chrome that
+ *  should carry more presence than a bar pill — the home frame's Mappo button, which summons
+ *  the app-wide drawer and is the one control on the bottom bar with that weight. Pass these
+ *  as `height` to [MinputPod] / [MinputButton]; both derive their pill corner from it. */
+val MinputPillTallHeight = 30.dp
+val MinputPodTallHeight = MinputPillTallHeight + MinputPodPadding * 2
+
+/** Corner radius for a pod acting as a PLATE rather than a capsule — a large one holding a
+ *  list or a whole content band (the layouts drawer's list plate, the controls view's input
+ *  band). Twice the box corner: the plate reads as the same family as the cards/boxes riding
+ *  it, one scale up. A plate must never take the pill default, which is a percentage-free but
+ *  height-derived radius and would round a tall plate into a capsule. */
+val MinputPodPlateCorner = MinputMorphCorner * 2

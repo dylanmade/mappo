@@ -291,9 +291,10 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun topBar_activeLayout_showsAutoDetect_noActivate() {
-        // The home state: the viewed layout IS active — the Auto-detect stack holds the
-        // trailing corner and the Activate pill is absent.
+    fun topBar_activeLayout_noAutoDetect_noActivate() {
+        // The home state: the viewed layout IS active, so the Activate pill is absent.
+        // (Auto-detect used to hold the bar's trailing corner; it moved to the Mappo drawer
+        // 2026-08-30 — the bar must NOT carry it any more.)
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -313,7 +314,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onAllNodesWithText("AUTO").assertCountEquals(1)
+        composeRule.onAllNodesWithText("AUTO").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onNodeWithTag("bar:identity").assertExists()

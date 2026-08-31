@@ -1,41 +1,29 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Settings
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
-import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputBarEdgePadding
-import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
 import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPod
-import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.MinputPodHeight
 import com.mappo.ui.minput.minputBoxContainer
-import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
  * The controls view's top bar (2026-08-29 redesign). The bar itself is now **transparent** —
@@ -49,7 +37,9 @@ import com.mappo.ui.minput.minputOverlineTextStyle
  *    wired to toggle the layouts drawer and wearing the highlight plane while it is open.
  *  - **center** — the action-set group button ([ActionSetPod]), moved up out of
  *    `RemapSimpleView`'s content column.
- *  - **end** — the Auto-detect toggle, then Edit overlay.
+ *  - **end** — Edit overlay. (The Auto-detect toggle sat beside it until 2026-08-30; it is a
+ *    GLOBAL setting, not a property of the layout on screen, so it moved to the Mappo drawer
+ *    with the other app-wide switches — see `MappoDrawerContent`.)
  *
  * Pod-borne buttons sit on the pod's plane, so they wear `elevated` (surface 2) — the same
  * fill as the group button's segments.
@@ -64,8 +54,6 @@ internal fun RemapControlsTopBar(
     viewingSet: ActionSetGraph?,
     onSelectActionSet: (Long) -> Unit,
     onAddSet: () -> Unit,
-    autoDetectEnabled: Boolean,
-    onAutoDetectChange: (Boolean) -> Unit,
     onEditOverlay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -104,23 +92,16 @@ internal fun RemapControlsTopBar(
             modifier = Modifier.align(Alignment.Center),
         )
 
-        // ── end: Auto-detect, then Edit overlay ──
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(MinputPodGap),
-            modifier = Modifier.align(Alignment.CenterEnd),
-        ) {
-            MinputPod { AutoDetectRow(enabled = autoDetectEnabled, onChange = onAutoDetectChange) }
-            MinputPod {
-                MinputButton(
-                    text = "Edit overlay",
-                    onClick = onEditOverlay,
-                    leadingIcon = rememberVectorPainter(Icons.Outlined.Layers),
-                    // Follows the label's strength (2026-08-30): chromed button labels
-                    // moved to onSurface, so a pinned onSurfaceVariant glyph would lag.
-                    leadingIconTint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+        // ── end: Edit overlay ──
+        MinputPod(modifier = Modifier.align(Alignment.CenterEnd)) {
+            MinputButton(
+                text = "Edit overlay",
+                onClick = onEditOverlay,
+                leadingIcon = rememberVectorPainter(Icons.Outlined.Layers),
+                // Follows the label's strength (2026-08-30): chromed button labels
+                // moved to onSurface, so a pinned onSurfaceVariant glyph would lag.
+                leadingIconTint = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
@@ -167,44 +148,5 @@ private fun ActionSetPod(
     }
 }
 
-/**
- * The bar's Auto row (2026-08-25, replacing the 2026-08-21 stacked "AUTO-DETECT" +
- * hand-rolled [com.mappo.ui.minput.MinputSwitch], which never sat right): a compact
- * horizontal overline "AUTO" beside a stock M3 switch — the drawer settings rows'
- * halo-stripped scaled-switch treatment, at bar scale.
- */
-@Composable
-private fun AutoDetectRow(
-    enabled: Boolean,
-    onChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
-        modifier = Modifier.padding(horizontal = AutoRowInset),
-    ) {
-        Text(
-            text = "Auto".uppercase(),
-            style = minputOverlineTextStyle(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            Switch(
-                checked = enabled,
-                onCheckedChange = onChange,
-                modifier = Modifier.scaledLayout(AutoSwitchScale),
-            )
-        }
-    }
-}
-
 /** Bar-strip height: exactly its pods, with no vertical air of its own (2026-08-30). */
 private val TopBarHeight = MinputPodHeight
-
-/** The Auto row carries no chrome of its own, so it needs a little inset from the pod's
- *  rim to sit like the chromed pills beside it. */
-private val AutoRowInset = 2.dp
-
-/** The bar-scale M3 switch: half size (see [scaledLayout] — layout scale, not a redraw). */
-private const val AutoSwitchScale = 0.5f

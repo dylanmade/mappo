@@ -90,7 +90,6 @@ import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.remap.AddLayoutModalContent
 import com.mappo.ui.screen.remap.AddLayoutModalHeight
 import com.mappo.ui.screen.remap.LayoutsDrawerPane
-import com.mappo.ui.screen.remap.RemapBottomRow
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.RemapPanel
@@ -115,8 +114,9 @@ private fun shizukuOutputInGroup(group: com.mappo.data.model.steam.BindingGroupG
 /**
  * The Remap Controls screen (2026-07): set/layer tabs on top, then the simplified view — group
  * boxes around the controller image, with the tapped box morphing in place into the advanced
- * group editor (`RemapGroupEditor`) — and the Gyro/Overlay strip at the bottom. The planned
- * mapping wizard (the "Map" CTA) becomes the primary mapping flow later.
+ * group editor (`RemapGroupEditor`); the whole band rides one plate pod. The planned mapping
+ * wizard (the "Map" CTA) becomes the primary mapping flow later. (The Inherit/Overlay/Gyro
+ * strip that used to close the view retired 2026-08-30 — see RemapSimpleView's KDoc.)
  *
  * Command picking still navigates to the full-screen picker and pops back with [pickerResult];
  * binding edits ride the same callbacks the previous incarnations used.
@@ -466,9 +466,10 @@ fun RemapControlsScreen(
                 // The 2026-08-29 bar: transparent, with each cluster on its own pill pod
                 // (see RemapControlsTopBar) — the identity pill (the layouts drawer's
                 // summon) at the start, the action-set switcher centered (up out of
-                // RemapSimpleView's content column), Auto-detect + Edit overlay at the
-                // end. Edit overlay is the options panel's lone entry given a real home
-                // (the panel stays on the Start key).
+                // RemapSimpleView's content column), Edit overlay at the end. Edit
+                // overlay is the options panel's lone entry given a real home (the panel
+                // stays on the Start key). Auto-detect left the bar 2026-08-30 for the
+                // Mappo drawer — it is a global setting, not a layout property.
                 RemapControlsTopBar(
                     // The layout being viewed, "(Preview)"-suffixed while inspecting a
                     // non-active one; an application with no layout reads "None" — not
@@ -489,8 +490,6 @@ fun RemapControlsScreen(
                         onSelectLayer(null)
                     },
                     onAddSet = { dialog = ActionSetDialogState.Add },
-                    autoDetectEnabled = autoSwitchEnabled,
-                    onAutoDetectChange = onAutoSwitchChange,
                     onEditOverlay = onEditOverlay,
                 )
             },
@@ -561,13 +560,6 @@ fun RemapControlsScreen(
                             // flip), and an ungated entry-seat stole focus from the drawer.
                             focusSeatEnabled = !layoutsDrawerOpen,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            bottomContent = {
-                                RemapBottomRow(
-                                    viewingSet = viewingSet,
-                                    viewingLayerSelected = viewingLayer != null,
-                                    onSetGyroMode = gatedSetBindingGroupMode,
-                                )
-                            },
                         )
                     }
                 }
@@ -1040,7 +1032,8 @@ private fun ActivateLayoutWarningDialog(
         Spacer(Modifier.height(8.dp))
         Text(
             text = "Activating a layout manually turns off auto detection. " +
-                "You can re-enable it anytime with the Auto-detect switch in the top-right corner.",
+                "You can re-enable it anytime with the Auto-detect layout switch in the " +
+                "Mappo menu.",
             style = minputMiniTextStyle(),
             color = MaterialTheme.colorScheme.onSurface,
         )

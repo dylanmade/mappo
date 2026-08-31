@@ -79,6 +79,10 @@ import com.mappo.data.model.steam.displayNameFor
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.roundToInt
+import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputPod
+import com.mappo.ui.minput.MinputPodGap
+import com.mappo.ui.minput.MinputPodPlateCorner
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -93,7 +97,16 @@ import com.mappo.ui.minput.minputMiniTextStyle
  * top-center **Map** button is the future home of the input-mapping wizard (UI-only for now).
  *
  * Box styling: accent-tinted rounded boxes + bevel border (the treatment born on the retired
- * d-pad flower home's petal cards, now owned by the remap chrome).
+ * d-pad flower home's petal cards, now owned by the remap chrome). The whole band rides one
+ * rectangular [MinputPod] plate (2026-08-30).
+ *
+ * The Inherit / Overlay / Gyro strip that used to sit beneath the band was REMOVED 2026-08-30
+ * (Dylan). **Inherit is gone for good** — set-to-set inheritance is being replaced by a
+ * "Switch set" (swap the whole action set) / "Stack set" (Steam-style action-set layering)
+ * pair, neither built yet. Overlay and Gyro are only homeless: both get new homes shortly.
+ * Re-creating the gyro picker is a `ModePillDropdown` over
+ * `SourceModeCatalog.modesValidFor(InputSource.GYRO)` — see RemapPills.kt, which still
+ * carries the pill and its width constant.
  */
 @Composable
 internal fun RemapSimpleView(
@@ -103,9 +116,6 @@ internal fun RemapSimpleView(
     onMap: () -> Unit,
     editorCallbacks: RemapGroupEditorCallbacks,
     modifier: Modifier = Modifier,
-    // Rendered directly beneath the three-column band (the Gyro/Overlay strip); band + strip
-    // center vertically on the view as one unit.
-    bottomContent: @Composable () -> Unit = {},
     // Gates the controller-focus seat below. While a side drawer is open, focus belongs to
     // the drawer cards — but browsing can swap this view in and out of composition (the
     // no-layout state ↔ controls flip), and an ungated entry-seat on remount stole focus
@@ -197,16 +207,21 @@ internal fun RemapSimpleView(
                 }
             },
     ) {
-        // Flexbox-style column (React mapping: block = flex none + margin-top, strip
-        // container = flex 1, centered). The inputs block keeps its NATURAL intrinsic height
-        // — never a weighted slot, which is a hard size that CLAMPS content taller than its
-        // share (that clamp is what shaved the block's bottom) — nudged down by a fixed gap;
-        // the strip centers in whatever truly remains.
-        Column(
-            Modifier
+        // The band rides ONE plate (2026-08-30): every group box plus the controller image
+        // between them sits on a single rectangular [MinputPod], so the input map reads as one
+        // object floating over the view's lowest plane rather than eight boxes scattered on it.
+        // The plate is centered in whatever height the view has — the flexed Gyro/Overlay strip
+        // that used to claim the space below it retired the same day (see the file KDoc).
+        Box(
+            modifier = Modifier
                 .fillMaxSize()
+                // The plate's own inset from the screen edges. Horizontally it matches the top
+                // bar's, so the plate's rim lines up with the identity pod's above it;
+                // vertically it is the pod-to-pod gap, which is the whole distance to the
+                // flush-bottomed top bar (that bar gives no vertical air by design).
+                .padding(horizontal = MinputBarEdgePadding, vertical = MinputPodGap)
                 // While the editor overlay is up, directional focus must not wander into
-                // the band/strip underneath it — cancel any attempt to enter this subtree.
+                // the plate underneath it — cancel any attempt to enter this subtree.
                 .then(
                     if (visibleGroup != null) {
                         Modifier
@@ -214,23 +229,21 @@ internal fun RemapSimpleView(
                             .focusGroup()
                     } else Modifier,
                 ),
+            contentAlignment = Alignment.Center,
         ) {
-            Spacer(Modifier.height(BlockTopGap))
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                // The three-column band. The Row's height is the tallest SIDE column's content
-                // (IntrinsicSize.Min; the controller image reports no intrinsic size — see the paint
-                // modifier below), which lets the middle column pin the Map button's top edge and the
+                // The three-column band, now the plate's content. Its height is the tallest
+                // SIDE column's content (IntrinsicSize.Min on the plate, which forwards to this
+                // Row; the controller image reports no intrinsic size — see the paint modifier
+                // below), which lets the middle column pin the Map button's top edge and the
                 // utility box's bottom edge to the flanking columns' extents.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min)
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                MinputPod(
+                    // A plate, not a capsule: the pill default would round this to a lozenge.
+                    corner = MinputPodPlateCorner,
                     // Wide gutter keeps the side group boxes off the controller image.
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
                 ) {
                     val box: @Composable (RemapSimpleGroup, Modifier) -> Unit = { group, boxModifier ->
                         GroupBox(
@@ -311,20 +324,6 @@ internal fun RemapSimpleView(
                         box(RemapSimpleGroup.RIGHT_STICK, Modifier)
                     }
                 }
-                }
-            // The Gyro/Overlay strip's flexed container: all remaining height, strip pinned
-            // to the bottom with the SAME fixed gap as the block's top nudge — the screen
-            // opens and closes on matching BlockTopGap margins; the flexible slack lives
-            // between the block and the strip.
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(bottom = BlockBottomGap),
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                bottomContent()
-            }
         }
 
         // ── The morphing editor overlay ───────────────────────────────────
@@ -766,10 +765,6 @@ private val SummaryRowSpacing = 4.dp
 /** Aligns a +N badge's text with its summary row (6dp box padding + the 17dp row against the
  *  badge's 14sp line height → 6 + (17−14)/2); each subsequent row adds one row pitch. */
 private val BadgeFirstRowAlignPadding = 7.5.dp
-
-/** Fixed downward nudge of the inputs block from the tab bar (its "margin-top"). */
-private val BlockTopGap = 14.dp
-private val BlockBottomGap = 14.dp
 
 /** Column-edge reserve for the zero-footprint +N badges (badge width + its 4dp gap) — kept as
  *  tight as the badge allows so the group boxes get the widest possible footprint. */

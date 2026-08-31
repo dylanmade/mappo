@@ -15,8 +15,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 
 /**
- * The minput POD: a pill-shaped plate that a small cluster of controls rides on, wearing the
- * `surface` plane plus the family bevel's top/bottom edge highlights.
+ * The minput POD: a pill-shaped plate that a small cluster of controls rides on, wearing its
+ * own plane (see [color]) plus the family bevel's top/bottom edge highlights.
  *
  * Born 2026-08-29 with the remap controls view's transparent top bar — with no strip to sit
  * on, each cluster needed to carry its own ground — and formalized here because the pattern
@@ -25,36 +25,38 @@ import androidx.compose.ui.unit.Dp
  *
  * **Plane:** a pod floats one step above the view behind it (which drops to
  * `surfaceContainerLowest` under a pod-based screen), and its contents sit one step above the
- * pod in turn. At the default `surface` fill that means the contents take the DEFAULT
- * surface-1 box treatment — plain [MinputButton]s, no variant. Give a pod a higher [color]
- * and its contents step up with it (`elevated = true`, the fill [MinputGroupButton]'s
- * segments wear by default).
+ * pod in turn. At the default fill that means the contents take the DEFAULT surface-1 box
+ * treatment — plain [MinputButton]s, no variant. Give a pod a higher [color] and its contents
+ * step up with it (`elevated = true`, the fill [MinputGroupButton]'s segments wear by
+ * default). The default has moved twice as the controls view settled (`surfaceContainer` →
+ * `surface` → `surfaceContainerLow`, 2026-08-30) — read it off the parameter, not this prose.
  *
- * The fill was `surfaceContainer` — the plane the bars themselves used to be — until
- * 2026-08-30, when the whole controls view shifted a step darker and the pods came with it.
+ * [height] rests at [MinputPodHeight] — a pill control plus [MinputPodPadding] above and
+ * below — but is a FLOOR, not a cap: taller content (a two-line stack, a whole card list)
+ * grows the plate. Pass [MinputPodTallHeight] for the one-step-up scale (the home frame's
+ * Mappo pod), matching [MinputButton]'s `height`.
  *
- * Height rests at [MinputPodHeight] — a pill control plus [MinputPodPadding] above and below
- * — but is a FLOOR, not a cap: taller content (a two-line stack, a whole card list) grows
- * the plate.
- *
- * **[corner] is an absolute radius, never a percentage** (2026-08-30): at the resting height
- * the default is exactly half of it, so a bar-scale pod is a true pill — but a TALL pod then
- * stays a rounded rectangle instead of stretching into a vertical capsule, which is what a
- * percentage corner did to the layouts drawer's list plate. Pass a tighter radius to relate a
- * plate to the cards riding it.
+ * **[corner] is an absolute radius, never a percentage** (2026-08-30): the default is exactly
+ * half [height], so a pod at either pill scale is a true pill — but a pod GROWN by its
+ * content then stays a rounded rectangle instead of stretching into a vertical capsule, which
+ * is what a percentage corner did to the layouts drawer's list plate. A pod acting as a PLATE
+ * (a list, a whole content band) takes [MinputPodPlateCorner], which relates it to the cards
+ * and boxes riding it.
  *
  * Space pods with [MinputPodGap]; controls WITHIN one are spaced by [MinputPodItemGap] via
  * the default [horizontalArrangement].
  *
  * @param color the plate's fill — theme-derived by default, overrideable per view like every
  *   minput coloration.
- * @param corner the plate's corner radius; the default is a pill at the resting height.
+ * @param height the plate's minimum height; content taller than it grows the plate.
+ * @param corner the plate's corner radius; the default is a pill at [height].
  */
 @Composable
 fun MinputPod(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
-    corner: Dp = MinputPodHeight / 2,
+    height: Dp = MinputPodHeight,
+    corner: Dp = height / 2,
     horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(MinputPodItemGap),
     content: @Composable RowScope.() -> Unit,
 ) {
@@ -62,7 +64,7 @@ fun MinputPod(
         shape = RoundedCornerShape(corner),
         color = color,
         border = minputBevelBorder(color, corner),
-        modifier = modifier.heightIn(min = MinputPodHeight),
+        modifier = modifier.heightIn(min = height),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

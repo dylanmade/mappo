@@ -72,6 +72,7 @@ import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.MinputPodPadding
+import com.mappo.ui.minput.MinputPodPlateCorner
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
@@ -321,7 +322,7 @@ private fun LayoutsDrawerContent(
         // too round for a drawer. This one relates to the cards riding it — twice their
         // corner (2026-08-30, Dylan: "a proper rectangular drawer with rounded corners").
         MinputPod(
-            corner = DrawerPodCorner,
+            corner = MinputPodPlateCorner,
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
             Column(
@@ -711,9 +712,6 @@ private const val AppsRevealMillis = 300
  *  6dp rhythm). */
 internal val DrawerControlGap = 6.dp
 
-/** Corner of the drawer's tall list plate — twice the cards' [MinputMorphCorner], so the
- *  plate reads as their container rather than a peer. */
-private val DrawerPodCorner = MinputMorphCorner * 2
 
 /** Interior padding of a layout card. */
 internal val CardPadding = 8.dp

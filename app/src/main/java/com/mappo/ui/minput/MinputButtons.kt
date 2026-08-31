@@ -68,8 +68,12 @@ import androidx.compose.ui.unit.Dp
  * content color" instead — an icon-only button has no text to carry the variant's color,
  * so the glyph must (fixed-color art in icon-only form isn't a real case yet).
  *
+ * [height] is the button's fixed height — [MinputPillHeight] at the resting scale, or
+ * [MinputPillTallHeight] for the one-step-up form (the home frame's Mappo button). It also
+ * drives the icon-only square's side, so a tall icon-only button stays a circle.
+ *
  * [corner] is an ABSOLUTE radius (never a percentage — that would stretch a tall button into
- * a capsule). The default is half the height: a pill.
+ * a capsule). The default is half [height]: a pill at whatever scale the button is.
  *
  * [trailingIcon] renders a glyph at the button's END — dropdown arrows and their kin. It
  * always follows the button's content color (trailing glyphs are concept icons; there is
@@ -92,7 +96,8 @@ fun MinputButton(
     leadingIconTint: Color = Color.Unspecified,
     trailingIcon: Painter? = null,
     alignStart: Boolean = false,
-    corner: Dp = MinputPillHeight / 2,
+    height: Dp = MinputPillHeight,
+    corner: Dp = height / 2,
     contentDescription: String? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
@@ -127,10 +132,10 @@ fun MinputButton(
         border = if (bare && !highlighted) null else minputBevelBorder(container, corner),
         modifier = modifier
             .minputInteractiveMotion(interaction)
-            .height(MinputPillHeight)
+            .height(height)
             // Icon-only = a square: width pinned to the height (a circle at the
             // default corner).
-            .then(if (iconOnly) Modifier.width(MinputPillHeight) else Modifier)
+            .then(if (iconOnly) Modifier.width(height) else Modifier)
             .then(
                 if (enabled) {
                     Modifier.clip(shape).clickable(
@@ -143,7 +148,7 @@ fun MinputButton(
     ) {
         if (iconOnly) {
             Box(
-                modifier = Modifier.size(MinputPillHeight),
+                modifier = Modifier.size(height),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -164,7 +169,7 @@ fun MinputButton(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = if (alignStart) Arrangement.Start else Arrangement.Center,
                 modifier = Modifier
-                    .height(MinputPillHeight)
+                    .height(height)
                     // A leading glyph inks less than its box (Material live area, Lucide
                     // stroke inset), so with symmetric padding the icon flank reads wider
                     // than the text flank — pull the start inset in by the family's

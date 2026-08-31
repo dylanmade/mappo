@@ -23,6 +23,7 @@ import com.mappo.data.settings.TextSize
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
+import com.mappo.ui.screen.remap.AutoDetectRow
 import com.mappo.ui.screen.remap.FontDebugRow
 import com.mappo.ui.screen.remap.OptionEntryRow
 import com.mappo.ui.screen.remap.PanelContentPadding
@@ -34,14 +35,18 @@ import com.mappo.ui.screen.remap.TextSizeRow
 /**
  * The wordmark drawer (2026-08-20 flow re-imagining): the traditional left navigation
  * drawer opened from the bottom bar's Mappo wordmark, holding the GLOBAL app options —
- * master power, text size, and the destination rows that used to live in the controls
- * screen's options panel (that panel is now the layout-scoped "Layout settings").
+ * master power, auto-detect, text size, and the destination rows that used to live in the
+ * controls screen's options panel (that panel is now the layout-scoped "Layout settings").
  * Content rows reuse the panel row family so the two surfaces read as siblings.
  */
 @Composable
 fun MappoDrawerContent(
     powerOn: Boolean,
     onPowerChange: (Boolean) -> Unit,
+    // Auto-detect: foregrounding an app switches Mappo to its bound layout. Global, so it
+    // lives here rather than on the controls view's bar (moved 2026-08-30).
+    autoDetectEnabled: Boolean,
+    onAutoDetectChange: (Boolean) -> Unit,
     textSize: TextSize,
     onTextSizeChange: (TextSize) -> Unit,
     // Dev tooling: the floating Theme Studio font picker in the window corner.
@@ -86,6 +91,9 @@ fun MappoDrawerContent(
             ) {
                 item(key = "power") {
                     PowerRow(powerOn = powerOn, onPowerChange = onPowerChange)
+                }
+                item(key = "auto_detect") {
+                    AutoDetectRow(enabled = autoDetectEnabled, onEnabledChange = onAutoDetectChange)
                 }
                 item(key = "text_size") {
                     TextSizeRow(current = textSize, onPick = onTextSizeChange)
