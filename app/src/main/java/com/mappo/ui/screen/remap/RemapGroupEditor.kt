@@ -1,7 +1,9 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,6 +70,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -858,13 +861,20 @@ private fun CommandTile(
 
     val isOrigin = moveState.origin == cellKey
     val isTarget = moveState.active && moveState.target == cellKey
+    val density = LocalDensity.current
 
-    // Swap preview. Animated so the exchange reads as motion rather than a jump, and so
-    // stepping the target across a row shows each displaced tile sliding back out of the way.
-    val slideX by animateDpAsState(displacement.x, label = "cell-slide-x")
-    val slideY by animateDpAsState(displacement.y, label = "cell-slide-y")
-    // The lifted tile swells slightly — the "picked up" read, matching the keyboard editor's
-    // grabbed-button feel.
+    // Swap preview, animated so the exchange reads as motion rather than a jump.
+    //
+    // Keyed on the CURRENT LIFT (`moveState.origin`) so every move starts from a fresh
+    // Animatable at zero — otherwise a new drag inherits the previous one's in-flight
+    // tween-back and the tile starts from somewhere it was never at. Same reasoning, and the
+    // same fix, as `ReorderableTabBar`'s per-drag `Animatable`.
+    val slide = remember(moveState.origin, cellKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val slideTarget = with(density) { Offset(displacement.x.toPx(), displacement.y.toPx()) }
+    LaunchedEffect(moveState.origin, slideTarget) {
+        if (moveState.active) slide.animateTo(slideTarget, tween(MoveSlideMillis))
+    }
+    // The lifted tile swells slightly — the "picked up" read.
     val lift by animateFloatAsState(
         if (isOrigin) MoveLiftScale else 1f,
         label = "cell-lift",
@@ -917,44 +927,26 @@ private fun CommandTile(
         menuOpen = true
     }
 
+    // OUTER: the cell's natural layout slot. Hosts the gesture, the bounds registration, the
+    // focus target and the z-order — and carries NO graphicsLayer. That separation is the
+    // whole trick, and it is not optional: pointerInput reports positions in POST-transform
+    // local coordinates, so translating the same node that detects the drag makes the tile
+    // chase a finger that appears stationary to it — a feedback loop of lag, flicker and
+    // wrong drops. `ReorderableTabBar` and the keyboard button grid are both built this way
+    // for exactly this reason; this tile got it wrong once already.
+    //
+    // It also means the registered bounds are the RESTING slot, which is what a grid wants:
+    // "which cell is under the finger" must not change as tiles animate around.
     Box(
         modifier = modifier
             // Addressable per cell: "cell:<sub-input key>:<ACTIVATOR_TYPE>".
             .testTag(cellTestTag(cellKey))
             .width(TileWidth)
             .height(TileHeight)
-            // Lifted tiles ride above their neighbors, and the pointer path translates them
-            // under the finger.
+            // Lifted tiles ride above their neighbours. zIndex orders SIBLINGS only, so the
+            // owning Row carries one too (see AdvancedTable).
             .zIndex(if (isOrigin) 10f else if (isTarget) 5f else 0f)
-            .graphicsLayer {
-                if (isOrigin && moveState.pointerDriven) {
-                    // Pointer path: raw, unanimated — the tile belongs under the finger.
-                    translationX = moveState.dragOffset.x
-                    translationY = moveState.dragOffset.y
-                } else {
-                    translationX = slideX.toPx()
-                    translationY = slideY.toPx()
-                }
-                scaleX = lift
-                scaleY = lift
-            }
-            .minputInteractiveMotion(interaction)
-            .clip(shape)
-            .background(container, shape)
-            .then(
-                when {
-                    // Drop target gets a bright ring — the same "this is where it lands" read
-                    // as the keyboard editor's valid-drop highlight.
-                    isTarget && !isOrigin && output != null -> Modifier.border(
-                        width = MoveTargetStroke,
-                        color = LocalMappoExtraColors.current.dropZoneValid,
-                        shape = shape,
-                    )
-                    // Empty cells stay strokeless by spec; defined ones wear the family bevel.
-                    output != null -> Modifier.border(minputBevelBorder(container, TileCorner), shape)
-                    else -> Modifier
-                },
-            )
+            .moveModeCell(moveState, cellKey)
             // Every tile is a focus stop, editable or not — a read-only layer view still
             // needs controller navigation to reach its menus.
             .focusable(interactionSource = interaction)
@@ -977,12 +969,6 @@ private fun CommandTile(
                     else -> false
                 }
             }
-            .clickable(
-                interactionSource = interaction,
-                indication = minputIndication(),
-                onClickLabel = if (output == null) "Assign command" else "Command options",
-                onClick = ::activate,
-            )
             .then(
                 if (enabled) {
                     Modifier.moveModeLongPressSource(
@@ -991,11 +977,61 @@ private fun CommandTile(
                         onCommit = onCommitMove,
                     )
                 } else Modifier,
+            ),
+    ) {
+    // INNER: visual transform only, decoupled from gesture detection. Also where the tap
+    // lives, so the ripple is clipped to the tile's shape and travels with it; its own
+    // focusability is switched off so the OUTER stays the single focus target (which is what
+    // the call site's focusRequester attaches to).
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .graphicsLayer {
+                when {
+                    // Pointer path: raw, unanimated — the tile belongs under the finger.
+                    isOrigin && moveState.pointerDriven -> {
+                        translationX = moveState.dragOffset.x
+                        translationY = moveState.dragOffset.y
+                    }
+                    // Move over: snap home INSTANTLY. Animating back would play a slide to
+                    // the resting slot while the committed data is still in flight, which
+                    // reads exactly like the move was rejected.
+                    !moveState.active -> {
+                        translationX = 0f
+                        translationY = 0f
+                    }
+                    else -> {
+                        translationX = slide.value.x
+                        translationY = slide.value.y
+                    }
+                }
+                scaleX = lift
+                scaleY = lift
+            }
+            .minputInteractiveMotion(interaction)
+            .clip(shape)
+            .background(container, shape)
+            .then(
+                when {
+                    // Drop target gets a bright ring — the same "this is where it lands" read
+                    // as the keyboard editor's valid-drop highlight.
+                    isTarget && !isOrigin && output != null -> Modifier.border(
+                        width = MoveTargetStroke,
+                        color = LocalMappoExtraColors.current.dropZoneValid,
+                        shape = shape,
+                    )
+                    // Empty cells stay strokeless by spec; defined ones wear the family bevel.
+                    output != null -> Modifier.border(minputBevelBorder(container, TileCorner), shape)
+                    else -> Modifier
+                },
             )
-            // AFTER the placement-shifting graphicsLayer, per
-            // feedback_compose_modifier_order_position_observers — otherwise the registered
-            // rect is the tile's resting position and drops land on the wrong cell.
-            .moveModeCell(moveState, cellKey),
+            .focusProperties { canFocus = false }
+            .clickable(
+                interactionSource = interaction,
+                indication = minputIndication(),
+                onClickLabel = if (output == null) "Assign command" else "Command options",
+                onClick = ::activate,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         // An empty cell draws NOTHING — it is a transparent, interactive slot. Its "+" is
@@ -1048,6 +1084,7 @@ private fun CommandTile(
             placement = MinputMenuPlacement.End,
             caret = true,
         )
+    }
     }
 }
 
@@ -1281,6 +1318,9 @@ private val TileOutputGlyphSize = 14.dp
 /** The empty cell's "+": present enough to invite a tap, faint enough that a row of empties
  *  doesn't read as content. Its COLOR (and opacity) comes from `PressTypePalette`. */
 private val EmptyTilePlusSize = 22.dp
+
+/** How long a displaced tile takes to slide aside during a swap preview. */
+private const val MoveSlideMillis = 200
 
 /** How much a lifted tile swells while it's being carried. */
 private const val MoveLiftScale = 1.06f

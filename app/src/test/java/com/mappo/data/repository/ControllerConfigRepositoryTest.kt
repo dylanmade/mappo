@@ -742,6 +742,141 @@ class ControllerConfigRepositoryTest {
         assertEquals(1, clone.orderIndex)
     }
 
+    // ── Advanced-table cell ops ──────────────────────────────────────────────────────────
+    //
+    // The table's Move verb is the only way a command changes cell, and a half-applied swap
+    // looks EXACTLY like a UI animation bug from the outside — so the data op is pinned here
+    // rather than inferred from what the screen appears to do.
+
+    /** A binding group with one command at ([inputKey], [type]) emitting [key]. */
+    private suspend fun seedCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+        key: String,
+    ) {
+        val inputId = groupInputDao.getByGroups(listOf(bindingGroupId))
+            .firstOrNull { it.inputKey == inputKey }?.id
+            ?: groupInputDao.insert(
+                GroupInput(bindingGroupId = bindingGroupId, inputKey = inputKey, orderIndex = 0)
+            )
+        val activatorId = activatorDao.insert(
+            Activator(groupInputId = inputId, type = type, settingsJson = "{}", orderIndex = 0)
+        )
+        bindingDao.insert(
+            Binding(
+                activatorId = activatorId,
+                outputType = BindingOutputType.KEY_PRESS,
+                args = key,
+                orderIndex = 0,
+            )
+        )
+    }
+
+    /** What the cell at ([inputKey], [type]) currently emits, or null when it's empty. */
+    private suspend fun cellOutput(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+    ): String? {
+        val inputId = groupInputDao.getByGroups(listOf(bindingGroupId))
+            .firstOrNull { it.inputKey == inputKey }?.id ?: return null
+        val activator = activatorDao.getByGroupInputs(listOf(inputId))
+            .firstOrNull { it.type == type } ?: return null
+        return bindingDao.getByActivators(listOf(activator.id)).firstOrNull()?.args
+    }
+
+    private suspend fun seedFaceGroup(): Long = bindingGroupDao.insert(
+        BindingGroup(
+            actionSetId = null,
+            actionLayerId = null,
+            name = "face_buttons",
+            mode = BindingMode.BUTTON_PAD,
+            settingsJson = "{}",
+        )
+    )
+
+    @Test
+    fun moveInputCell_ontoOccupiedCell_swapsBothCommands() = runTest {
+        val groupId = seedFaceGroup()
+        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A_PRESS")
+        seedCell(groupId, "button_b", ActivatorType.LONG_PRESS, "B_LONG")
+
+        subject.moveInputCell(
+            bindingGroupId = groupId,
+            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
+            toKey = "button_b", toType = ActivatorType.LONG_PRESS,
+        )
+
+        assertEquals("A_PRESS", cellOutput(groupId, "button_b", ActivatorType.LONG_PRESS))
+        assertEquals("B_LONG", cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
+    }
+
+    @Test
+    fun moveInputCell_withinOneRow_swapsAcrossPressTypes() = runTest {
+        // Same group input on both sides — the case where from/to share a parent, which a
+        // naive "reparent then reparent" can collapse into a no-op.
+        val groupId = seedFaceGroup()
+        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "PRESS")
+        seedCell(groupId, "button_a", ActivatorType.DOUBLE_PRESS, "DOUBLE")
+
+        subject.moveInputCell(
+            bindingGroupId = groupId,
+            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
+            toKey = "button_a", toType = ActivatorType.DOUBLE_PRESS,
+        )
+
+        assertEquals("PRESS", cellOutput(groupId, "button_a", ActivatorType.DOUBLE_PRESS))
+        assertEquals("DOUBLE", cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
+    }
+
+    @Test
+    fun moveInputCell_ontoEmptyCell_relocatesAndLeavesOriginEmpty() = runTest {
+        val groupId = seedFaceGroup()
+        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A_PRESS")
+
+        subject.moveInputCell(
+            bindingGroupId = groupId,
+            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
+            toKey = "button_y", toType = ActivatorType.CHORDED_PRESS,
+        )
+
+        assertEquals("A_PRESS", cellOutput(groupId, "button_y", ActivatorType.CHORDED_PRESS))
+        assertNull(cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
+    }
+
+    @Test
+    fun moveInputCell_carriesActivatorSettingsWithTheCommand() = runTest {
+        // Move REPARENTS the activator rather than copying its contents, so tuned settings
+        // (long-press time, chord partner, turbo) travel with the command.
+        val groupId = seedFaceGroup()
+        val inputId = groupInputDao.insert(
+            GroupInput(bindingGroupId = groupId, inputKey = "button_a", orderIndex = 0)
+        )
+        val activatorId = activatorDao.insert(
+            Activator(
+                groupInputId = inputId,
+                type = ActivatorType.LONG_PRESS,
+                settingsJson = """{"long_press_time":0.9}""",
+                orderIndex = 0,
+            )
+        )
+        bindingDao.insert(
+            Binding(activatorId = activatorId, outputType = BindingOutputType.KEY_PRESS, args = "K", orderIndex = 0)
+        )
+
+        subject.moveInputCell(
+            bindingGroupId = groupId,
+            fromKey = "button_a", fromType = ActivatorType.LONG_PRESS,
+            toKey = "button_b", toType = ActivatorType.LONG_PRESS,
+        )
+
+        val movedInput = groupInputDao.getByGroups(listOf(groupId)).single { it.inputKey == "button_b" }
+        val moved = activatorDao.getByGroupInputs(listOf(movedInput.id)).single()
+        assertEquals("""{"long_press_time":0.9}""", moved.settingsJson)
+        assertEquals(activatorId, moved.id)
+    }
+
     @Test
     fun duplicateLayer_clonesGroupsInputsActivatorsBindings_withFreshIds() = runTest {
         val cpId = subject.seedDefaultConfig(layoutId = 1L)

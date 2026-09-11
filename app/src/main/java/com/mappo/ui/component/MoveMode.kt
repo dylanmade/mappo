@@ -149,13 +149,18 @@ class MoveModeState<K : Any> {
 fun <K : Any> rememberMoveModeState(): MoveModeState<K> = remember { MoveModeState() }
 
 /**
- * Register this node as a droppable cell keyed by [key] — required on every cell that a pointer
- * drag may land on. Bounds are read in WINDOW space so cells in different scroll containers
- * (the table's frozen glyph column vs. its scrolling body) hit-test against one another
- * correctly.
+ * Register this node as a droppable cell keyed by [key] — required on every cell a pointer drag
+ * may land on. Bounds are read in WINDOW space so cells in different scroll containers (the
+ * table's frozen glyph column vs. its scrolling body) hit-test against one another correctly.
  *
- * Per `feedback_compose_modifier_order_position_observers`, place this AFTER any modifier that
- * shifts placement (offset, graphicsLayer translation) or it reports the un-shifted rect.
+ * **Put this on the cell's UNTRANSFORMED layout node — the same node as
+ * [moveModeLongPressSource], never the one carrying the drag/animation `graphicsLayer`.** A
+ * drop target is a RESTING SLOT: "which cell is under the finger" must not change as tiles
+ * animate around, and the dragged cell's own rect must stay put or the pointer position
+ * derived from it feeds back into itself. (This is the one case that inverts the usual
+ * `feedback_compose_modifier_order_position_observers` advice about placing observers after
+ * placement-shifting modifiers — that rule is for reporting where something ENDED UP; this
+ * wants where it BELONGS.)
  */
 fun <K : Any> Modifier.moveModeCell(state: MoveModeState<K>, key: K): Modifier = composed {
     // Drop the rect when the cell leaves composition, so a state shared across a changing set
@@ -168,6 +173,13 @@ fun <K : Any> Modifier.moveModeCell(state: MoveModeState<K>, key: K): Modifier =
  * Touch entry point: long-press this cell to lift it, then drag to choose a drop target and
  * release to commit. Mirrors the keyboard editor's phasing exactly — the feel is load-bearing,
  * and two drag affordances in one app that trip at different thresholds read as broken.
+ *
+ * **This must sit on a node with NO `graphicsLayer` transform of its own.** `pointerInput`
+ * reports positions in post-transform local coordinates, so translating the same node that
+ * detects the drag creates a feedback loop: the cell chases the finger while the finger looks
+ * stationary to it, producing lag, flicker and drops nowhere near where you let go. Split the
+ * cell into an outer layout/gesture node and an inner visual node that carries the transform,
+ * exactly as `ReorderableTabBar` and the keyboard button grid do.
  *
  *  - **Phase 1** races the long-press timer against release and against movement past
  *    `touchSlop`. Nothing is consumed here, so a plain tap still reaches the cell's own
