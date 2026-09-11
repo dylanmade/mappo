@@ -330,20 +330,17 @@ internal fun RemapSimpleView(
         val vg = visibleGroup
         val origin = vg?.let { boxBounds[it] }
         if (vg != null && origin != null && rootSize != IntSize.Zero) {
-            // Target: full width minus a slim margin (the table scrolls sideways, so it wants
-            // every pixel of width), but only as TALL as the editor's content needs —
-            // [advancedEditorHeight] is exact because every part of the table is a fixed size.
-            // Filling the height left a two-row group (a shoulder, the utility pair) sitting
-            // in most of a screen of dead space. Clamped to the space available, and centred
-            // vertically so a short panel reads as floating rather than top-stuck.
-            val density = LocalDensity.current
-            val marginPx = with(density) { EditorMargin.toPx() }
-            val availableH = rootSize.height - marginPx * 2
-            val wantedH = with(density) { advancedEditorHeight(vg).toPx() }
-            val targetH = wantedH.coerceAtMost(availableH)
+            // Target = nearly the whole view (a slim margin keeps the edges peeking through) —
+            // controller-image-sized proved too cramped a viewing experience.
+            //
+            // A wrap-the-content height was trialled 2026-09-11 (sizing from
+            // [advancedEditorHeight] so a two-row group didn't leave dead space below it) and
+            // REVERTED the same day — Dylan preferred the full-height panel. The height
+            // helper stays; it's exact and cheap if this comes back.
+            val marginPx = with(LocalDensity.current) { EditorMargin.toPx() }
             val target = Rect(
-                offset = Offset(marginPx, marginPx + (availableH - targetH) / 2f),
-                size = Size(rootSize.width - marginPx * 2, targetH),
+                offset = Offset(marginPx, marginPx),
+                size = Size(rootSize.width - marginPx * 2, rootSize.height - marginPx * 2),
             )
             val shape = RoundedCornerShape(GroupCorner)
             val container = minputBoxContainer()

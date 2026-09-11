@@ -63,6 +63,11 @@ class MoveModeState<K : Any> {
     var pointerDriven by mutableStateOf(false)
         private set
 
+    /** Last pointer position in WINDOW space, for callers that need to know where the finger
+     *  is rather than just which cell it's over — edge-scrolling a container, for instance. */
+    var pointerWindow by mutableStateOf(Offset.Zero)
+        private set
+
     val active: Boolean get() = origin != null
 
     /** Window-space bounds per cell, kept current by [Modifier.moveModeCell]. Only the pointer
@@ -82,6 +87,7 @@ class MoveModeState<K : Any> {
         target = key
         dragOffset = Offset.Zero
         pointerDriven = byPointer
+        pointerWindow = Offset.Zero
     }
 
     /**
@@ -93,7 +99,22 @@ class MoveModeState<K : Any> {
     fun dragTo(offset: Offset, pointerWindowPos: Offset) {
         if (!active) return
         dragOffset = offset
-        val hit = bounds.entries.firstOrNull { it.value.contains(pointerWindowPos) }?.key
+        pointerWindow = pointerWindowPos
+        resolveTargetAtPointer()
+    }
+
+    /**
+     * Re-run the hit test against the LAST known pointer position. Needed when the cells move
+     * under a stationary finger — an edge-scrolling container slides new cells beneath it, and
+     * without this the drop target would stay stuck on whatever was there when the finger last
+     * moved.
+     */
+    fun refreshTargetAtPointer() {
+        if (active && pointerDriven) resolveTargetAtPointer()
+    }
+
+    private fun resolveTargetAtPointer() {
+        val hit = bounds.entries.firstOrNull { it.value.contains(pointerWindow) }?.key
         target = hit ?: origin
     }
 
