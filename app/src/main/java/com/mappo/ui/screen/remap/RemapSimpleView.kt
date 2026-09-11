@@ -13,7 +13,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -231,19 +230,19 @@ internal fun RemapSimpleView(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-                // The three-column band, now the plate's content. Its height is the tallest
-                // SIDE column's content (IntrinsicSize.Min on the plate, which forwards to this
-                // Row; the controller image reports no intrinsic size — see the paint modifier
-                // below), which lets the middle column pin the Map button's top edge and the
-                // utility box's bottom edge to the flanking columns' extents.
+                // The three-column band, now the plate's content and sized BY it.
                 MinputPod(
                     // A plate, not a capsule: the pill default would round this to a lozenge.
                     corner = MinputPodPlateCorner,
                     // Wide gutter keeps the side group boxes off the controller image.
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min),
+                    // FILLS the content section rather than hugging the band (2026-08-30,
+                    // Dylan): this plate is the middle region, not chrome floating in it.
+                    // That retires the IntrinsicSize.Min the band used to measure itself by
+                    // — the columns take their height from the plate now, so the middle
+                    // column's Map button pins to the plate's top edge and the utility box
+                    // to its bottom, which is what the intrinsic pass was arranging by hand.
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     val box: @Composable (RemapSimpleGroup, Modifier) -> Unit = { group, boxModifier ->
                         GroupBox(
@@ -292,8 +291,9 @@ internal fun RemapSimpleView(
                             Spacer(Modifier.width(6.dp))
                             Text("Map")
                         }
-                        // sizeToIntrinsics=false is load-bearing: with it, the image contributes no
-                        // intrinsic height, so the Row's IntrinsicSize.Min is set by the side columns.
+                        // sizeToIntrinsics=false: the image contributes no intrinsic height, so
+                        // it never drives the band's measurement — it takes the slack the
+                        // flanking group boxes leave (weight(1f) below).
                         Box(
                             Modifier
                                 .weight(1f)
