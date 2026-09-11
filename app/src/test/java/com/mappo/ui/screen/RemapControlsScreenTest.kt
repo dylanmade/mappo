@@ -10,7 +10,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -626,7 +628,12 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("group-editor-table")
             .performScrollToNode(hasTestTag("cell:button_a:FULL_PRESS"))
         composeRule.onNodeWithTag("cell:button_a:FULL_PRESS").performClick()
-        composeRule.onNodeWithText("Clear override").performClick()
+        // Driven through semantics rather than performClick: menu rows live in a Popup, and
+        // popup bounds come back NEGATED under Robolectric (a menu anchored at x=56 reports
+        // x=-56), so a coordinate-based click can miss depending on where the menu sits.
+        // The semantics action tests the same handler without the bogus hit-testing.
+        composeRule.onNodeWithText("Clear override")
+            .performSemanticsAction(SemanticsActions.OnClick)
 
         assert(args == Triple(42L, com.mappo.data.model.steam.InputSource.BUTTON_DIAMOND, "button_a")) {
             "Expected callback (42, BUTTON_DIAMOND, button_a); got $args"

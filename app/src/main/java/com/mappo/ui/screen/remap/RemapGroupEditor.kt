@@ -1,9 +1,12 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -52,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +81,9 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.mappo.R
@@ -99,13 +106,17 @@ import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.displayLabel as activatorDisplayLabel
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
 import com.mappo.ui.theme.LocalMappoExtraColors
+import com.mappo.ui.theme.PressTypeColors
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputActionMenu
+import com.mappo.ui.minput.MinputMenuPlacement
 import com.mappo.ui.minput.MinputBoxStroke
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputPanelDividerInset
+import com.mappo.ui.minput.MinputScrollbar
+import com.mappo.ui.minput.MinputScrollbarThickness
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextEditDialog
@@ -188,22 +199,22 @@ internal val pressTypeColumns = listOf(
 )
 
 /**
- * Identity accent for a press-type column, or **null for [ActivatorType.FULL_PRESS]** — the
- * standard press deliberately keeps the ordinary control surface, so "no accent" is a real
- * value here rather than a missing one. Sourced from [LocalMappoExtraColors] because these are
- * fixed learned hues, not theme roles (see the doc on `MappoExtraColors`).
+ * The three column colors for a press type — header, tile tint, empty-cell "+".
+ *
+ * **To retune the palette, edit `PressTypePalette` in `ui/theme/Theme.kt`**; nothing here
+ * derives or blends on top of those values, so what's written there is what renders.
+ * `FULL_PRESS` maps to the neutral `press` entry (transparent tile = the ordinary surface).
  */
 @Composable
-internal fun ActivatorType.columnAccent(): Color? {
-    val extras = LocalMappoExtraColors.current
+internal fun ActivatorType.columnColors(): PressTypeColors {
+    val palette = LocalMappoExtraColors.current.pressTypes
     return when (this) {
-        ActivatorType.FULL_PRESS -> null
-        ActivatorType.LONG_PRESS -> extras.pressLong
-        ActivatorType.DOUBLE_PRESS -> extras.pressDouble
-        ActivatorType.CHORDED_PRESS -> extras.pressChord
-        ActivatorType.START_PRESS -> extras.pressDown
-        ActivatorType.RELEASE_PRESS -> extras.pressUp
-        ActivatorType.SOFT_PRESS -> null
+        ActivatorType.FULL_PRESS, ActivatorType.SOFT_PRESS -> palette.press
+        ActivatorType.LONG_PRESS -> palette.long
+        ActivatorType.DOUBLE_PRESS -> palette.double
+        ActivatorType.CHORDED_PRESS -> palette.chord
+        ActivatorType.START_PRESS -> palette.down
+        ActivatorType.RELEASE_PRESS -> palette.up
     }
 }
 
@@ -389,14 +400,32 @@ private fun AdvancedTable(
     // so the editor dialog is summoned directly rather than by a MinputTextField pill.
     var labelTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
-    // Row index lookup for the controller move path's directional stepping — the table knows
-    // its own neighbors, so MoveModeState delegates that resolution here (see its KDoc).
+    // Row order for the controller move path's directional stepping — the table knows its own
+    // neighbors, so MoveModeState delegates that resolution here (see its KDoc).
     val rowKeys = group.rows.map { it.subInputKey }
+
+    // A focus handle per cell, so focus can FOLLOW a committed move to the destination.
+    // Leaving it on the origin (which now holds the swapped-in command, or nothing at all)
+    // read as the cursor snapping backwards.
+    val cellFocus = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
+    fun focusHandle(key: CellKey): FocusRequester = cellFocus.getOrPut(key) { FocusRequester() }
+    var pendingFocus by remember { mutableStateOf<CellKey?>(null) }
+    LaunchedEffect(pendingFocus) {
+        val key = pendingFocus ?: return@LaunchedEffect
+        pendingFocus = null
+        // The destination may have only just recomposed; a failed request is harmless.
+        runCatching { cellFocus[key]?.requestFocus() }
+    }
+
+    fun cellAt(key: CellKey): Pair<Int, Int>? {
+        val r = rowKeys.indexOf(key.inputKey).takeIf { it >= 0 } ?: return null
+        val c = pressTypeColumns.indexOf(key.type).takeIf { it >= 0 } ?: return null
+        return r to c
+    }
 
     fun stepMoveTarget(dRow: Int, dCol: Int) {
         val current = moveState.target ?: return
-        val r = rowKeys.indexOf(current.inputKey).takeIf { it >= 0 } ?: return
-        val c = pressTypeColumns.indexOf(current.type).takeIf { it >= 0 } ?: return
+        val (r, c) = cellAt(current) ?: return
         val nr = (r + dRow).coerceIn(0, rowKeys.lastIndex)
         val nc = (c + dCol).coerceIn(0, pressTypeColumns.lastIndex)
         if (nr != r || nc != c) {
@@ -417,156 +446,210 @@ private fun AdvancedTable(
         val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey } ?: return
         val groupId = bindingGroupIdFor(spec) ?: return
         callbacks.onMoveCell(groupId, from.inputKey, from.type, to.inputKey, to.type)
+        pendingFocus = to
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // While a CONTROLLER move is in flight the table owns the d-pad: arrows walk the
-            // drop target and B/Escape cancels, while the lifted tile keeps focus and owns
-            // the confirm. Pointer-driven moves don't take this path — the finger is already
-            // saying where to land.
-            .onKeyEvent { event ->
-                if (!moveState.active || moveState.pointerDriven) return@onKeyEvent false
-                if (event.type != KeyEventType.KeyDown) return@onKeyEvent true
-                when (event.key) {
-                    // Arrows walk the drop target. Consuming them is what stops normal focus
-                    // traversal — focus must stay on the lifted tile for the whole move.
-                    Key.DirectionUp -> { stepMoveTarget(-1, 0); true }
-                    Key.DirectionDown -> { stepMoveTarget(1, 0); true }
-                    Key.DirectionLeft -> { stepMoveTarget(0, -1); true }
-                    Key.DirectionRight -> { stepMoveTarget(0, 1); true }
-                    Key.Back, Key.Escape, Key.ButtonB -> { moveState.cancel(); true }
-                    // NB: the activate keys are deliberately absent. The focused tile handles
-                    // its own activation (see CommandTile) and events reach it first; a commit
-                    // branch here would be a second, competing path.
-                    else -> true // swallow everything else so focus can't wander mid-move
-                }
-            },
-    ) {
-        Row(
+    // Where a tile sits while a move is in flight, as a grid-step offset from its own slot.
+    // This is the swap PREVIEW: the lifted tile slides toward the drop target and the tile
+    // currently there slides back into the vacated slot, so the exchange is visible before
+    // it's committed — and visibly undone the moment the target moves on.
+    //
+    // Grid steps rather than measured positions because every cell is a fixed size; there is
+    // nothing to measure.
+    fun displacementFor(key: CellKey): DpOffset {
+        val origin = moveState.origin ?: return DpOffset.Zero
+        val target = moveState.target ?: return DpOffset.Zero
+        if (origin == target) return DpOffset.Zero
+        val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
+        val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
+        val (row, col) = cellAt(key) ?: return DpOffset.Zero
+        val stepX = TileWidth + TileGap
+        val stepY = TileHeight + TileGap
+        return when (key) {
+            // The lifted tile rides to the target. On the POINTER path it follows the finger
+            // instead (raw translation in CommandTile), so no grid animation there.
+            origin ->
+                if (moveState.pointerDriven) DpOffset.Zero
+                else DpOffset(stepX * (targetCol - col), stepY * (targetRow - row))
+            // The displaced occupant takes the vacated slot.
+            target -> DpOffset(stepX * (originCol - col), stepY * (originRow - row))
+            else -> DpOffset.Zero
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(vScroll)
-                // On the scrollable node, not the outer Box — test scroll-to-node and
-                // accessibility scroll actions both need the semantics to sit where the
-                // scroll modifier is.
-                .testTag("group-editor-table")
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-        ) {
-            // ── Frozen glyph column ("column zero") ───────────────────────
-            Column(verticalArrangement = Arrangement.spacedBy(TileGap)) {
-                Spacer(Modifier.height(ColumnHeaderHeight))
-                group.rows.forEach { spec ->
-                    Box(
-                        modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        InputGlyphs.SubInputGlyph(
-                            source = spec.source,
-                            subInputKey = spec.subInputKey,
-                            size = TableGlyphSize,
-                        )
+                .fillMaxWidth()
+                // fill = false: the table takes only the height its rows need, so a two-row
+                // group doesn't leave a screen of dead space under it. The editor's host
+                // sizes itself from [advancedEditorHeight] to match.
+                .weight(1f, fill = false)
+                // While a CONTROLLER move is in flight the table owns the d-pad: arrows walk
+                // the drop target and B/Escape cancels, while the lifted tile keeps focus and
+                // owns the confirm. Pointer-driven moves don't take this path — the finger is
+                // already saying where to land.
+                .onKeyEvent { event ->
+                    if (!moveState.active || moveState.pointerDriven) return@onKeyEvent false
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent true
+                    when (event.key) {
+                        // Consuming the arrows is what stops normal focus traversal — focus
+                        // must stay on the lifted tile for the whole move.
+                        Key.DirectionUp -> { stepMoveTarget(-1, 0); true }
+                        Key.DirectionDown -> { stepMoveTarget(1, 0); true }
+                        Key.DirectionLeft -> { stepMoveTarget(0, -1); true }
+                        Key.DirectionRight -> { stepMoveTarget(0, 1); true }
+                        Key.Back, Key.Escape, Key.ButtonB -> { moveState.cancel(); true }
+                        // NB: the activate keys are deliberately absent. The focused tile
+                        // handles its own activation (see CommandTile) and events reach it
+                        // first; a commit branch here would be a second, competing path.
+                        else -> true // swallow the rest so focus can't wander mid-move
                     }
-                }
-            }
-            Spacer(Modifier.width(TileGap))
-
-            // ── Scrolling body: header row + cells ────────────────────────
-            Column(
-                modifier = Modifier.horizontalScroll(hScroll),
-                verticalArrangement = Arrangement.spacedBy(TileGap),
+                },
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(vScroll)
+                    // On the scrollable node, not the outer Box — test scroll-to-node and
+                    // accessibility scroll actions both need the semantics to sit where the
+                    // scroll modifier is.
+                    .testTag("group-editor-table")
+                    .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                    pressTypeColumns.forEach { type -> PressColumnHeader(type) }
-                }
-                group.rows.forEachIndexed { rowIndex, spec ->
-                    // Layer view resolves override→base (ghost semantics): the layer's own
-                    // group input wins when it exists, otherwise the base set's shows through.
-                    val layerGroupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-                    val baseGroupInput = viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-                    val groupInput = layerGroupInput ?: baseGroupInput
-                    val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
-                    val groupId = bindingGroupIdFor(spec)
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                        pressTypeColumns.forEach { type ->
-                            val cellKey = CellKey(spec.subInputKey, type)
-                            val activator = groupInput?.firstActivatorOfType(type)
-                            val binding = activator?.bindings?.firstOrNull()
-                            val output = activator?.primaryOutput ?: BindingOutput.Unbound
-                            val defined = binding != null && output != BindingOutput.Unbound
-                            val title = "$subLabel · ${type.activatorDisplayLabel()}"
-
-                            CommandTile(
-                                accent = type.columnAccent(),
-                                output = output.takeIf { defined },
-                                label = binding?.label?.takeIf { it.isNotBlank() },
-                                config = config,
-                                enabled = editable && groupId != null,
-                                cellKey = cellKey,
-                                moveState = moveState,
-                                onCommitMove = { commitMove(it) },
-                                actions = {
-                                    if (!editable) {
-                                        // Layer view is read-only here: editing routes to the
-                                        // full-screen editor (which materializes the override
-                                        // onto the layer), and an input the layer actually
-                                        // overrides can be handed back to the base set.
-                                        layerTileActions(
-                                            overridden = layerGroupInput != null,
-                                            onEdit = {
-                                                callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
-                                            },
-                                            onClearOverride = {
-                                                callbacks.onClearOverride(spec.source, spec.subInputKey)
-                                            },
-                                        )
-                                    } else {
-                                        tileActions(
-                                            defined = defined,
-                                            clipboardOccupied = callbacks.clipboardOccupied,
-                                            onEdit = {
-                                                if (groupId != null) {
-                                                    callbacks.onAssignCell(groupId, spec.subInputKey, type, output, title)
-                                                }
-                                            },
-                                            onLabel = { binding?.let { labelTarget = it.id to it.label.orEmpty() } },
-                                            onSettings = { activator?.let { callbacks.onConfigure(it.activator.id, title) } },
-                                            onCopy = {
-                                                if (groupId != null) callbacks.onCopyCell(groupId, spec.subInputKey, type)
-                                            },
-                                            onPaste = {
-                                                if (groupId != null) callbacks.onPasteCell(groupId, spec.subInputKey, type)
-                                            },
-                                            onMove = { moveState.pickUp(cellKey, byPointer = false) },
-                                            onClear = {
-                                                if (groupId != null) callbacks.onClearCell(groupId, spec.subInputKey, type)
-                                            },
-                                        )
-                                    }
-                                },
-                                modifier = Modifier
-                                    .then(
-                                        // Top row escapes UP to the header; every other row
-                                        // steps normally.
-                                        if (rowIndex == 0) {
-                                            Modifier.focusProperties { up = upTarget }
-                                        } else Modifier,
-                                    )
-                                    .then(
-                                        if (focusRequester != null && rowIndex == 0 &&
-                                            type == ActivatorType.FULL_PRESS
-                                        ) {
-                                            Modifier.focusRequester(focusRequester)
-                                        } else Modifier,
-                                    ),
+                // ── Frozen glyph column ("column zero") ───────────────────
+                Column(verticalArrangement = Arrangement.spacedBy(TileGap)) {
+                    Spacer(Modifier.height(ColumnHeaderHeight))
+                    group.rows.forEach { spec ->
+                        Box(
+                            modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            InputGlyphs.SubInputGlyph(
+                                source = spec.source,
+                                subInputKey = spec.subInputKey,
+                                size = TableGlyphSize,
                             )
                         }
                     }
                 }
+                Spacer(Modifier.width(TileGap))
+
+                // ── Scrolling body: header row + cells ────────────────────
+                Column(
+                    modifier = Modifier.horizontalScroll(hScroll),
+                    verticalArrangement = Arrangement.spacedBy(TileGap),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                        pressTypeColumns.forEach { type -> PressColumnHeader(type) }
+                    }
+                    group.rows.forEachIndexed { rowIndex, spec ->
+                        // Layer view resolves override→base (ghost semantics): the layer's own
+                        // group input wins when it exists, else the base set's shows through.
+                        val layerGroupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+                        val baseGroupInput = viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+                        val groupInput = layerGroupInput ?: baseGroupInput
+                        val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
+                        val groupId = bindingGroupIdFor(spec)
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                            pressTypeColumns.forEach { type ->
+                                val cellKey = CellKey(spec.subInputKey, type)
+                                val activator = groupInput?.firstActivatorOfType(type)
+                                val binding = activator?.bindings?.firstOrNull()
+                                val output = activator?.primaryOutput ?: BindingOutput.Unbound
+                                val defined = binding != null && output != BindingOutput.Unbound
+                                val title = "$subLabel · ${type.activatorDisplayLabel()}"
+
+                                CommandTile(
+                                    colors = type.columnColors(),
+                                    output = output.takeIf { defined },
+                                    label = binding?.label?.takeIf { it.isNotBlank() },
+                                    config = config,
+                                    enabled = editable && groupId != null,
+                                    cellKey = cellKey,
+                                    moveState = moveState,
+                                    displacement = displacementFor(cellKey),
+                                    onCommitMove = { commitMove(it) },
+                                    actions = {
+                                        if (!editable) {
+                                            // Layer view is read-only here: editing routes to
+                                            // the full-screen editor (which materializes the
+                                            // override onto the layer), and an input the layer
+                                            // actually overrides can be handed back to base.
+                                            layerTileActions(
+                                                overridden = layerGroupInput != null,
+                                                onEdit = {
+                                                    callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
+                                                },
+                                                onClearOverride = {
+                                                    callbacks.onClearOverride(spec.source, spec.subInputKey)
+                                                },
+                                            )
+                                        } else {
+                                            tileActions(
+                                                defined = defined,
+                                                clipboardOccupied = callbacks.clipboardOccupied,
+                                                onEdit = {
+                                                    if (groupId != null) {
+                                                        callbacks.onAssignCell(groupId, spec.subInputKey, type, output, title)
+                                                    }
+                                                },
+                                                onLabel = { binding?.let { labelTarget = it.id to it.label.orEmpty() } },
+                                                onSettings = { activator?.let { callbacks.onConfigure(it.activator.id, title) } },
+                                                onCopy = {
+                                                    if (groupId != null) callbacks.onCopyCell(groupId, spec.subInputKey, type)
+                                                },
+                                                onPaste = {
+                                                    if (groupId != null) callbacks.onPasteCell(groupId, spec.subInputKey, type)
+                                                },
+                                                onMove = { moveState.pickUp(cellKey, byPointer = false) },
+                                                onClear = {
+                                                    if (groupId != null) callbacks.onClearCell(groupId, spec.subInputKey, type)
+                                                },
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(focusHandle(cellKey))
+                                        .then(
+                                            // Top row escapes UP to the header; every other
+                                            // row steps normally.
+                                            if (rowIndex == 0) {
+                                                Modifier.focusProperties { up = upTarget }
+                                            } else Modifier,
+                                        )
+                                        .then(
+                                            if (focusRequester != null && rowIndex == 0 &&
+                                                type == ActivatorType.FULL_PRESS
+                                            ) {
+                                                Modifier.focusRequester(focusRequester)
+                                            } else Modifier,
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
+            // Vertical indicator, pinned to the end edge. Only draws when the rows actually
+            // overflow — which happens only when the screen is too short for the group.
+            MinputScrollbar(
+                state = vScroll,
+                orientation = Orientation.Vertical,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
         }
+
+        // Horizontal indicator along the bottom: the table scrolls sideways through six press
+        // columns, and with no bar there was nothing on screen saying so.
+        MinputScrollbar(
+            state = hScroll,
+            orientation = Orientation.Horizontal,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.height(TableScrollbarGap))
 
         labelTarget?.let { (bindingId, current) ->
             MinputTextEditDialog(
@@ -584,7 +667,7 @@ private fun AdvancedTable(
  *  the column accent so the header reads as the head of its colored stack. */
 @Composable
 private fun PressColumnHeader(type: ActivatorType) {
-    val accent = type.columnAccent() ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val accent = type.columnColors().header
     Row(
         modifier = Modifier.width(TileWidth).height(ColumnHeaderHeight),
         horizontalArrangement = Arrangement.Center,
@@ -623,13 +706,15 @@ private fun PressColumnHeader(type: ActivatorType) {
  */
 @Composable
 private fun CommandTile(
-    accent: Color?,
+    colors: PressTypeColors,
     output: BindingOutput?,
     label: String?,
     config: ControllerConfig?,
     enabled: Boolean,
     cellKey: CellKey,
     moveState: MoveModeState<CellKey>,
+    /** Grid-step offset this tile should animate to while a move previews a swap. */
+    displacement: DpOffset,
     onCommitMove: (Pair<CellKey, CellKey>?) -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
@@ -642,12 +727,20 @@ private fun CommandTile(
     val isOrigin = moveState.origin == cellKey
     val isTarget = moveState.active && moveState.target == cellKey
 
-    val base = MinputElevatedContainer
-    val container = when {
-        output == null -> Color.Transparent
-        accent == null -> base
-        else -> accent.copy(alpha = TileAccentAlpha).compositeOver(base)
-    }
+    // Swap preview. Animated so the exchange reads as motion rather than a jump, and so
+    // stepping the target across a row shows each displaced tile sliding back out of the way.
+    val slideX by animateDpAsState(displacement.x, label = "cell-slide-x")
+    val slideY by animateDpAsState(displacement.y, label = "cell-slide-y")
+    // The lifted tile swells slightly — the "picked up" read, matching the keyboard editor's
+    // grabbed-button feel.
+    val lift by animateFloatAsState(
+        if (isOrigin) MoveLiftScale else 1f,
+        label = "cell-lift",
+    )
+
+    // The tint's own alpha IS the strength (see PressTypePalette); a fully transparent tint
+    // leaves the plain elevated container, which is exactly what the Press column wants.
+    val container = if (output == null) Color.Transparent else colors.tile.compositeOver(MinputElevatedContainer)
     val shape = RoundedCornerShape(TileCorner)
 
     // Controller hold-to-move: a key-down starts a timer; crossing the long-press threshold
@@ -700,13 +793,18 @@ private fun CommandTile(
             .height(TileHeight)
             // Lifted tiles ride above their neighbors, and the pointer path translates them
             // under the finger.
-            .zIndex(if (isOrigin) 10f else 0f)
+            .zIndex(if (isOrigin) 10f else if (isTarget) 5f else 0f)
             .graphicsLayer {
                 if (isOrigin && moveState.pointerDriven) {
+                    // Pointer path: raw, unanimated — the tile belongs under the finger.
                     translationX = moveState.dragOffset.x
                     translationY = moveState.dragOffset.y
+                } else {
+                    translationX = slideX.toPx()
+                    translationY = slideY.toPx()
                 }
-                if (isOrigin) alpha = MoveOriginAlpha
+                scaleX = lift
+                scaleY = lift
             }
             .minputInteractiveMotion(interaction)
             .clip(shape)
@@ -772,10 +870,10 @@ private fun CommandTile(
             Icon(
                 Icons.Filled.Add,
                 contentDescription = null,
-                modifier = Modifier
-                    .size(EmptyTilePlusSize)
-                    .alpha(EmptyTilePlusAlpha),
-                tint = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(EmptyTilePlusSize),
+                // Alpha rides in the palette color itself — no extra .alpha() here, or the
+                // value in Theme.kt would stop being the value that renders.
+                tint = colors.plus,
             )
         } else {
             Row(
@@ -813,11 +911,21 @@ private fun CommandTile(
             }
         }
 
+        // Top-start anchor: this Box's contentAlignment is Center (for the cell's own
+        // content), but the menu's placement math is expressed from the tile's top-left.
+        Box(Modifier.align(Alignment.TopStart)) {
         MinputActionMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
             actions = actions(),
+            // Beside the tile, not over it: the cell IS the thing being acted on, and a menu
+            // dropped on top of it hides the command you're deciding about. Mirrors to the
+            // start side automatically for the rightmost columns.
+            placement = MinputMenuPlacement.End,
+            caret = true,
+            anchorSize = DpSize(TileWidth, TileHeight),
         )
+        }
     }
 }
 
@@ -1048,15 +1156,36 @@ private val TileCorner = 10.dp
 private val TileContentPadding = 8.dp
 private val TileOutputGlyphSize = 14.dp
 
-/** How strongly a column's accent tints its cells. Low on purpose: the tile must still read as
- *  a control surface of the same family as everything else, color-CODED rather than colored. */
-private const val TileAccentAlpha = 0.22f
-
 /** The empty cell's "+": present enough to invite a tap, faint enough that a row of empties
- *  doesn't read as content. */
-private val EmptyTilePlusSize = 16.dp
-private const val EmptyTilePlusAlpha = 0.3f
+ *  doesn't read as content. Its COLOR (and opacity) comes from `PressTypePalette`. */
+private val EmptyTilePlusSize = 22.dp
 
-/** A lifted tile fades so the drop target beneath it stays readable. */
-private const val MoveOriginAlpha = 0.55f
+/** How much a lifted tile swells while it's being carried. */
+private const val MoveLiftScale = 1.06f
 private val MoveTargetStroke = MinputBoxStroke * 2
+
+/** Vertical breathing room inside the table, above the header row and below the last row. */
+private val TableVerticalPadding = 6.dp
+
+/** Gap under the horizontal scroll indicator, so it isn't flush with the panel's edge. */
+private val TableScrollbarGap = 4.dp
+
+/**
+ * The height the advanced editor wants for [group] — header + divider + the table's own rows.
+ *
+ * Computable rather than measured because every part of the table is a fixed size, which is
+ * what lets the editor's HOST size itself to the content instead of filling the screen (a
+ * two-row group used to leave most of a screen empty below it). Callers should still clamp to
+ * the space available; the table scrolls vertically if it doesn't fit.
+ */
+internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
+    val rows = group.rows.size
+    val table = TableVerticalPadding * 2 +
+        ColumnHeaderHeight + TileGap +
+        TileHeight * rows + TileGap * (rows - 1).coerceAtLeast(0)
+    return EditorHeaderHeight + EditorDividerHeight + table +
+        MinputScrollbarThickness + TableScrollbarGap
+}
+
+/** The inset divider under the header is a hairline; counted so the height math is exact. */
+private val EditorDividerHeight = 1.dp

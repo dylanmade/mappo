@@ -14,6 +14,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -176,22 +177,17 @@ fun MappoTheme(
  *    action," not "valid / invalid drop target").
  *  - the in-editor button-selection outline, which is intentionally near-white in both
  *    modes so it reads as a high-contrast "overlay" rather than a color-keyed accent.
- *  - the remap advanced table's PRESS-TYPE column accents, which are a fixed identity
- *    palette: each press type owns one hue across the whole app so a user learns "cyan =
- *    Long" once. Theme-derived roles can't express six mutually-distinct hues, and letting
- *    them re-tint with the seed would break that learned mapping — same reasoning as the
- *    literal green/red above. `Press` is deliberately absent: the standard press wears the
- *    ordinary control surface, so [pressTypeAccent] returns null for it.
+ *  - the remap advanced table's PRESS-TYPE column colors, a fixed identity palette: each
+ *    press type owns one hue across the whole app so a user learns "cyan = Long" once.
+ *    Theme-derived roles can't express six mutually-distinct hues, and letting them re-tint
+ *    with the seed would break that learned mapping — same reasoning as the literal green/red
+ *    above.
  */
 data class MappoExtraColors(
     val dropZoneValid: Color,
     val dropZoneInvalid: Color,
     val selectionOutline: Color,
-    val pressLong: Color,
-    val pressDouble: Color,
-    val pressChord: Color,
-    val pressDown: Color,
-    val pressUp: Color,
+    val pressTypes: PressTypePalette,
 ) {
     companion object {
         // One lightness step down from pure white — bright enough to read as luminous,
@@ -202,25 +198,129 @@ data class MappoExtraColors(
             dropZoneValid = Color(0xFF2E7D32),    // M-spec green 800 — readable on light fills
             dropZoneInvalid = Color(0xFFC62828),  // M-spec red 800
             selectionOutline = SelectionOutlineNearWhite,
-            // M-spec 700/800 steps — the press hues dropped far enough to stay legible as
-            // text and strokes on light fills.
-            pressLong = Color(0xFF00838F),        // cyan 800
-            pressDouble = Color(0xFFAD1457),      // pink 800 (magenta)
-            pressChord = Color(0xFF9A6700),       // amber, darkened — raw yellow is illegible
-            pressDown = Color(0xFFC62828),        // red 800
-            pressUp = Color(0xFF2E7D32),          // green 800
+            pressTypes = PressTypePalette.Light,
         )
         val Dark = MappoExtraColors(
             dropZoneValid = Color(0xFF66BB6A),    // green 400 — lifts off dark surface
             dropZoneInvalid = Color(0xFFEF5350),  // red 400
             selectionOutline = SelectionOutlineNearWhite,
-            // M-spec 300/400 steps: bright enough to read as their own hue against the
-            // editor's dark surfaces without glowing louder than the content they label.
-            pressLong = Color(0xFF4DD0E1),        // cyan 300
-            pressDouble = Color(0xFFF06292),      // pink 300 (magenta)
-            pressChord = Color(0xFFFFD54F),       // amber 300 (yellow)
-            pressDown = Color(0xFFEF5350),        // red 400
-            pressUp = Color(0xFF81C784),          // green 300
+            pressTypes = PressTypePalette.Dark,
+        )
+    }
+}
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════════════════╗
+ * ║  PRESS-TYPE COLORS — the advanced table's column coloration. EDIT THESE FREELY.      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * Three INDEPENDENT roles per press type, so each can be tuned without disturbing the others:
+ *
+ *  - [header] — the column header's icon + overline text. Used as an opaque color.
+ *  - [tile]   — composited OVER the cell's normal surface, so **the alpha byte is the tint
+ *               strength**: `0x38` ≈ 22%. Raise it for a louder column, drop it toward `0x00`
+ *               to make a column read as untinted.
+ *  - [plus]   — the empty cell's "+" glyph. **Alpha byte again** — `0x4D` ≈ 30%.
+ *
+ * Every value is a literal ARGB, applied as-is at the call site with no derived alpha or
+ * blending on top. What you write here is what renders, so tuning is direct: change the
+ * number, rebuild, look.
+ *
+ * `press` (the standard Press column) is deliberately NEUTRAL — no hue, the ordinary control
+ * surface, per Dylan's spec that Press keeps the standard button colors. Its `tile` is fully
+ * transparent so the cell shows the plain elevated container.
+ */
+@Immutable
+data class PressTypeColors(
+    val header: Color,
+    val tile: Color,
+    val plus: Color,
+)
+
+@Immutable
+data class PressTypePalette(
+    val press: PressTypeColors,
+    val long: PressTypeColors,
+    val double: PressTypeColors,
+    val chord: PressTypeColors,
+    val down: PressTypeColors,
+    val up: PressTypeColors,
+) {
+    companion object {
+        /** Dark theme — the handheld target, and the palette actually tuned against. */
+        val Dark = PressTypePalette(
+            // Neutral: matches onSurfaceVariant / the untinted cell surface.
+            press = PressTypeColors(
+                header = Color(0xFFBFC6D4),
+                tile = Color(0x00000000),
+                plus = Color(0x4DBFC6D4),
+            ),
+            // Cyan 300
+            long = PressTypeColors(
+                header = Color(0xFF4DD0E1),
+                tile = Color(0x384DD0E1),
+                plus = Color(0x4D4DD0E1),
+            ),
+            // Magenta / pink 300
+            double = PressTypeColors(
+                header = Color(0xFFF06292),
+                tile = Color(0x38F06292),
+                plus = Color(0x4DF06292),
+            ),
+            // Yellow / amber 300
+            chord = PressTypeColors(
+                header = Color(0xFFFFD54F),
+                tile = Color(0x38FFD54F),
+                plus = Color(0x4DFFD54F),
+            ),
+            // Red 400
+            down = PressTypeColors(
+                header = Color(0xFFEF5350),
+                tile = Color(0x38EF5350),
+                plus = Color(0x4DEF5350),
+            ),
+            // Green 300
+            up = PressTypeColors(
+                header = Color(0xFF81C784),
+                tile = Color(0x3881C784),
+                plus = Color(0x4D81C784),
+            ),
+        )
+
+        /** Light theme — the same hues dropped to M-spec 700/800 steps so they stay legible
+         *  as text and strokes on light fills. Tile tints run a little stronger because a
+         *  faint wash disappears against a light surface. */
+        val Light = PressTypePalette(
+            press = PressTypeColors(
+                header = Color(0xFF4A5160),
+                tile = Color(0x00000000),
+                plus = Color(0x4D4A5160),
+            ),
+            long = PressTypeColors(
+                header = Color(0xFF00838F),
+                tile = Color(0x3300838F),
+                plus = Color(0x5900838F),
+            ),
+            double = PressTypeColors(
+                header = Color(0xFFAD1457),
+                tile = Color(0x33AD1457),
+                plus = Color(0x59AD1457),
+            ),
+            chord = PressTypeColors(
+                header = Color(0xFF9A6700),
+                tile = Color(0x339A6700),
+                plus = Color(0x599A6700),
+            ),
+            down = PressTypeColors(
+                header = Color(0xFFC62828),
+                tile = Color(0x33C62828),
+                plus = Color(0x59C62828),
+            ),
+            up = PressTypeColors(
+                header = Color(0xFF2E7D32),
+                tile = Color(0x332E7D32),
+                plus = Color(0x592E7D32),
+            ),
         )
     }
 }

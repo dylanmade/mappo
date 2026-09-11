@@ -177,7 +177,7 @@ object InputGlyphs {
     }
 
     /** Default glyph size used in headers and sub-input rows. */
-    val GlyphSize = 22.dp
+    val GlyphSize = 20.dp
 
     /**
      * Leading glyph for a bindable sub-input row: the Kenney Xbox button prompt when the pair

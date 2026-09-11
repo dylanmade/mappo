@@ -330,12 +330,20 @@ internal fun RemapSimpleView(
         val vg = visibleGroup
         val origin = vg?.let { boxBounds[it] }
         if (vg != null && origin != null && rootSize != IntSize.Zero) {
-            // Target = nearly the whole view (a slim margin keeps the edges peeking through) —
-            // controller-image-sized proved too cramped a viewing experience.
-            val marginPx = with(LocalDensity.current) { EditorMargin.toPx() }
+            // Target: full width minus a slim margin (the table scrolls sideways, so it wants
+            // every pixel of width), but only as TALL as the editor's content needs —
+            // [advancedEditorHeight] is exact because every part of the table is a fixed size.
+            // Filling the height left a two-row group (a shoulder, the utility pair) sitting
+            // in most of a screen of dead space. Clamped to the space available, and centred
+            // vertically so a short panel reads as floating rather than top-stuck.
+            val density = LocalDensity.current
+            val marginPx = with(density) { EditorMargin.toPx() }
+            val availableH = rootSize.height - marginPx * 2
+            val wantedH = with(density) { advancedEditorHeight(vg).toPx() }
+            val targetH = wantedH.coerceAtMost(availableH)
             val target = Rect(
-                offset = Offset(marginPx, marginPx),
-                size = Size(rootSize.width - marginPx * 2, rootSize.height - marginPx * 2),
+                offset = Offset(marginPx, marginPx + (availableH - targetH) / 2f),
+                size = Size(rootSize.width - marginPx * 2, targetH),
             )
             val shape = RoundedCornerShape(GroupCorner)
             val container = minputBoxContainer()
