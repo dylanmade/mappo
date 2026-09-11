@@ -176,11 +176,22 @@ fun MappoTheme(
  *    action," not "valid / invalid drop target").
  *  - the in-editor button-selection outline, which is intentionally near-white in both
  *    modes so it reads as a high-contrast "overlay" rather than a color-keyed accent.
+ *  - the remap advanced table's PRESS-TYPE column accents, which are a fixed identity
+ *    palette: each press type owns one hue across the whole app so a user learns "cyan =
+ *    Long" once. Theme-derived roles can't express six mutually-distinct hues, and letting
+ *    them re-tint with the seed would break that learned mapping — same reasoning as the
+ *    literal green/red above. `Press` is deliberately absent: the standard press wears the
+ *    ordinary control surface, so [pressTypeAccent] returns null for it.
  */
 data class MappoExtraColors(
     val dropZoneValid: Color,
     val dropZoneInvalid: Color,
     val selectionOutline: Color,
+    val pressLong: Color,
+    val pressDouble: Color,
+    val pressChord: Color,
+    val pressDown: Color,
+    val pressUp: Color,
 ) {
     companion object {
         // One lightness step down from pure white — bright enough to read as luminous,
@@ -191,11 +202,25 @@ data class MappoExtraColors(
             dropZoneValid = Color(0xFF2E7D32),    // M-spec green 800 — readable on light fills
             dropZoneInvalid = Color(0xFFC62828),  // M-spec red 800
             selectionOutline = SelectionOutlineNearWhite,
+            // M-spec 700/800 steps — the press hues dropped far enough to stay legible as
+            // text and strokes on light fills.
+            pressLong = Color(0xFF00838F),        // cyan 800
+            pressDouble = Color(0xFFAD1457),      // pink 800 (magenta)
+            pressChord = Color(0xFF9A6700),       // amber, darkened — raw yellow is illegible
+            pressDown = Color(0xFFC62828),        // red 800
+            pressUp = Color(0xFF2E7D32),          // green 800
         )
         val Dark = MappoExtraColors(
             dropZoneValid = Color(0xFF66BB6A),    // green 400 — lifts off dark surface
             dropZoneInvalid = Color(0xFFEF5350),  // red 400
             selectionOutline = SelectionOutlineNearWhite,
+            // M-spec 300/400 steps: bright enough to read as their own hue against the
+            // editor's dark surfaces without glowing louder than the content they label.
+            pressLong = Color(0xFF4DD0E1),        // cyan 300
+            pressDouble = Color(0xFFF06292),      // pink 300 (magenta)
+            pressChord = Color(0xFFFFD54F),       // amber 300 (yellow)
+            pressDown = Color(0xFFEF5350),        // red 400
+            pressUp = Color(0xFF81C784),          // green 300
         )
     }
 }

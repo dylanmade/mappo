@@ -172,6 +172,25 @@ fun RemapControlsScreen(
     onSetInputRowPressType: (bindingId: Long, type: ActivatorType) -> Unit = { _, _ -> },
     onSetInputRowLabel: (bindingId: Long, label: String) -> Unit = { _, _ -> },
     onDeleteInputRow: (bindingId: Long) -> Unit = {},
+    // ── Advanced-table cell ops (the group editor's table; see its cell-ops block) ──
+    // [onEnsureInputCell] is the one async shape here: creating the row may have to hit the
+    // database before there's a bindingId to open the command picker against.
+    onEnsureInputCell: (
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+        onReady: (bindingId: Long) -> Unit,
+    ) -> Unit = { _, _, _, _ -> },
+    onClearInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
+    onCopyInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
+    onPasteInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
+    onMoveInputCell: (
+        bindingGroupId: Long,
+        fromKey: String, fromType: ActivatorType,
+        toKey: String, toType: ActivatorType,
+    ) -> Unit = { _, _, _, _, _ -> },
+    /** Whether the cell clipboard holds anything — greys the tile menus' Paste. */
+    cellClipboardOccupied: Boolean = false,
     // Row duplication and whole-group reset need dedicated repo ops (duplicates must own their
     // data); default no-ops until those land — the menu items render but do nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
@@ -364,21 +383,22 @@ fun RemapControlsScreen(
         onClearOverride = { inputSource, groupInputKey ->
             viewingLayer?.layer?.id?.let { onClearLayerOverride(it, inputSource, groupInputKey) }
         },
-        onAddInputRow = onAddInputRow,
-        onSetPressType = onSetInputRowPressType,
         onSetLabel = onSetInputRowLabel,
-        onDeleteRow = onDeleteInputRow,
-        onDuplicateRow = onDuplicateInputRow,
-        onResetRow = { bindingId ->
-            // "Reset input" composed from the existing row-level ops: back to a default
-            // Press with no label and no output. (Activator settings — turbo, delays —
-            // keep their values until a dedicated reset op exists.)
-            onSetInputRowPressType(bindingId, ActivatorType.FULL_PRESS)
-            onSetInputRowLabel(bindingId, "")
-            onPickResult(bindingId, BindingOutput.Unbound)
-        },
         onResetGroup = onResetBindingGroup,
         onConfigure = onOpenActivatorSettings,
+        // "New" on an empty cell and "Edit" on a defined one are the same flow: make sure the
+        // cell exists, then open the command picker against its binding. The ensure step is a
+        // no-op for a cell that's already there.
+        onAssignCell = { bindingGroupId, inputKey, type, current, title ->
+            onEnsureInputCell(bindingGroupId, inputKey, type) { bindingId ->
+                onEditCommand(bindingId, current, title)
+            }
+        },
+        onClearCell = onClearInputCell,
+        onCopyCell = onCopyInputCell,
+        onPasteCell = onPasteInputCell,
+        onMoveCell = onMoveInputCell,
+        clipboardOccupied = cellClipboardOccupied,
     )
 
     // Controller-focus plumbing. Focus is ALWAYS seated on a real button, never a container

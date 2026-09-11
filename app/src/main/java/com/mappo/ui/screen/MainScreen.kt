@@ -185,6 +185,9 @@ fun MainScreen(
     val allLayouts by viewModel.allLayouts.collectAsStateWithLifecycle()
     val tabContextMenuFor by viewModel.tabContextMenuFor.collectAsStateWithLifecycle()
     val templates by viewModel.templates.collectAsStateWithLifecycle()
+    // Session clipboard for the advanced table's cell Copy/Paste — read here so the tile
+    // menus can grey Paste rather than hiding it.
+    val cellClipboard by viewModel.inputCellClipboard.collectAsStateWithLifecycle()
     val userTemplates = remember(templates) {
         templates.filterIsInstance<TemplateRef.User>().toImmutableList()
     }
@@ -683,6 +686,22 @@ fun MainScreen(
                     onSetInputRowPressType = { bindingId, type -> viewModel.setInputRowPressType(bindingId, type) },
                     onSetInputRowLabel = { bindingId, label -> viewModel.setInputRowLabel(bindingId, label) },
                     onDeleteInputRow = { bindingId -> viewModel.deleteInputRow(bindingId) },
+                    onEnsureInputCell = { bindingGroupId, inputKey, type, onReady ->
+                        viewModel.ensureInputCell(bindingGroupId, inputKey, type, onReady)
+                    },
+                    onClearInputCell = { bindingGroupId, inputKey, type ->
+                        viewModel.clearInputCell(bindingGroupId, inputKey, type)
+                    },
+                    onCopyInputCell = { bindingGroupId, inputKey, type ->
+                        viewModel.copyInputCell(bindingGroupId, inputKey, type)
+                    },
+                    onPasteInputCell = { bindingGroupId, inputKey, type ->
+                        viewModel.pasteInputCell(bindingGroupId, inputKey, type)
+                    },
+                    onMoveInputCell = { bindingGroupId, fromKey, fromType, toKey, toType ->
+                        viewModel.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
+                    },
+                    cellClipboardOccupied = cellClipboard != null,
                     modifier = Modifier.fillMaxSize()
                 )
             }

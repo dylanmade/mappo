@@ -3,6 +3,7 @@ package com.mappo.ui.glyph
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewModule
@@ -16,6 +17,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.steam.BindingMode
+import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.InputSource
 
 /**
@@ -62,6 +64,30 @@ object InputGlyphs {
         BindingMode.REFERENCE -> rememberVectorPainter(Icons.Filled.Link)
         BindingMode.HOTBAR_MENU -> rememberVectorPainter(Icons.Filled.ViewModule)
         else -> rememberVectorPainter(Icons.Filled.Tune)
+    }
+
+    /**
+     * Leading glyph for what a binding EMITS — the output-kind marker the advanced table's
+     * tiles put in front of the output text ("⌨ Keyboard G", "🖱 Mouse Right"). Keyed on the
+     * output CATEGORY, not the specific key: the glyph answers "which device does this drive",
+     * and the text beside it carries the specific. Concept glyphs, so tint with content color.
+     *
+     * Null for [BindingOutput.Unbound] — an unassigned cell has no device to point at, and its
+     * tile renders the empty-slot affordance instead of a glyph + label pair.
+     */
+    @Composable
+    fun outputPainter(output: BindingOutput): Painter? = when (output) {
+        BindingOutput.Unbound -> null
+        is BindingOutput.KeyPress -> painterResource(R.drawable.ic_keyboard_overlay)
+        is BindingOutput.XInputButton -> painterResource(R.drawable.controller_generic)
+        is BindingOutput.XInputStick -> painterResource(R.drawable.generic_stick)
+        is BindingOutput.MouseButton -> painterResource(R.drawable.mouse_small)
+        is BindingOutput.MouseWheel -> painterResource(R.drawable.mouse_scroll_vertical)
+        // Action-set / layer verbs and game actions aren't device output at all — they drive
+        // Mappo itself. Material stays here for the same reason it does in [modePainter]:
+        // Kenney has no "switch configuration" concept glyph.
+        is BindingOutput.GameAction -> rememberVectorPainter(Icons.Filled.Tune)
+        is BindingOutput.ControllerAction -> rememberVectorPainter(Icons.Filled.Layers)
     }
 
     /** Identity glyph for an input source — editor headers. Side-aware (LT vs RT, L vs R

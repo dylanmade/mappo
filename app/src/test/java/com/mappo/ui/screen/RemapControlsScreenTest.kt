@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -587,13 +588,13 @@ class RemapControlsScreenTest {
         // Override visible in the simple view; base hidden for that row.
         composeRule.onNodeWithText("MS: MOUSE_LEFT", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("KB: ENTER", useUnmergedTree = true).assertCountEquals(0)
-        // Trailing menu lives in the expanded group editor; the button_a row is last in the
-        // Y/X/B/A order, so scroll the editor's rows to it first.
+        // The override affordance now lives on the cell itself: the advanced view is a table,
+        // and button_a's Press cell carries the layer menu.
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-rows")
-            .performScrollToNode(hasContentDescription("Override actions"))
-        composeRule.onNodeWithContentDescription("Override actions").assertIsDisplayed()
+        composeRule.onNodeWithTag("group-editor-table")
+            .performScrollToNode(hasTestTag("cell:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:button_a:FULL_PRESS").assertIsDisplayed()
     }
 
     @Test
@@ -622,9 +623,9 @@ class RemapControlsScreenTest {
 
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-rows")
-            .performScrollToNode(hasContentDescription("Override actions"))
-        composeRule.onNodeWithContentDescription("Override actions").performClick()
+        composeRule.onNodeWithTag("group-editor-table")
+            .performScrollToNode(hasTestTag("cell:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:button_a:FULL_PRESS").performClick()
         composeRule.onNodeWithText("Clear override").performClick()
 
         assert(args == Triple(42L, com.mappo.data.model.steam.InputSource.BUTTON_DIAMOND, "button_a")) {

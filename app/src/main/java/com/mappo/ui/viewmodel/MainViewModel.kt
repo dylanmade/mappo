@@ -642,6 +642,86 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { controllerConfigRepository.deleteInputRow(bindingId) }
     }
 
+    // ── Advanced-table cell ops ──────────────────────────────────────────────
+    // One cell = one (sub-input, press type) pair in the advanced view's table.
+    // See the matching block in ControllerConfigRepository for the model.
+
+    /** Cut/copy buffer for the table's Copy → Paste flow. Session-scoped ON PURPOSE: a
+     *  clipboard that outlived the process would paste a command referencing an action set or
+     *  layer the user may have deleted since. Observed by the tile menus to grey out Paste. */
+    private val _inputCellClipboard =
+        MutableStateFlow<ControllerConfigRepository.InputCellSnapshot?>(null)
+    val inputCellClipboard: StateFlow<ControllerConfigRepository.InputCellSnapshot?> =
+        _inputCellClipboard.asStateFlow()
+
+    /**
+     * Ensure the cell exists and hand its bindingId to [onReady] — the "New" / "Edit" path,
+     * where the caller then opens the command picker against that binding. Asynchronous
+     * because the row may need creating first.
+     */
+    fun ensureInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: com.mappo.data.model.steam.ActivatorType,
+        onReady: (bindingId: Long) -> Unit,
+    ) {
+        if (activeLayout.value == null) return
+        viewModelScope.launch {
+            onReady(controllerConfigRepository.ensureInputCell(bindingGroupId, inputKey, type))
+        }
+    }
+
+    /** Clear a cell — removes the activator and every command under it. */
+    fun clearInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: com.mappo.data.model.steam.ActivatorType,
+    ) {
+        if (activeLayout.value == null) return
+        viewModelScope.launch {
+            controllerConfigRepository.clearInputCell(bindingGroupId, inputKey, type)
+        }
+    }
+
+    /** Move a cell onto another, swapping when the destination is occupied. */
+    fun moveInputCell(
+        bindingGroupId: Long,
+        fromKey: String,
+        fromType: com.mappo.data.model.steam.ActivatorType,
+        toKey: String,
+        toType: com.mappo.data.model.steam.ActivatorType,
+    ) {
+        if (activeLayout.value == null) return
+        viewModelScope.launch {
+            controllerConfigRepository.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
+        }
+    }
+
+    /** Copy a cell into [inputCellClipboard]. No-op (clipboard untouched) on an empty cell. */
+    fun copyInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: com.mappo.data.model.steam.ActivatorType,
+    ) {
+        viewModelScope.launch {
+            controllerConfigRepository.readInputCell(bindingGroupId, inputKey, type)
+                ?.let { _inputCellClipboard.value = it }
+        }
+    }
+
+    /** Paste the clipboard into a cell, creating or overwriting it. */
+    fun pasteInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: com.mappo.data.model.steam.ActivatorType,
+    ) {
+        if (activeLayout.value == null) return
+        val snapshot = _inputCellClipboard.value ?: return
+        viewModelScope.launch {
+            controllerConfigRepository.writeInputCell(bindingGroupId, inputKey, type, snapshot)
+        }
+    }
+
     /**
      * Brick 4.3: editor-side viewing selection. Pass a set id to view that set in the
      * `RemapControlsScreen` overview / row previews, or null to fall back to the

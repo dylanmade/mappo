@@ -1395,6 +1395,165 @@ class ControllerConfigRepository @Inject constructor(
         return groupInputDao.getById(activator.groupInputId)?.bindingGroupId
     }
 
+    // ── Advanced-table CELL ops ──────────────────────────────────────────────────────────────
+    //
+    // The remap advanced view is a table: one row per sub-input, one column per press type, so a
+    // "cell" is exactly a `(GroupInput.inputKey, ActivatorType)` pair — which is to say, one
+    // Activator. The table renders at most ONE command per cell, deliberately: the old row-list
+    // editor could stack several same-type Bindings under one Activator and the user cut that
+    // affordance as extraneous.
+    //
+    // The SCHEMA still permits multi-binding activators (cycle_binding needs it, and VDF import
+    // produces it), so these ops treat the whole Activator as the unit — clear deletes it
+    // outright, move/swap reparents it, and copy/paste carries only the first binding. Extra
+    // bindings on an imported activator stay in the database and keep firing; they're just not
+    // addressable from this table. That's the intended trade, not an oversight.
+
+    /** Find a group input by key under [bindingGroupId], or null. */
+    private suspend fun findGroupInputId(bindingGroupId: Long, inputKey: String): Long? =
+        groupInputDao.getByGroups(listOf(bindingGroupId)).firstOrNull { it.inputKey == inputKey }?.id
+
+    /**
+     * Find or create the group input for [inputKey] under [bindingGroupId]. Creation is bare — no
+     * seeded activator — because every caller here goes on to create the activator it actually
+     * wants; seeding a FULL_PRESS would make an empty Press cell appear as a side effect of
+     * assigning a Long one.
+     */
+    private suspend fun ensureGroupInputId(bindingGroupId: Long, inputKey: String): Long {
+        findGroupInputId(bindingGroupId, inputKey)?.let { return it }
+        val nextOrder = (groupInputDao.getByGroups(listOf(bindingGroupId))
+            .maxOfOrNull { it.orderIndex } ?: -1) + 1
+        return groupInputDao.insert(
+            GroupInput(bindingGroupId = bindingGroupId, inputKey = inputKey, orderIndex = nextOrder)
+        )
+    }
+
+    /**
+     * Ensure the cell at ([inputKey], [type]) exists and return its editable bindingId — creating
+     * the group input, the activator, and an Unbound binding as needed. This is what an empty
+     * tile's "New" runs before handing off to the command picker.
+     */
+    suspend fun ensureInputCell(bindingGroupId: Long, inputKey: String, type: ActivatorType): Long {
+        val groupInputId = ensureGroupInputId(bindingGroupId, inputKey)
+        val existing = activatorDao.getByGroupInputs(listOf(groupInputId)).firstOrNull { it.type == type }
+        val activatorId = existing?.id ?: run {
+            val nextOrder = (activatorDao.getByGroupInputs(listOf(groupInputId))
+                .maxOfOrNull { it.orderIndex } ?: -1) + 1
+            activatorDao.insert(
+                Activator(groupInputId = groupInputId, type = type, settingsJson = "{}", orderIndex = nextOrder)
+            )
+        }
+        val bindingId = bindingDao.getByActivators(listOf(activatorId)).firstOrNull()?.id
+            ?: bindingDao.insert(
+                Binding(activatorId = activatorId, outputType = BindingOutputType.UNBOUND, args = "", orderIndex = 0)
+            )
+        configDirtyTick.value = configDirtyTick.value + 1
+        return bindingId
+    }
+
+    /**
+     * Clear the cell at ([inputKey], [type]) — deletes the whole Activator, so every command
+     * under it goes, not just the one the tile was showing. The group input itself stays: other
+     * press-type cells on the same row may still be bound.
+     */
+    suspend fun clearInputCell(bindingGroupId: Long, inputKey: String, type: ActivatorType) {
+        val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return
+        val activator = activatorDao.getByGroupInputs(listOf(groupInputId))
+            .firstOrNull { it.type == type } ?: return
+        bindingDao.deleteByActivator(activator.id)
+        activatorDao.deleteById(activator.id)
+        syncAuxButtonMode(bindingGroupId)
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    /**
+     * Move the cell at ([fromKey], [fromType]) onto ([toKey], [toType]).
+     *
+     * Implemented by REPARENTING activators rather than copying their contents, so the moved
+     * cell keeps its identity — activator settings (long-press time, chord partner, turbo) and
+     * every binding under it travel with it, and no id is regenerated for something that isn't a
+     * copy. When the destination is occupied the two activators exchange places (a swap); when
+     * it's empty the source simply lands there.
+     */
+    suspend fun moveInputCell(
+        bindingGroupId: Long,
+        fromKey: String,
+        fromType: ActivatorType,
+        toKey: String,
+        toType: ActivatorType,
+    ) {
+        if (fromKey == toKey && fromType == toType) return
+        val fromInputId = findGroupInputId(bindingGroupId, fromKey) ?: return
+        val fromActivator = activatorDao.getByGroupInputs(listOf(fromInputId))
+            .firstOrNull { it.type == fromType } ?: return
+        val toInputId = ensureGroupInputId(bindingGroupId, toKey)
+        val toActivator = activatorDao.getByGroupInputs(listOf(toInputId))
+            .firstOrNull { it.type == toType }
+        activatorDao.update(fromActivator.copy(groupInputId = toInputId, type = toType))
+        // Swap: the displaced activator takes the vacated slot. Read before the write above
+        // lands so we're exchanging the original pair, not the half-applied state.
+        toActivator?.let {
+            activatorDao.update(it.copy(groupInputId = fromInputId, type = fromType))
+        }
+        syncAuxButtonMode(bindingGroupId)
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    /** Snapshot of a cell for the copy/paste clipboard. Carries the activator's settings so a
+     *  pasted Long press keeps its tuned threshold, and the first binding's output + label. */
+    data class InputCellSnapshot(
+        val outputType: BindingOutputType,
+        val args: String,
+        val label: String?,
+        val activatorSettingsJson: String,
+    )
+
+    /** Read the cell at ([inputKey], [type]), or null when it's empty. */
+    suspend fun readInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+    ): InputCellSnapshot? {
+        val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return null
+        val activator = activatorDao.getByGroupInputs(listOf(groupInputId))
+            .firstOrNull { it.type == type } ?: return null
+        val binding = bindingDao.getByActivators(listOf(activator.id)).firstOrNull() ?: return null
+        return InputCellSnapshot(
+            outputType = binding.outputType,
+            args = binding.args,
+            label = binding.label,
+            activatorSettingsJson = activator.settingsJson,
+        )
+    }
+
+    /**
+     * Paste [snapshot] into the cell at ([inputKey], [type]), creating it if absent and
+     * overwriting whatever was there. The destination keeps its own press type — pasting a
+     * copied Long command into a Double column makes it a Double command, which is the whole
+     * point of copying across columns.
+     */
+    suspend fun writeInputCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+        snapshot: InputCellSnapshot,
+    ) {
+        val bindingId = ensureInputCell(bindingGroupId, inputKey, type)
+        val binding = bindingDao.getById(bindingId) ?: return
+        bindingDao.update(
+            binding.copy(
+                outputType = snapshot.outputType,
+                args = snapshot.args,
+                label = snapshot.label,
+            )
+        )
+        activatorDao.getById(binding.activatorId)?.let {
+            activatorDao.update(it.copy(settingsJson = snapshot.activatorSettingsJson))
+        }
+        syncAuxButtonMode(bindingGroupId)
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
     /**
      * Auto-manage the passthrough↔intercept mode for the single-button "other" sources (bumpers +
      * Start/Select), which the UI renders as ordinary input rows with no mode control. A source with

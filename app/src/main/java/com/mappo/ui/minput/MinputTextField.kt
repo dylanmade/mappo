@@ -202,7 +202,7 @@ fun MinputTextField(
     }
 
     if (editing) {
-        MinputTextFieldEditDialog(
+        MinputTextEditDialog(
             title = editTitle ?: placeholder ?: "Edit",
             initial = value,
             placeholder = placeholder,
@@ -262,18 +262,27 @@ private fun MinputTextFieldInlineWell(
 }
 
 /**
- * The field's editor: a [MinputDialog] (overline title, text well, Cancel/Save). A dialog
- * WINDOW on purpose — centering, dim, back / outside-tap dismissal, and floating above the
- * soft keyboard are all stock platform behavior, exactly like the label field's original
- * AlertDialog. The well is seated as the dialog opens so the keyboard spawns with it:
- * opening the editor IS the typing intent (the sanctioned exception to never-auto-focus —
- * this surface exists only to type).
+ * The library's one-shot TEXT EDITOR: a [MinputDialog] (overline title, text well,
+ * Cancel/Save). A dialog WINDOW on purpose — centering, dim, back / outside-tap dismissal,
+ * and floating above the soft keyboard are all stock platform behavior, exactly like the
+ * label field's original AlertDialog. The well is seated as the dialog opens so the keyboard
+ * spawns with it: opening the editor IS the typing intent (the sanctioned exception to
+ * never-auto-focus — this surface exists only to type).
+ *
+ * [MinputTextField]'s pill summons this on activation, and it is public in its own right
+ * (2026-09-11) for surfaces that need to edit a string WITHOUT hosting a resting pill — the
+ * remap advanced table's cells, where the tile shows the label but a menu verb edits it.
+ * Render it conditionally on your own nullable "what am I editing" state, and clear that
+ * state in [onClose].
+ *
+ * Commits the TRIMMED draft through [onCommit] on Save / IME Done; Cancel, dim-tap, back and
+ * gamepad B discard. Both paths then call [onClose].
  */
 @Composable
-private fun MinputTextFieldEditDialog(
+fun MinputTextEditDialog(
     title: String,
     initial: String,
-    placeholder: String?,
+    placeholder: String? = null,
     onCommit: (String) -> Unit,
     onClose: () -> Unit,
 ) {
