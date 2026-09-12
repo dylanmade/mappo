@@ -23,6 +23,7 @@ import com.mappo.data.model.steam.BindingOutputType
 import com.mappo.data.model.steam.ControllerType
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.LayerPresetBinding
+import com.mappo.data.model.steam.withInputCellMoved
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.test.runTest
@@ -795,6 +796,101 @@ class ControllerConfigRepositoryTest {
             settingsJson = "{}",
         )
     )
+
+    /** Every bound cell in [bindingGroupId], as (sub-input, press type) -> emitted output.
+     *  Compares what the UI actually RENDERS, which is the thing the optimistic transform has
+     *  to get right; row ids legitimately differ (the repo assigns them, the in-memory
+     *  transform can't). */
+    private fun renderedCells(
+        config: com.mappo.data.model.steam.ControllerConfig,
+        bindingGroupId: Long,
+    ): Map<Pair<String, ActivatorType>, String> {
+        val group = config.actionSets
+            .flatMap { it.preset }
+            .firstOrNull { it.group.group.id == bindingGroupId }
+            ?.group ?: return emptyMap()
+        return buildMap {
+            group.inputs.forEach { input ->
+                input.activators.forEach { activator ->
+                    val binding = activator.bindings.firstOrNull() ?: return@forEach
+                    if (binding.outputType == BindingOutputType.UNBOUND) return@forEach
+                    put(input.input.inputKey to activator.activator.type, binding.args)
+                }
+            }
+        }
+    }
+
+    private suspend fun bindCell(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+        key: String,
+    ) {
+        val bindingId = subject.ensureInputCell(bindingGroupId, inputKey, type)
+        subject.setCommand(bindingId, BindingOutput.KeyPress(key))
+    }
+
+    /**
+     * The optimistic in-memory move must land on the same rendered state as the persisted one.
+     *
+     * This pairing is the whole safety net for optimistic UI: if the two drift, the screen
+     * shows one answer the instant you drop a tile and then visibly corrects itself to another
+     * when the write lands — which is far more confusing than a plain lag.
+     */
+    private suspend fun assertOptimisticMatchesPersisted(
+        groupId: Long,
+        fromKey: String,
+        fromType: ActivatorType,
+        toKey: String,
+        toType: ActivatorType,
+    ) {
+        val before = subject.observeActiveConfig(1L).first()!!
+        val optimistic = before.withInputCellMoved(groupId, fromKey, fromType, toKey, toType)
+        subject.moveInputCell(groupId, fromKey, fromType, toKey, toType)
+        val persisted = subject.observeActiveConfig(1L).first()!!
+        assertEquals(
+            renderedCells(persisted, groupId),
+            renderedCells(optimistic, groupId),
+        )
+    }
+
+    private suspend fun seededFaceGroupId(): Long {
+        subject.seedDefaultConfig(layoutId = 1L)
+        val config = subject.observeActiveConfig(1L).first()!!
+        return config.activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!.group.group.id
+    }
+
+    @Test
+    fun optimisticMove_ontoOccupiedCell_matchesRepository() = runTest {
+        val groupId = seededFaceGroupId()
+        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
+        bindCell(groupId, "button_b", ActivatorType.LONG_PRESS, "B")
+
+        assertOptimisticMatchesPersisted(
+            groupId, "button_a", ActivatorType.FULL_PRESS, "button_b", ActivatorType.LONG_PRESS,
+        )
+    }
+
+    @Test
+    fun optimisticMove_ontoEmptyCell_matchesRepository() = runTest {
+        val groupId = seededFaceGroupId()
+        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
+
+        assertOptimisticMatchesPersisted(
+            groupId, "button_a", ActivatorType.FULL_PRESS, "button_y", ActivatorType.CHORDED_PRESS,
+        )
+    }
+
+    @Test
+    fun optimisticMove_withinOneRow_matchesRepository() = runTest {
+        val groupId = seededFaceGroupId()
+        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "PRESS")
+        bindCell(groupId, "button_a", ActivatorType.DOUBLE_PRESS, "DOUBLE")
+
+        assertOptimisticMatchesPersisted(
+            groupId, "button_a", ActivatorType.FULL_PRESS, "button_a", ActivatorType.DOUBLE_PRESS,
+        )
+    }
 
     @Test
     fun moveInputCell_ontoOccupiedCell_swapsBothCommands() = runTest {

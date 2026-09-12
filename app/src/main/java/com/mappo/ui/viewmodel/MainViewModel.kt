@@ -31,6 +31,7 @@ import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.resolveActionSet
 import com.mappo.data.repository.AppLayoutBindingRepository
+import com.mappo.data.model.steam.withInputCellMoved
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.InstalledAppsRepository
 import com.mappo.data.repository.KeyboardTemplateRepository
@@ -69,6 +70,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.collections.immutable.ImmutableList
@@ -262,11 +264,28 @@ class MainViewModel @Inject constructor(
      * layout and is what compiles into the input dispatcher: viewing a layout must never
      * change what physical buttons do.
      */
+    /**
+     * Optimistic overlay on [viewedControllerConfig] — see `ControllerConfigOptimistic.kt`.
+     *
+     * A direct-manipulation edit (dragging a command from one table cell to another) writes
+     * the result HERE first so the screen re-renders in the same frame the gesture ends;
+     * without it, the frame between "drop" and "the DB emission arrives" renders the OLD
+     * arrangement and the moved tile visibly flicks back to where it came from. The repo
+     * emission below clears the overlay and becomes the truth again. Same pattern as
+     * `KeyboardController.replaceLayoutById`.
+     */
+    private val _optimisticControllerConfig = MutableStateFlow<ControllerConfig?>(null)
+
     val viewedControllerConfig: StateFlow<ControllerConfig?> =
-        viewedLayout.filterNotNull()
-            .map { it.id }
-            .distinctUntilChanged()
-            .flatMapLatest { controllerConfigRepository.observeActiveConfig(it) }
+        combine(
+            viewedLayout.filterNotNull()
+                .map { it.id }
+                .distinctUntilChanged()
+                .flatMapLatest { controllerConfigRepository.observeActiveConfig(it) }
+                // Persisted truth supersedes any optimistic guess the moment it lands.
+                .onEach { _optimisticControllerConfig.value = null },
+            _optimisticControllerConfig,
+        ) { persisted, optimistic -> optimistic ?: persisted }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
@@ -683,7 +702,14 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    /** Move a cell onto another, swapping when the destination is occupied. */
+    /**
+     * Move a cell onto another, swapping when the destination is occupied.
+     *
+     * Applied OPTIMISTICALLY first: the table drops its drag preview the instant the move
+     * commits, so the rendered config has to already show the result or the tile flashes back
+     * to its old cell for a frame. The repository write then makes it durable and its emission
+     * replaces the overlay. See [_optimisticControllerConfig].
+     */
     fun moveInputCell(
         bindingGroupId: Long,
         fromKey: String,
@@ -692,6 +718,10 @@ class MainViewModel @Inject constructor(
         toType: com.mappo.data.model.steam.ActivatorType,
     ) {
         if (activeLayout.value == null) return
+        viewedControllerConfig.value?.let { current ->
+            _optimisticControllerConfig.value =
+                current.withInputCellMoved(bindingGroupId, fromKey, fromType, toKey, toType)
+        }
         viewModelScope.launch {
             controllerConfigRepository.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
         }

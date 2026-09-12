@@ -387,7 +387,7 @@ internal fun RemapGroupEditor(
  * in a horizontal scroller. Freezing the glyphs is the whole point of splitting them out — a
  * user scrolled to the Up column must still be able to see which button the row belongs to.
  * Alignment between the two halves is structural, not synchronized: both use the same fixed
- * [TileHeight] and [TileGap], so they can't drift.
+ * [TileHeight] and [TileRowGap], so they can't drift.
  */
 @Composable
 private fun AdvancedTable(
@@ -464,6 +464,18 @@ private fun AdvancedTable(
     fun bindingGroupIdFor(spec: SimpleRowSpec): Long? =
         viewingSet?.presetFor(spec.source)?.group?.group?.id
 
+    // The move being previewed. Everything visual (displacement, z-order, vacated slot) reads
+    // THESE rather than moveState's fields directly, so there is one place to change if the
+    // preview ever needs to outlive the gesture again.
+    //
+    // It does NOT need to today: `MainViewModel.moveInputCell` applies the move optimistically
+    // to the rendered config, so by the frame the preview drops, the cells already hold their
+    // new contents. An earlier attempt held the preview across the DB roundtrip instead; that
+    // only moved the problem, since the held displacement would then be applied on top of the
+    // already-correct data.
+    val previewOrigin = moveState.origin
+    val previewTarget = moveState.target
+
     fun commitMove(pair: Pair<CellKey, CellKey>?) {
         val (from, to) = pair ?: return
         val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey } ?: return
@@ -476,12 +488,13 @@ private fun AdvancedTable(
     // position is compared against for edge-scrolling.
     var hViewport by remember { mutableStateOf<Rect?>(null) }
 
+
     // Does this cell show the empty-slot "+"? Every cell with no command — plus the slot a
     // lifted tile has vacated, which would otherwise read as a hole in the grid while you
     // carry its tile somewhere else. (When the drop target is occupied, that tile slides in
     // and covers this anyway; the "+" layer sits underneath.)
     fun showsSlot(key: CellKey): Boolean =
-        !isDefined(key) || (moveState.active && key == moveState.origin)
+        !isDefined(key) || (previewOrigin != null && key == previewOrigin)
 
     // Where a tile sits while a move is in flight, as a grid-step offset from its own slot.
     // This is the swap PREVIEW: the lifted tile slides toward the drop target and the tile
@@ -491,14 +504,14 @@ private fun AdvancedTable(
     // Grid steps rather than measured positions because every cell is a fixed size; there is
     // nothing to measure.
     fun displacementFor(key: CellKey): DpOffset {
-        val origin = moveState.origin ?: return DpOffset.Zero
-        val target = moveState.target ?: return DpOffset.Zero
+        val origin = previewOrigin ?: return DpOffset.Zero
+        val target = previewTarget ?: return DpOffset.Zero
         if (origin == target) return DpOffset.Zero
         val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
         val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
         val (row, col) = cellAt(key) ?: return DpOffset.Zero
         val stepX = TileWidth + TileGap
-        val stepY = TileHeight + TileGap
+        val stepY = TileHeight + TileRowGap
         return when (key) {
             // The lifted tile rides to the target. On the POINTER path it follows the finger
             // instead (raw translation in CommandTile), so no grid animation there.
@@ -522,12 +535,12 @@ private fun AdvancedTable(
         val target = moveState.target.takeIf { moveState.active } ?: return@LaunchedEffect
         val (row, col) = cellAt(target) ?: return@LaunchedEffect
         val stepX = with(density) { (TileWidth + TileGap).toPx() }
-        val stepY = with(density) { (TileHeight + TileGap).toPx() }
+        val stepY = with(density) { (TileHeight + TileRowGap).toPx() }
         val cellW = with(density) { TileWidth.toPx() }
         val cellH = with(density) { TileHeight.toPx() }
         // The scroller's content starts after the table's own top padding (applied INSIDE
         // verticalScroll) and the column-header row.
-        val headerH = with(density) { (TableVerticalPadding + ColumnHeaderHeight + TileGap).toPx() }
+        val headerH = with(density) { (TableVerticalPadding + ColumnHeaderHeight + HeaderToRowsGap).toPx() }
 
         val left = col * stepX
         if (left < hScroll.value) {
@@ -606,8 +619,9 @@ private fun AdvancedTable(
                     .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
             ) {
                 // ── Frozen glyph column ("column zero") ───────────────────
-                Column(verticalArrangement = Arrangement.spacedBy(TileGap)) {
-                    Spacer(Modifier.height(ColumnHeaderHeight))
+                Column {
+                    Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
+                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                     group.rows.forEach { spec ->
                         Box(
                             modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
@@ -619,6 +633,7 @@ private fun AdvancedTable(
                                 size = TableGlyphSize,
                             )
                         }
+                    }
                     }
                 }
                 Spacer(Modifier.width(TileGap))
@@ -636,8 +651,9 @@ private fun AdvancedTable(
                     // tile sliding into another row would draw UNDER that row's cells — and a
                     // "+" would sit on top of a command. A slot is background; it can never be
                     // above a tile now, by construction.
-                    Column(verticalArrangement = Arrangement.spacedBy(TileGap)) {
-                        Spacer(Modifier.height(ColumnHeaderHeight))
+                    Column {
+                        Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
+                        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                         group.rows.forEach { spec ->
                             Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
                                 pressTypeColumns.forEach { type ->
@@ -661,13 +677,18 @@ private fun AdvancedTable(
                                 }
                             }
                         }
+                        }
                     }
 
                     // LAYER 1 — header + the tiles themselves.
-                    Column(verticalArrangement = Arrangement.spacedBy(TileGap)) {
+                    Column {
                         Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
                             pressTypeColumns.forEach { type -> PressColumnHeader(type) }
                         }
+                        // Fixed lead-in, independent of [TileRowGap]: spacing the rows apart
+                        // must not also push the header row away from them.
+                        Spacer(Modifier.height(HeaderToRowsGap))
+                        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                         group.rows.forEachIndexed { rowIndex, spec ->
                             // Layer view resolves override→base (ghost semantics): the layer's own
                             // group input wins when it exists, else the base set's shows through.
@@ -680,8 +701,8 @@ private fun AdvancedTable(
                             Row(
                                 modifier = Modifier.zIndex(
                                     when (spec.subInputKey) {
-                                        moveState.origin?.inputKey -> 10f
-                                        moveState.target?.inputKey -> 5f
+                                        previewOrigin?.inputKey -> 10f
+                                        previewTarget?.inputKey -> 5f
                                         else -> 0f
                                     },
                                 ),
@@ -704,6 +725,7 @@ private fun AdvancedTable(
                                         cellKey = cellKey,
                                         moveState = moveState,
                                         displacement = displacementFor(cellKey),
+                                        previewOrigin = previewOrigin,
                                         onCommitMove = { commitMove(it) },
                                         actions = {
                                             if (!editable) {
@@ -763,6 +785,7 @@ private fun AdvancedTable(
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -850,6 +873,10 @@ private fun CommandTile(
     moveState: MoveModeState<CellKey>,
     /** Grid-step offset this tile should animate to while a move previews a swap. */
     displacement: DpOffset,
+    /** The lifted cell of the move currently being previewed — live OR still committing.
+     *  Drives z-order and keys the slide animation, so the visual survives the handover from
+     *  "dragging" to "written, waiting for the reload". */
+    previewOrigin: CellKey?,
     onCommitMove: (Pair<CellKey, CellKey>?) -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
@@ -859,8 +886,12 @@ private fun CommandTile(
     val haptic = LocalHapticFeedback.current
     val viewConfiguration = LocalViewConfiguration.current
 
+    // Live move state — the finger is down / the tile is lifted RIGHT NOW.
     val isOrigin = moveState.origin == cellKey
     val isTarget = moveState.active && moveState.target == cellKey
+    // Preview state — spans the live move AND the commit that hasn't reloaded yet.
+    val isPreviewOrigin = previewOrigin == cellKey
+    val previewing = previewOrigin != null
     val density = LocalDensity.current
 
     // Swap preview, animated so the exchange reads as motion rather than a jump.
@@ -869,10 +900,13 @@ private fun CommandTile(
     // Animatable at zero — otherwise a new drag inherits the previous one's in-flight
     // tween-back and the tile starts from somewhere it was never at. Same reasoning, and the
     // same fix, as `ReorderableTabBar`'s per-drag `Animatable`.
-    val slide = remember(moveState.origin, cellKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    // Keyed on the PREVIEW's origin, not the live one: keying on the live value would recreate
+    // the Animatable at zero the instant the move committed, snapping the tile home a frame
+    // before its new content arrives — the flash this whole preview exists to prevent.
+    val slide = remember(previewOrigin, cellKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
     val slideTarget = with(density) { Offset(displacement.x.toPx(), displacement.y.toPx()) }
-    LaunchedEffect(moveState.origin, slideTarget) {
-        if (moveState.active) slide.animateTo(slideTarget, tween(MoveSlideMillis))
+    LaunchedEffect(previewOrigin, slideTarget) {
+        if (previewing) slide.animateTo(slideTarget, tween(MoveSlideMillis))
     }
     // The lifted tile swells slightly — the "picked up" read.
     val lift by animateFloatAsState(
@@ -945,7 +979,7 @@ private fun CommandTile(
             .height(TileHeight)
             // Lifted tiles ride above their neighbours. zIndex orders SIBLINGS only, so the
             // owning Row carries one too (see AdvancedTable).
-            .zIndex(if (isOrigin) 10f else if (isTarget) 5f else 0f)
+            .zIndex(if (isPreviewOrigin) 10f else if (isTarget) 5f else 0f)
             .moveModeCell(moveState, cellKey)
             // Every tile is a focus stop, editable or not — a read-only layer view still
             // needs controller navigation to reach its menus.
@@ -993,10 +1027,10 @@ private fun CommandTile(
                         translationX = moveState.dragOffset.x
                         translationY = moveState.dragOffset.y
                     }
-                    // Move over: snap home INSTANTLY. Animating back would play a slide to
-                    // the resting slot while the committed data is still in flight, which
-                    // reads exactly like the move was rejected.
-                    !moveState.active -> {
+                    // Nothing in flight (and nothing committing): rest. Reaching this state
+                    // is a SNAP, never an animation — a tween back to the resting slot would
+                    // read exactly like the move being rejected.
+                    !previewing -> {
                         translationX = 0f
                         translationY = 0f
                     }
@@ -1066,7 +1100,10 @@ private fun CommandTile(
                         text = output.displayLabel(config),
                         style = minputMiniTextStyle(),
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
+                        // ALWAYS one line, label or no label. A wrapped output pushed the
+                        // glyph off-centre and made a labelled tile and an unlabelled one
+                        // read as different components; ellipsis is the honest overflow.
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -1291,25 +1328,42 @@ private val EditorFlowArrowSize = 10.dp
 /** GOVERNING VARIABLE for column width. Every cell, and the header above it, is exactly this
  *  wide — a table whose columns flexed to content would put the same press type at a different
  *  x-offset on every row, destroying the scan the table exists to enable. */
-private val TileWidth = 112.dp
+private val TileWidth = 148.dp
 
 /** Cell height. Taller than the old 38dp command rows because a cell now stacks an overline
  *  label above the output text where the row had a separate label field beside it. */
 private val TileHeight = 40.dp
 
-/** Gap between cells, and between the glyph column and the body. */
+/** Horizontal gap between columns, and between the glyph column and the body. */
 private val TileGap = 4.dp
+
+/** VERTICAL gap BETWEEN rows. Separate from [TileGap] on purpose: the rows want more air than
+ *  the columns do — it gives the enlarged input glyphs room and uses up vertical space the
+ *  full-height panel has going spare.
+ *
+ *  Strictly between: it is applied by an inner Column that holds ONLY the rows, so raising it
+ *  can't also push the header away or pad the bottom of the table. Those are
+ *  [HeaderToRowsGap] and [TableVerticalPadding], and they stay put. */
+private val TileRowGap = 16.dp
+
+/** Fixed gap from the press-type header row down to the first tile row. Deliberately NOT
+ *  [TileRowGap] — the header's distance from the grid is a separate design decision. */
+private val HeaderToRowsGap = 4.dp
 
 /** The press-type header row's height. */
 private val ColumnHeaderHeight = 20.dp
 private val ColumnHeaderIconSize = 12.dp
 
-/** The frozen glyph column. Wide enough for the largest hardware prompt plus breathing room. */
-private val GlyphColumnWidth = 34.dp
-
 /** Input glyphs render LARGER here than in the old rows — with the press-type word gone from
- *  the cell, the glyph is the row's only identity. */
-private val TableGlyphSize = 22.dp
+ *  the cell, the glyph is the row's only identity, so it carries the weight of one. */
+private val TableGlyphSize = 38.dp
+
+/** Breathing room either side of the input glyph, inside the frozen column. */
+private val GlyphColumnPadding = 11.dp
+
+/** The frozen glyph column — derived, so widening the glyph or its padding can't leave the
+ *  column too narrow for what it holds. */
+private val GlyphColumnWidth = TableGlyphSize + GlyphColumnPadding * 2
 
 private val TileCorner = 10.dp
 private val TileContentPadding = 8.dp
@@ -1348,8 +1402,8 @@ private val TableScrollbarGap = 4.dp
 internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
     val rows = group.rows.size
     val table = TableVerticalPadding * 2 +
-        ColumnHeaderHeight + TileGap +
-        TileHeight * rows + TileGap * (rows - 1).coerceAtLeast(0)
+        ColumnHeaderHeight + HeaderToRowsGap +
+        TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
     return EditorHeaderHeight + EditorDividerHeight + table +
         MinputScrollbarThickness + TableScrollbarGap
 }
