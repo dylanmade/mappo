@@ -22,6 +22,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import com.mappo.ui.MappoGesture
+import kotlin.math.hypot
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -74,6 +75,16 @@ class MoveModeState<K : Any> {
      *  path reads these. */
     private val bounds = mutableStateMapOf<K, Rect>()
 
+    /**
+     * How far outside a cell the pointer may stray and still resolve to it, in pixels.
+     *
+     * Zero means strict containment, which is wrong for any grid with GAPS between cells: a
+     * finger crossing the gutter between two rows lands on nothing, the target collapses back
+     * to the origin, and the drop indicator flickers. Set this to at least the widest gutter
+     * and the gap resolves to whichever cell it is nearest.
+     */
+    var hitTolerancePx: Float = 0f
+
     internal fun registerBounds(key: K, rect: Rect) { bounds[key] = rect }
     internal fun unregisterBounds(key: K) { bounds.remove(key) }
 
@@ -114,8 +125,26 @@ class MoveModeState<K : Any> {
     }
 
     private fun resolveTargetAtPointer() {
-        val hit = bounds.entries.firstOrNull { it.value.contains(pointerWindow) }?.key
-        target = hit ?: origin
+        target = cellAtPointer() ?: origin
+    }
+
+    /** The cell under the pointer, or the nearest one within [hitTolerancePx]. Null when the
+     *  pointer is genuinely away from the grid, which keeps a drop into dead space a no-op. */
+    private fun cellAtPointer(): K? {
+        bounds.entries.firstOrNull { it.value.contains(pointerWindow) }?.let { return it.key }
+        if (hitTolerancePx <= 0f) return null
+        var best: K? = null
+        var bestDistance = Float.MAX_VALUE
+        bounds.forEach { (key, rect) ->
+            val dx = maxOf(rect.left - pointerWindow.x, 0f, pointerWindow.x - rect.right)
+            val dy = maxOf(rect.top - pointerWindow.y, 0f, pointerWindow.y - rect.bottom)
+            val distance = hypot(dx, dy)
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = key
+            }
+        }
+        return best.takeIf { bestDistance <= hitTolerancePx }
     }
 
     /** Controller path: the caller resolved a directional step to [key]. */

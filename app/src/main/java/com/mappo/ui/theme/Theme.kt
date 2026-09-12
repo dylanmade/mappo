@@ -186,6 +186,10 @@ fun MappoTheme(
 data class MappoExtraColors(
     val dropZoneValid: Color,
     val dropZoneInvalid: Color,
+    /** Marks where a dragged thing was PICKED UP FROM, as distinct from where it will land.
+     *  Literal blue for the same reason the pair above are literal green/red: users read
+     *  "origin vs destination" from hue, and a theme accent would collide with selection. */
+    val dropZoneOrigin: Color,
     val selectionOutline: Color,
     val pressTypes: PressTypePalette,
 ) {
@@ -197,12 +201,14 @@ data class MappoExtraColors(
         val Light = MappoExtraColors(
             dropZoneValid = Color(0xFF2E7D32),    // M-spec green 800 — readable on light fills
             dropZoneInvalid = Color(0xFFC62828),  // M-spec red 800
+            dropZoneOrigin = Color(0xFF1565C0),   // blue 800
             selectionOutline = SelectionOutlineNearWhite,
             pressTypes = PressTypePalette.Light,
         )
         val Dark = MappoExtraColors(
             dropZoneValid = Color(0xFF66BB6A),    // green 400 — lifts off dark surface
             dropZoneInvalid = Color(0xFFEF5350),  // red 400
+            dropZoneOrigin = Color(0xFF64B5F6),   // blue 300
             selectionOutline = SelectionOutlineNearWhite,
             pressTypes = PressTypePalette.Dark,
         )

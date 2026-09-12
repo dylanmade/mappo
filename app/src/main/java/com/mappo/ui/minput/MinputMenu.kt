@@ -3,9 +3,11 @@ package com.mappo.ui.minput
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -13,13 +15,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MenuItemColors
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +39,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -89,6 +94,7 @@ internal fun BoxScope.MinputMenuSurface(
     onDismissRequest: () -> Unit,
     placement: MinputMenuPlacement,
     caret: Boolean,
+    framePadding: Dp,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -115,39 +121,48 @@ internal fun BoxScope.MinputMenuSurface(
 
     // Where the menu actually ended up, in SCREEN space. Null until the popup has been laid
     // out once, so the caret simply doesn't draw on the first frame — invisible under the
-    // menu's own fade-in. Re-keyed on `expanded` so a re-opened menu re-measures rather than
-    // trusting stale bounds from wherever it sat last time.
+    // menu's own fade-in.
     //
     // Screen space is load-bearing: a popup is its OWN WINDOW, so `boundsInWindow()` inside it
     // is relative to the popup, and comparing that against the anchor's app-window bounds is
     // meaningless — which is what put the caret on the wrong side and at the wrong height.
-    var menuScreen by remember(expanded) { mutableStateOf<Rect?>(null) }
+    //
+    // NOT re-keyed on `expanded`: this instance belongs to ONE anchor, so a remembered rect can
+    // only be a previous opening of the same menu in the same place. Clearing it on close made
+    // the exit animation recompute its own placement from stale defaults and visibly jump the
+    // dismissing popup across the screen.
+    var menuScreen by remember { mutableStateOf<Rect?>(null) }
 
     val anchorWidth = with(density) { (anchorRect?.width ?: 0f).toDp() }
     val anchorHeight = with(density) { (anchorRect?.height ?: 0f).toDp() }
     val anchorLeft = with(density) { (anchorRect?.left ?: 0f).toDp() }
     val windowWidth = with(density) { windowWidthPx.toDp() }
-    val measuredMenuWidth = with(density) { (menuScreen?.width ?: 0f).toDp() }
 
-    // Width for the fit test and the start-side offset: measured once we have it, a
-    // conservative stand-in before.
-    val assumedWidth = if (measuredMenuWidth > 0.dp) measuredMenuWidth else MinputMenuAssumedWidth
-
-    // Only second-guess the caller's requested side when the window and the anchor are both
-    // known. Without them, honor the request and let M3 clamp — a slightly clipped menu on the
-    // requested side beats a confidently mirrored one nowhere near the control.
+    // ── Placement is computed WITHOUT the menu's own measured size ────────────────────────
+    //
+    // Every input here (the anchor's rect, the window width, a fixed width assumption) is
+    // stable from the first frame the popup exists to the last. That is the point: feeding the
+    // MEASURED menu width back into the offset meant the placement changed once the popup had
+    // laid itself out, and again when the measurement was dropped — so the menu shifted on
+    // open and lurched across the screen while dismissing. The measurement now feeds the caret
+    // SHAPE only, which repositions nothing.
+    //
+    // The other half of that discipline: a side placement that doesn't fit falls back to
+    // [Below], never to the opposite side. Mirroring needs the menu's real width to right-align
+    // it against the anchor (M3 only ever aligns a menu's START to the anchor plus an offset),
+    // and that is exactly the measurement this is avoiding.
     val canFitTest = windowKnown && anchorRect != null
     val side = when {
         placement == MinputMenuPlacement.Below -> MinputMenuPlacement.Below
         !canFitTest -> placement
         placement == MinputMenuPlacement.End ->
-            if (anchorLeft + anchorWidth + assumedWidth + MinputMenuCaretDepth <= windowWidth) {
+            if (anchorLeft + anchorWidth + MinputMenuAssumedWidth + MinputMenuCaretDepth <= windowWidth) {
                 MinputMenuPlacement.End
-            } else MinputMenuPlacement.Start
+            } else MinputMenuPlacement.Below
         else ->
-            if (anchorLeft - assumedWidth - MinputMenuCaretDepth >= 0.dp) {
+            if (anchorLeft - MinputMenuAssumedWidth - MinputMenuCaretDepth >= 0.dp) {
                 MinputMenuPlacement.Start
-            } else MinputMenuPlacement.End
+            } else MinputMenuPlacement.Below
     }
 
     // M3's `offset` is anchor-relative and behaves exactly as documented: x shifts the menu's
@@ -157,7 +172,11 @@ internal fun BoxScope.MinputMenuSurface(
     val offset = when (side) {
         MinputMenuPlacement.Below -> DpOffset.Zero
         MinputMenuPlacement.End -> DpOffset(anchorWidth + MinputMenuCaretDepth, -anchorHeight)
-        MinputMenuPlacement.Start -> DpOffset(-(assumedWidth + MinputMenuCaretDepth), -anchorHeight)
+        // Approximate: right-aligning against the anchor needs the menu's real width, and
+        // [MinputMenuAssumedWidth] stands in for it. No caller requests Start today — the
+        // fallback for a cramped End is [Below] — so this is the one placement that can sit a
+        // few dp off if a menu turns out much wider or narrower than the assumption.
+        MinputMenuPlacement.Start -> DpOffset(-(MinputMenuAssumedWidth + MinputMenuCaretDepth), -anchorHeight)
     }
 
     val wantsCaret = caret && side != MinputMenuPlacement.Below
@@ -194,7 +213,20 @@ internal fun BoxScope.MinputMenuSurface(
         // Inset and shape must agree on WHICH side (see [caretOnStart]); a mismatch is what
         // produced the dead stripe.
         modifier = modifier
+            // OUTERMOST of minput's additions, so it reports the menu's FINAL bounds — the
+            // caret's vertical aim is measured from this, and reading the pre-collapse box
+            // would skew it by the padding being removed.
             .onGloballyPositioned { menuScreen = it.screenRectOrNull() }
+            // Frame inset, VERTICAL only. M3's own 8dp band is collapsed away first so this is
+            // the single value in play rather than a stack of two.
+            //
+            // Horizontal frame inset is deliberately absent: the rows own their horizontal
+            // padding, and insetting the frame instead would leave a margin down each side
+            // that no row's highlight reaches — the same dead-stripe problem the caret inset
+            // caused. Rows run the full width; the frame only holds them off the top and
+            // bottom edges.
+            .padding(vertical = framePadding)
+            .collapseMenuVerticalPadding(collapse = true)
             .then(
                 when {
                     !wantsCaret -> Modifier
@@ -205,6 +237,27 @@ internal fun BoxScope.MinputMenuSurface(
         content = content,
     )
 }
+
+/**
+ * Remove the 8dp band `DropdownMenuContent` pads above the first row and below the last.
+ *
+ * M3 applies it to the menu's inner Column, INSIDE the slot the `modifier` parameter reaches,
+ * so it can't simply be left out — but every minput modifier does wrap it, and a measure pass
+ * can give the space back: measure the padded child, report a box two insets shorter, and
+ * place the child lifted by one inset. The padding then falls outside the Surface (which
+ * sizes to what this reports) and is clipped away, leaving the rows flush with the menu's
+ * rounded ends.
+ *
+ * Always applied: minput supplies its own frame inset instead (`framePadding`), so leaving
+ * M3's band in place would stack two values that no call site can tell apart.
+ */
+private fun Modifier.collapseMenuVerticalPadding(collapse: Boolean = true): Modifier =
+    if (!collapse) this else layout { measurable, constraints ->
+        val inset = M3MenuVerticalPadding.roundToPx()
+        val placeable = measurable.measure(constraints)
+        val height = (placeable.height - inset * 2).coerceAtLeast(0)
+        layout(placeable.width, height) { placeable.place(0, -inset) }
+    }
 
 /**
  * Which edge the caret belongs on, and how far down that edge it points, from the menu's and
@@ -227,14 +280,25 @@ private fun LayoutCoordinates.screenRectOrNull(): Rect? {
 }
 
 /**
- * One row. A pass-through to M3's `DropdownMenuItem` — its type scale, its metrics, its
- * enabled/disabled color resolution.
+ * One row.
  *
- * **Disabled state is M3's to handle, and it only works if nothing overrides it.** Passing an
- * explicit color to the `Text`/`Icon` inside the slots defeats `MenuDefaults.itemColors()` and
- * a disabled row renders identically to an enabled one — which shipped, as a greyed "Paste"
- * indistinguishable from "New". A color variation therefore goes through [colors], never
- * through a slot.
+ * Hand-built rather than wrapped, which is a deliberate exception to the library's
+ * styling-over-reinvention rule, and the reason is in M3's own numbers: `DropdownMenuItem`
+ * pins `sizeIn(minWidth = 112.dp, minHeight = 48.dp)` on its row. The height is a
+ * touch-target floor these dense, controller-navigated menus don't take; the WIDTH floor is
+ * worse, because the menu Column sizes itself to `IntrinsicSize.Max` of its rows — so a short
+ * verb menu ("New" / "Paste") is forced out to 112dp and every label trails a block of dead
+ * space that reads as an oversized right padding. Both floors are set INSIDE the slot the
+ * `modifier` parameter reaches, so neither can be relaxed from a call site.
+ *
+ * What is still M3's, and must stay M3's: the ripple, and the enabled/disabled color
+ * resolution — [colors] comes from `MenuDefaults.itemColors()` and is read through its public
+ * enabled/disabled pairs. (Hard-coding a color here is what once made a greyed "Paste" look
+ * identical to "New"; going through [colors] keeps that automatic.) The resolved color is
+ * provided as `LocalContentColor` so caller-supplied glyphs inherit it without every call
+ * site re-deriving it.
+ *
+ * Spacing is ONE value on all four gaps — see [MinputMenuItemPadding].
  */
 @Composable
 internal fun MinputMenuRow(
@@ -245,43 +309,40 @@ internal fun MinputMenuRow(
     trailingIcon: (@Composable () -> Unit)? = null,
     colors: MenuItemColors = MenuDefaults.itemColors(),
 ) {
-    DropdownMenuItem(
-        enabled = enabled,
-        colors = colors,
-        // Two metrics minput overrides on a menu row: the height (M3's 48dp is a
-        // touch-target container; these are dense, controller-navigated surfaces, the trade
-        // the library takes everywhere) and a UNIFORM content padding.
-        modifier = Modifier.height(MinputMenuItemHeight),
-        contentPadding = PaddingValues(horizontal = MinputMenuItemPadding),
-        // Icon and check ride INSIDE the text slot rather than M3's leading/trailing slots.
-        // Those slots carry a `defaultMinSize` of the full 24dp list-icon width, so a smaller
-        // glyph sits at the start of an oversized box and leaves dead space on one side — the
-        // gap between icon and label ended up wider than the padding on either end of the row,
-        // and no combination of paddings could even them up from outside.
-        //
-        // The text slot is wrapped by M3 in the resolved text color, so glyphs placed here
-        // still pick up enabled/disabled and the destructive variant for free — the disabled
-        // treatment stays M3's, which is the part that matters.
-        text = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (leadingIcon != null) {
-                    leadingIcon()
-                    Spacer(Modifier.width(MinputMenuItemPadding))
-                }
-                Text(
-                    label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+    val contentColor = if (enabled) colors.textColor else colors.disabledTextColor
+    val interaction = remember { MutableInteractionSource() }
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MinputMenuItemHeight)
+                .clickable(
+                    enabled = enabled,
+                    interactionSource = interaction,
+                    indication = ripple(),
+                    onClick = onClick,
                 )
-                if (trailingIcon != null) {
-                    Spacer(Modifier.width(MinputMenuItemPadding))
-                    trailingIcon()
-                }
+                .padding(horizontal = MinputMenuItemPadding),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (leadingIcon != null) {
+                leadingIcon()
+                Spacer(Modifier.width(MinputMenuItemPadding))
             }
-        },
-        onClick = onClick,
-    )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (trailingIcon != null) {
+                Spacer(Modifier.width(MinputMenuItemPadding))
+                trailingIcon()
+            }
+        }
+    }
 }
 
 /**
@@ -351,6 +412,11 @@ private class MinputCaretMenuShape(
  * this menu's exit animation.
  *
  * Place it in a `Box` alongside the control that summons it.
+ *
+ * @param placement where the menu sits relative to its anchor.
+ * @param caret draws the pointer back at the summoning control. Side placements only.
+ * @param framePadding inset above the first row and below the last. Defaults to
+ *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
  */
 @Composable
 fun BoxScope.MinputActionMenu(
@@ -360,12 +426,14 @@ fun BoxScope.MinputActionMenu(
     modifier: Modifier = Modifier,
     placement: MinputMenuPlacement = MinputMenuPlacement.Below,
     caret: Boolean = false,
+    framePadding: Dp = MinputMenuFramePadding,
 ) {
     MinputMenuSurface(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
         placement = placement,
         caret = caret,
+        framePadding = framePadding,
         modifier = modifier,
     ) {
         actions.forEach { action ->
@@ -401,6 +469,11 @@ fun BoxScope.MinputActionMenu(
  *
  * Place it in a `Box` alongside the anchor. Picking dismisses first, then commits only on an
  * actual change.
+ *
+ * @param placement where the menu sits relative to its anchor.
+ * @param caret draws the pointer back at the summoning control. Side placements only.
+ * @param framePadding inset above the first row and below the last. Defaults to
+ *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
  */
 @Composable
 fun <T> BoxScope.MinputDropdownMenu(
@@ -414,12 +487,14 @@ fun <T> BoxScope.MinputDropdownMenu(
     modifier: Modifier = Modifier,
     placement: MinputMenuPlacement = MinputMenuPlacement.Below,
     caret: Boolean = false,
+    framePadding: Dp = MinputMenuFramePadding,
 ) {
     MinputMenuSurface(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
         placement = placement,
         caret = caret,
+        framePadding = framePadding,
         modifier = modifier,
     ) {
         options.forEach { option ->
@@ -453,9 +528,11 @@ fun <T> BoxScope.MinputDropdownMenu(
 
 // ── Shared menu metrics ──────────────────────────────────────────────────────────────────────
 
-/** Stand-in width for the side-placement fit test on the first frame, before the menu has been
- *  measured. M3's own `DropdownMenuItemDefaultMaxWidth` is 280dp; this sits mid-range so the
- *  first guess is rarely wrong, and it's replaced by the real width as soon as there is one. */
+/** Width assumed for the side-placement fit test. A FIXED assumption on purpose — see the
+ *  placement block in [MinputMenuSurface] for why the measured width must not feed back into
+ *  positioning. M3's own `DropdownMenuItemDefaultMaxWidth` is 280dp; this sits mid-range, so a
+ *  menu has to be unusually wide before the fit test is wrong, and being wrong only means
+ *  dropping Below. */
 private val MinputMenuAssumedWidth = 180.dp
 
 /** Glyph edge in a menu row. M3 defaults to a 24dp icon, which shouts next to this app's
@@ -469,8 +546,29 @@ private val MinputMenuItemHeight = 34.dp
 
 /** THE menu-row spacing value: row start → glyph, glyph → label, label → check, check → row
  *  end. One number for all four so the row reads as evenly set; changing it moves them
- *  together. */
+ *  together.
+ *
+ *  Note on what this LOOKS like: the glyph→label gap reads a little wider than the numbers
+ *  say, because Material glyphs ink only ~85% of their viewport (the same optical mismatch
+ *  behind the library's move to Lucide). The spacing is even; the icon is what's narrow. Don't
+ *  "correct" it by shrinking this gap alone — that just makes the numbers uneven too. */
 private val MinputMenuItemPadding = 12.dp
+
+/**
+ * Inset above the first row and below the last — the menu FRAME, as distinct from the row
+ * padding. Applied instead of (not on top of) M3's own 8dp band.
+ *
+ * Deliberately SMALLER than [MinputMenuItemPadding] and tracked as its own value. Matching the
+ * two looked wrong in both directions: a row already carries vertical breathing room in its own
+ * height, so repeating the horizontal value at the frame reads as a gap at each end, while
+ * collapsing the frame to nothing pins the first and last rows against the menu's rounded ends.
+ * The horizontal and vertical frame insets are simply not the same quantity.
+ */
+val MinputMenuFramePadding = 5.dp
+
+/** M3's own `DropdownMenuVerticalPadding`, which isn't public. Mirrored so
+ *  [collapseMenuVerticalPadding] can give the space back; keep in step if M3 ever changes it. */
+private val M3MenuVerticalPadding = 8.dp
 
 private val MinputMenuCorner = 8.dp
 

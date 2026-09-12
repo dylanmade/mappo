@@ -11,6 +11,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -117,7 +119,6 @@ import com.mappo.ui.theme.PressTypeColors
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputMenuPlacement
-import com.mappo.ui.minput.MinputBoxStroke
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
@@ -405,6 +406,12 @@ private fun AdvancedTable(
     val moveState = rememberMoveModeState<CellKey>()
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    // The grid has gutters between rows (and between columns), which belong to no cell. Without
+    // a tolerance a finger crossing one resolves to nothing and the drop target snaps back to
+    // the origin — visible as the landing marker flickering home mid-drag. Sized to the widest
+    // gutter so any point inside one resolves to whichever cell it's nearest, and generously
+    // enough to keep working if the gaps grow.
+    moveState.hitTolerancePx = with(density) { maxOf(TileRowGap, TileGap).toPx() }
     // Which command's label the "Label" verb is editing: bindingId to its current text. The
     // table has no resting label FIELD any more (the cell renders the label as overline text),
     // so the editor dialog is summoned directly rather than by a MinputTextField pill.
@@ -419,13 +426,6 @@ private fun AdvancedTable(
     // read as the cursor snapping backwards.
     val cellFocus = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
     fun focusHandle(key: CellKey): FocusRequester = cellFocus.getOrPut(key) { FocusRequester() }
-    var pendingFocus by remember { mutableStateOf<CellKey?>(null) }
-    LaunchedEffect(pendingFocus) {
-        val key = pendingFocus ?: return@LaunchedEffect
-        pendingFocus = null
-        // The destination may have only just recomposed; a failed request is harmless.
-        runCatching { cellFocus[key]?.requestFocus() }
-    }
 
     // Does a cell actually hold a command? An EMPTY cell is behaviorally empty as far as a
     // move is concerned — it's a slot, not a tile — so it must not slide around during a swap
@@ -455,7 +455,13 @@ private fun AdvancedTable(
             // A tick per cell crossed: with no finger on the screen the haptic is the only
             // confirmation that the drop target actually moved.
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            moveState.moveTargetTo(CellKey(rowKeys[nr], pressTypeColumns[nc]))
+            val next = CellKey(rowKeys[nr], pressTypeColumns[nc])
+            moveState.moveTargetTo(next)
+            // Focus FOLLOWS the drop target. Focus is cell-anchored, so this keeps the ring on
+            // the cell being aimed at instead of stranding it on the one the tile was lifted
+            // from — and it means the tile the user then activates IS the destination, so the
+            // confirm needs no focus change of its own.
+            runCatching { cellFocus[next]?.requestFocus() }
         }
     }
 
@@ -481,7 +487,11 @@ private fun AdvancedTable(
         val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey } ?: return
         val groupId = bindingGroupIdFor(spec) ?: return
         callbacks.onMoveCell(groupId, from.inputKey, from.type, to.inputKey, to.type)
-        pendingFocus = to
+        // No focus handling here, deliberately. On the controller path focus already TRACKS the
+        // drop target (see stepMoveTarget), so by the time a move commits it is on the
+        // destination — nothing to move, and nothing that could lag a frame behind the data.
+        // On the touch path there is no focus ring to maintain, and seating one on a drop would
+        // put a controller cursor on screen in the middle of a finger gesture.
     }
 
     // Viewport of the horizontally scrolling body, in window space — the frame the pointer's
@@ -495,6 +505,17 @@ private fun AdvancedTable(
     // and covers this anyway; the "+" layer sits underneath.)
     fun showsSlot(key: CellKey): Boolean =
         !isDefined(key) || (previewOrigin != null && key == previewOrigin)
+
+    // GREEN marks where the lifted tile will land, BLUE where it was picked up from; green wins
+    // when they're the same cell, which is how "put it back where I found it" reads as a real
+    // destination rather than an absence of one.
+    val extras = LocalMappoExtraColors.current
+    fun moveMarkerFor(key: CellKey): Color? = when {
+        !moveState.active -> null
+        moveState.target == key -> extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
+        previewOrigin == key -> extras.dropZoneOrigin.copy(alpha = MoveMarkerAlpha)
+        else -> null
+    }
 
     // Where a tile sits while a move is in flight, as a grid-step offset from its own slot.
     // This is the swap PREVIEW: the lifted tile slides toward the drop target and the tile
@@ -658,8 +679,23 @@ private fun AdvancedTable(
                             Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
                                 pressTypeColumns.forEach { type ->
                                     val key = CellKey(spec.subInputKey, type)
+                                    // Move markers live HERE, in the background layer, not on
+                                    // the cell: z-order between cells is per-Row, and the
+                                    // lifted tile's row outranks every other, so a marker
+                                    // drawn on the origin CELL sat above the tile sliding into
+                                    // it. Down here nothing can get underneath a tile.
+                                    val marker = moveMarkerFor(key)
                                     Box(
-                                        modifier = Modifier.width(TileWidth).height(TileHeight),
+                                        modifier = Modifier
+                                            .width(TileWidth)
+                                            .height(TileHeight)
+                                            .then(
+                                                if (marker != null) {
+                                                    Modifier
+                                                        .clip(RoundedCornerShape(TileCorner))
+                                                        .background(marker)
+                                                } else Modifier,
+                                            ),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         if (showsSlot(key)) {
@@ -882,7 +918,16 @@ private fun CommandTile(
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val interaction = remember { MutableInteractionSource() }
+    // TWO interaction sources, deliberately.
+    //
+    // Press/hover belong to the TILE — they happen while it's at rest, and their ripple should
+    // be clipped to its shape and travel with it. FOCUS belongs to the CELL: it marks a
+    // position in the grid, not an object being carried. Sharing one source put the focus
+    // highlight on the translated node, so during a move the ring rode along with the lifted
+    // tile and then snapped back to the origin with it on commit — read as the focus flashing
+    // back to the old location.
+    val pressInteraction = remember { MutableInteractionSource() }
+    val focusInteraction = remember { MutableInteractionSource() }
     val haptic = LocalHapticFeedback.current
     val viewConfiguration = LocalViewConfiguration.current
 
@@ -922,14 +967,29 @@ private fun CommandTile(
     // Controller hold-to-move: a key-down starts a timer; crossing the long-press threshold
     // while still held lifts the tile instead of opening the menu. Hardware auto-repeat
     // re-delivers KeyDown, so the timestamp is only taken on the first one.
+    // Only a cell that HOLDS something can be picked up. An empty cell is a slot, not a tile —
+    // lifting one produced a move with nothing in it, which then "committed" a no-op over
+    // whatever the user aimed at.
+    val movable = enabled && output != null
     var keyDownAt by remember { mutableLongStateOf(0L) }
+    // The release that merely ENDS the lifting hold must not also count as a confirm. Tracked
+    // explicitly rather than inferred from "target == origin", which was the earlier trick and
+    // had a real cost: it made putting a tile back down where you picked it up impossible,
+    // because that confirm is indistinguishable from the lift's own release.
+    var liftAwaitingRelease by remember { mutableStateOf(false) }
     LaunchedEffect(keyDownAt) {
         if (keyDownAt == 0L) return@LaunchedEffect
         delay(viewConfiguration.longPressTimeoutMillis)
         if (keyDownAt != 0L && !moveState.active) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            liftAwaitingRelease = true
             moveState.pickUp(cellKey, byPointer = false)
         }
+    }
+    // Don't let the flag outlive its move: if focus moved away while the button was still held,
+    // this tile never sees the release, and a stale flag would swallow its next activation.
+    LaunchedEffect(moveState.active) {
+        if (!moveState.active) liftAwaitingRelease = false
     }
 
     /**
@@ -947,15 +1007,10 @@ private fun CommandTile(
      */
     fun activate() {
         if (moveState.active && !moveState.pointerDriven) {
-            if (moveState.origin == cellKey) {
-                // This is the release that ended the lift (or a confirm with the target still
-                // on the origin). Do nothing — B cancels, arrows choose a destination.
-                if (moveState.target != moveState.origin) onCommitMove(moveState.commit())
-            } else {
-                // A different tile was activated while a move is in flight: that's a drop.
-                moveState.moveTargetTo(cellKey)
-                onCommitMove(moveState.commit())
-            }
+            // Activating any tile while a controller move is in flight is a DROP — including
+            // the origin, which is how you put a tile back where you found it.
+            moveState.moveTargetTo(cellKey)
+            onCommitMove(moveState.commit())
             return
         }
         menuOpen = true
@@ -981,30 +1036,51 @@ private fun CommandTile(
             // owning Row carries one too (see AdvancedTable).
             .zIndex(if (isPreviewOrigin) 10f else if (isTarget) 5f else 0f)
             .moveModeCell(moveState, cellKey)
+            // A pending hold dies with focus. Without this, holding the activate button and
+            // then d-padding away left the timer running on the tile behind you: it lifted a
+            // tile you were no longer looking at, and the release — now delivered to whatever
+            // had focus — dropped it there.
+            .onFocusChanged { if (!it.isFocused) keyDownAt = 0L }
             // Every tile is a focus stop, editable or not — a read-only layer view still
             // needs controller navigation to reach its menus.
-            .focusable(interactionSource = interaction)
+            .focusable(interactionSource = focusInteraction)
             .onKeyEvent { event ->
-                if (event.key !in TileActivateKeys) return@onKeyEvent false
+                if (event.key !in TileActivateKeys) {
+                    // ANY other key while the activate button is held abandons the hold. A
+                    // half-committed lift is the worst state this control can be in, so the
+                    // gesture is treated as fragile on purpose: it survives holding still and
+                    // nothing else. (Focus loss disarms it too, below.)
+                    keyDownAt = 0L
+                    return@onKeyEvent false
+                }
                 when (event.type) {
                     KeyEventType.KeyDown -> {
-                        // Hold-to-move is an EDITING gesture, and it can't begin on top of a
-                        // move already in flight.
-                        if (enabled && !moveState.active && keyDownAt == 0L) {
+                        // Arm only on the INITIAL press. Held keys auto-repeat their KeyDown,
+                        // so without this check a press that began on another tile re-armed the
+                        // hold here the moment focus arrived — lifting a tile the user had
+                        // merely navigated onto, mid-hold.
+                        val initialPress = event.nativeKeyEvent.repeatCount == 0
+                        if (movable && initialPress && !moveState.active && keyDownAt == 0L) {
                             keyDownAt = System.currentTimeMillis()
                         }
                         true
                     }
                     KeyEventType.KeyUp -> {
                         keyDownAt = 0L
-                        activate()
+                        if (liftAwaitingRelease) {
+                            // Absorb: this release is the end of the hold that lifted the
+                            // tile, not a confirmation of anywhere to put it.
+                            liftAwaitingRelease = false
+                        } else {
+                            activate()
+                        }
                         true
                     }
                     else -> false
                 }
             }
             .then(
-                if (enabled) {
+                if (movable) {
                     Modifier.moveModeLongPressSource(
                         state = moveState,
                         key = cellKey,
@@ -1042,26 +1118,18 @@ private fun CommandTile(
                 scaleX = lift
                 scaleY = lift
             }
-            .minputInteractiveMotion(interaction)
+            .minputInteractiveMotion(pressInteraction)
             .clip(shape)
             .background(container, shape)
+            // Empty cells stay strokeless by spec; defined ones wear the family bevel.
             .then(
-                when {
-                    // Drop target gets a bright ring — the same "this is where it lands" read
-                    // as the keyboard editor's valid-drop highlight.
-                    isTarget && !isOrigin && output != null -> Modifier.border(
-                        width = MoveTargetStroke,
-                        color = LocalMappoExtraColors.current.dropZoneValid,
-                        shape = shape,
-                    )
-                    // Empty cells stay strokeless by spec; defined ones wear the family bevel.
-                    output != null -> Modifier.border(minputBevelBorder(container, TileCorner), shape)
-                    else -> Modifier
-                },
+                if (output != null) {
+                    Modifier.border(minputBevelBorder(container, TileCorner), shape)
+                } else Modifier,
             )
             .focusProperties { canFocus = false }
             .clickable(
-                interactionSource = interaction,
+                interactionSource = pressInteraction,
                 indication = minputIndication(),
                 onClickLabel = if (output == null) "Assign command" else "Command options",
                 onClick = ::activate,
@@ -1122,6 +1190,17 @@ private fun CommandTile(
             caret = true,
         )
     }
+
+    // The FOCUS layer: pinned to the slot (no transform), clipped to the tile's shape, drawn
+    // over the tile. Focus marks a POSITION in the grid, not the object being carried —
+    // rendering it on the moving node is what made the ring ride along with a lifted tile and
+    // snap back with it.
+    Box(
+        Modifier
+            .matchParentSize()
+            .clip(shape)
+            .indication(focusInteraction, minputIndication()),
+    )
     }
 }
 
@@ -1378,7 +1457,9 @@ private const val MoveSlideMillis = 200
 
 /** How much a lifted tile swells while it's being carried. */
 private const val MoveLiftScale = 1.06f
-private val MoveTargetStroke = MinputBoxStroke * 2
+/** How strongly the origin / landing markers wash their cell. Low enough to read as a marked
+ *  SLOT rather than a filled tile. */
+private const val MoveMarkerAlpha = 0.3f
 
 /** How close to the viewport edge a dragging finger must get before the table scrolls under
  *  it, and how far it scrolls per frame while it stays there. */
