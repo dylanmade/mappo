@@ -31,6 +31,11 @@ import androidx.compose.ui.unit.dp
  * there more, and where am I". Making it draggable would add a touch-only affordance at a
  * sub-touch-target thickness, which is worse than not having one.
  *
+ * [reverse] mirrors the thumb for a scroller whose resting position is its FAR end — the
+ * basic view's mirrored rows, which read outward from a glyph pinned to the right edge and so
+ * run `horizontalScroll(reverseScrolling = true)`. There, value 0 means "showing the right
+ * end", and a thumb drawn from the left would sit at the wrong end of the track.
+ *
  * Self-hiding: when the content fits, there is nothing to indicate and the bar renders
  * nothing at all (it still occupies its thickness, so a container's layout doesn't jump the
  * moment content grows past the viewport). The track is always faint; the thumb brightens
@@ -42,6 +47,7 @@ fun MinputScrollbar(
     orientation: Orientation,
     modifier: Modifier = Modifier,
     thickness: androidx.compose.ui.unit.Dp = MinputScrollbarThickness,
+    reverse: Boolean = false,
 ) {
     val scrollable = state.maxValue > 0 && state.maxValue != Int.MAX_VALUE
     val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = MinputScrollbarTrackAlpha)
@@ -83,7 +89,8 @@ fun MinputScrollbar(
         val thumbLength = lengthPx * thumbFraction
         val travel = lengthPx - thumbLength
         val progress = if (state.maxValue > 0) state.value.toFloat() / state.maxValue else 0f
-        val thumbStart = travel * progress.coerceIn(0f, 1f)
+        val travelled = progress.coerceIn(0f, 1f).let { if (reverse) 1f - it else it }
+        val thumbStart = travel * travelled
 
         drawRoundRect(color = trackColor, cornerRadius = radius)
         drawRoundRect(

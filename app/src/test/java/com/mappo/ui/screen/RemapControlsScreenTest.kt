@@ -18,9 +18,13 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSet
@@ -830,6 +834,145 @@ class RemapControlsScreenTest {
     }
 
     /** Builds a minimal ControllerConfig matching the seed shape, with optional override for BUTTON_A. */
+
+
+    /**
+     * The advanced view's two write affordances — the mode pill and an empty cell's "New" —
+     * both depend on the SAME lookup: the viewed set's active preset entry for the group's
+     * source. When that resolves to null the header silently degrades to a dead "DEFAULT"
+     * label and every tile is disabled, which is a regression shape Dylan hit on device
+     * (2026-09-12) and one nothing in the suite covered. These three pin it.
+     */
+    @Test
+    fun groupEditor_everyGroup_offersAnEnabledModePill() {
+        setScreenLocal(seedShapedConfig())
+        for (group in RemapSimpleGroup.entries) {
+            composeRule.onNodeWithTag("simple-group:${group.name}").performClick()
+            composeRule.waitForIdle()
+            val pills = composeRule.onAllNodes(modePillMatcher, useUnmergedTree = true)
+                .fetchSemanticsNodes().size
+            assert(pills == 1) {
+                "${group.name}: expected one enabled mode pill, found $pills — the header fell " +
+                    "back to its dead \"DEFAULT\" label, so the group's preset didn't resolve."
+            }
+            composeRule.onNodeWithContentDescription("Close").performClick()
+            composeRule.waitForIdle()
+        }
+    }
+
+    @Test
+    fun groupEditor_modePill_picksMode() {
+        var picked: Pair<Long, BindingMode>? = null
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onSetBindingGroupMode = { id, mode -> picked = id to mode },
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodes(modePillMatcher, useUnmergedTree = true).onFirst()
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        // Menu rows live in a Popup, whose bounds come back negated under Robolectric — drive
+        // the row through semantics rather than a coordinate click.
+        composeRule.onNodeWithText("None").performSemanticsAction(SemanticsActions.OnClick)
+        assert(picked != null) { "Picking a mode did not reach onSetBindingGroupMode" }
+    }
+
+    @Test
+    fun groupEditor_emptyCell_newCommand_reachesEnsureInputCell() {
+        var ensured: Triple<Long, String, ActivatorType>? = null
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onEnsureInputCell = { g, k, t, _ -> ensured = Triple(g, k, t) },
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("group-editor-table")
+            .performScrollToNode(hasTestTag("cell:button_a:LONG_PRESS"))
+        composeRule.onNodeWithTag("cell:button_a:LONG_PRESS").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
+        assert(ensured == Triple(1L, "button_a", ActivatorType.LONG_PRESS)) {
+            "Expected New to ensure (1, button_a, LONG_PRESS); got $ensured"
+        }
+    }
+
+    /** The mode pill carries no test tag; its click LABEL is the stable handle. */
+    private val modePillMatcher = androidx.compose.ui.test.SemanticsMatcher("mode pill") { node ->
+        node.config.getOrElseNullable(SemanticsActions.OnClick) { null }?.label == "Change input mode"
+    }
+
+    /**
+     * A config shaped like `seedDefaultConfig` leaves one: every default-seeded source present
+     * with an ACTIVE preset entry, all in their seeded modes, no commands bound. [sampleConfig]
+     * deliberately populates only BUTTON_DIAMOND, so it can't catch a per-source preset miss.
+     */
+    private fun seedShapedConfig(): ControllerConfig {
+        var nextId = 1L
+        fun entry(source: InputSource, keys: List<String>, mode: BindingMode): PresetEntry {
+            val groupId = nextId++
+            return PresetEntry(
+                source, "active",
+                BindingGroupGraph(
+                    group = BindingGroup(
+                        id = groupId, actionSetId = 1L, name = source.name.lowercase(), mode = mode,
+                    ),
+                    inputs = keys.mapIndexed { index, key ->
+                        GroupInputGraph(
+                            input = GroupInput(
+                                id = nextId++, bindingGroupId = groupId, inputKey = key, orderIndex = index,
+                            ),
+                            activators = emptyList(),
+                        )
+                    },
+                ),
+            )
+        }
+        return ControllerConfig(
+            controllerProfile = ControllerProfile(
+                id = 1L, layoutId = 1L,
+                controllerType = ControllerType.GENERIC_ANDROID, name = "Test layout",
+            ),
+            actionSets = listOf(
+                ActionSetGraph(
+                    actionSet = ActionSet(id = 1L, controllerProfileId = 1L, name = "default", title = "Default"),
+                    layers = emptyList(),
+                    preset = listOf(
+                        entry(InputSource.BUTTON_DIAMOND, listOf("button_a", "button_b", "button_x", "button_y"), BindingMode.BUTTON_PAD),
+                        entry(InputSource.DPAD, listOf("dpad_up", "dpad_down", "dpad_left", "dpad_right"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.LEFT_BUMPER, listOf("click"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.RIGHT_BUMPER, listOf("click"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.LEFT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.RIGHT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.LEFT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.RIGHT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.SWITCH_START, listOf("click"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.SWITCH_SELECT, listOf("click"), BindingMode.DEVICE_DEFAULT),
+                        entry(InputSource.GYRO, emptyList(), BindingMode.DEVICE_DEFAULT),
+                    ),
+                ),
+            ),
+        )
+    }
+
     private fun sampleConfig(
         boundButtonA: BindingOutput = BindingOutput.Unbound,
         buttonALabel: String? = null,

@@ -8,11 +8,16 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -58,6 +64,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
@@ -73,6 +81,7 @@ import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayLabel
 import com.mappo.data.model.steam.displayNameFor
+import com.mappo.ui.component.rightStickHorizontalScroll
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.roundToInt
@@ -80,6 +89,7 @@ import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.MinputPodPlateCorner
+import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -280,55 +290,68 @@ internal fun RemapSimpleView(
                     ) {
                         // ── Flanks: the two side columns and the controller between them ──
                         // Takes all the slack the centre section leaves.
-                        Row(
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            // Wide gutter keeps the side group boxes off the controller image.
-                            horizontalArrangement = Arrangement.spacedBy(18.dp),
-                        ) {
-                            // Left column, counterclockwise start: shoulder → d-pad → stick.
-                            // Its rows are MIRRORED (glyph at the box's inner edge, assignments
-                            // running outward) so the flanks read as each other's reflection —
-                            // see [anchorFor]. The +N badge gutters the columns used to reserve
-                            // are gone with the badges themselves.
-                            Column(
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                                horizontalAlignment = Alignment.End,
+                        //
+                        // BoxWithConstraints because the controller column is sized from the
+                        // band's HEIGHT — see [ControllerColumnHeightRatio].
+                        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                            // Clamped so a narrow band can't starve the flanking columns
+                            // outright — the ratio is tuned against a landscape band.
+                            val controllerWidth =
+                                (maxHeight * ControllerColumnHeightRatio).coerceAtMost(maxWidth / 2)
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                // Wide gutter keeps the side group boxes off the controller image.
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
                             ) {
-                                box(RemapSimpleGroup.LEFT_SHOULDER, Modifier)
-                                box(RemapSimpleGroup.DPAD, Modifier)
-                                box(RemapSimpleGroup.LEFT_STICK, Modifier)
-                            }
-                            // Middle: just the controller image now — the Map CTA was removed
-                            // 2026-09-11 (Dylan, "for now"; it was a UI-only stand-in for the
-                            // input-mapping wizard) and the centre group box moved down to its
-                            // own section.
-                            //
-                            // sizeToIntrinsics=false: the image contributes no intrinsic
-                            // height, so it never drives the band's measurement — it takes
-                            // whatever the flanking group boxes leave.
-                            Box(
-                                Modifier
-                                    .weight(1.1f)
-                                    .fillMaxHeight()
-                                    .padding(vertical = 8.dp)
-                                    .paint(
-                                        painter = painterResource(R.drawable.controller_placeholder),
-                                        sizeToIntrinsics = false,
-                                        contentScale = ContentScale.Fit,
-                                    ),
-                            )
-                            // Right column: shoulder → face buttons → stick. Glyph at the
-                            // box's inner (start) edge, assignments running outward.
-                            Column(
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                                horizontalAlignment = Alignment.Start,
-                            ) {
-                                box(RemapSimpleGroup.RIGHT_SHOULDER, Modifier)
-                                box(RemapSimpleGroup.FACE, Modifier)
-                                box(RemapSimpleGroup.RIGHT_STICK, Modifier)
-                            }
+                                // Left column, counterclockwise start: shoulder → d-pad → stick.
+                                // Its rows are MIRRORED (glyph at the box's inner edge, assignments
+                                // running outward) so the flanks read as each other's reflection —
+                                // see [anchorFor]. The +N badge gutters the columns used to reserve
+                                // are gone with the badges themselves.
+                                Column(
+                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                                    horizontalAlignment = Alignment.End,
+                                ) {
+                                    box(RemapSimpleGroup.LEFT_SHOULDER, Modifier)
+                                    box(RemapSimpleGroup.DPAD, Modifier)
+                                    box(RemapSimpleGroup.LEFT_STICK, Modifier)
+                                }
+                                // Middle: just the controller image now — the Map CTA was removed
+                                // 2026-09-11 (Dylan, "for now"; it was a UI-only stand-in for the
+                                // input-mapping wizard) and the centre group box moved down to its
+                                // own section.
+                                //
+                                // FIXED width, not a weight (Dylan, 2026-09-12): widening the
+                                // screen must not grow the controller. Anything that later joins
+                                // this column inherits that, by his instruction.
+                                //
+                                // sizeToIntrinsics=false: the image contributes no intrinsic
+                                // height, so it never drives the band's measurement — it takes
+                                // whatever the flanking group boxes leave.
+                                Box(
+                                    Modifier
+                                        .width(controllerWidth)
+                                        .fillMaxHeight()
+                                        .padding(vertical = 8.dp)
+                                        .paint(
+                                            painter = painterResource(R.drawable.controller_placeholder),
+                                            sizeToIntrinsics = false,
+                                            contentScale = ContentScale.Fit,
+                                        ),
+                                )
+                                // Right column: shoulder → face buttons → stick. Glyph at the
+                                // box's inner (start) edge, assignments running outward.
+                                Column(
+                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                                    horizontalAlignment = Alignment.Start,
+                                ) {
+                                    box(RemapSimpleGroup.RIGHT_SHOULDER, Modifier)
+                                    box(RemapSimpleGroup.FACE, Modifier)
+                                    box(RemapSimpleGroup.RIGHT_STICK, Modifier)
+                                }
+                        }
                         }
                         // ── Centre: the utility group, the full width of the plate ──
                         // Wrap height, so the flanks keep everything it doesn't need.
@@ -631,9 +654,9 @@ internal fun RemapSimpleGroup.anchorFor(spec: SimpleRowSpec): RowAnchor = when (
     else -> RowAnchor.START
 }
 
-/** One resolved cell of a group box's assignment table: its text, and the color that says which
- *  press type it came from. */
-private data class AssignmentCell(val text: String, val color: Color)
+/** One resolved cell of a group box's assignment table: its text, the color that says which
+ *  press type it came from, and whether it's a resting label rather than a real assignment. */
+private data class AssignmentCell(val text: String, val color: Color, val italic: Boolean = false)
 
 /**
  * Resolve a row to its display cells — the assignments when it has any, otherwise the single
@@ -641,10 +664,12 @@ private data class AssignmentCell(val text: String, val color: Color)
  *
  * Press keeps the plain content color (its palette entry is deliberately neutral, and the
  * standard press is the row's subject); every alternate wears its column's HEADER color from
- * the advanced table, which is the whole cue for which press type it is. The resting label is
- * dimmed to `onSurfaceVariant` so "nothing is assigned here, this is the hardware default"
- * reads differently at a glance from a real assignment — the distinction the old resolution
- * couldn't make, since it showed the physical name for both.
+ * the advanced table, which is the whole cue for which press type it is.
+ *
+ * The resting label carries the same color as a real assignment and is set in ITALIC instead
+ * (Dylan, 2026-09-12 — a dimmed color was tried first and reverted): "nothing is assigned here,
+ * this is the hardware default" still reads differently at a glance, without the row looking
+ * disabled.
  */
 @Composable
 private fun assignmentCells(
@@ -658,7 +683,8 @@ private fun assignmentCells(
         return listOf(
             AssignmentCell(
                 text = rowRestingLabel(viewingSet, viewingLayer, spec),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurface,
+                italic = true,
             ),
         )
     }
@@ -688,15 +714,19 @@ private fun GroupRows(
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
+    // Whether this box currently owns controller focus, and so whether the right stick should
+    // drive its scrollers. See [ScrollingAssignmentTable].
+    stickScrollEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val endRows = group.rows.filter { group.anchorFor(it) == RowAnchor.END }
     val startRows = group.rows.filter { group.anchorFor(it) == RowAnchor.START }
     val table: @Composable (List<SimpleRowSpec>, RowAnchor, Modifier) -> Unit = { specs, anchor, m ->
-        AssignmentTable(
+        ScrollingAssignmentTable(
             specs = specs,
             rows = specs.map { assignmentCells(viewingSet, viewingLayer, config, it) },
             anchor = anchor,
+            stickScrollEnabled = stickScrollEnabled,
             modifier = m,
         )
     }
@@ -715,6 +745,50 @@ private fun GroupRows(
 }
 
 /**
+ * One anchored table plus its viewport and scroll indicator.
+ *
+ * Columns no longer shrink to fit the box (Dylan, 2026-09-12): each holds at least
+ * [AssignmentColumnMinChars] characters and grows to its content, so a row overflows its
+ * container rather than ellipsizing, and the container scrolls.
+ *
+ * **A mirrored table scrolls in reverse.** Its rows read outward from a glyph pinned to the
+ * box's right edge, so the resting position is the scroller's FAR end: `reverseScrolling`
+ * makes value 0 mean "showing the right end", which is both the correct opening view and what
+ * keeps the glyph column pinned where it belongs. The indicator and the stick direction are
+ * mirrored to match, so pushing the stick toward the content always reveals more of it.
+ *
+ * The viewport width comes from [BoxWithConstraints] because a scroll container measures its
+ * content with an INFINITE max width — inside it `fillMaxWidth` is meaningless, so the table
+ * is handed a floor to fill instead. Without it a short mirrored row would size to its content
+ * and land its glyph mid-box rather than at the edge.
+ *
+ * The right stick is a prototyping stand-in for real scroll controls, at Dylan's request; only
+ * the focused box responds.
+ */
+@Composable
+private fun ScrollingAssignmentTable(
+    specs: List<SimpleRowSpec>,
+    rows: List<List<AssignmentCell>>,
+    anchor: RowAnchor,
+    stickScrollEnabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val scroll = rememberScrollState()
+    val reversed = anchor == RowAnchor.END
+    rightStickHorizontalScroll(scroll, enabled = stickScrollEnabled, invert = reversed)
+    Column(modifier) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val viewport = if (constraints.hasBoundedWidth) constraints.maxWidth else 0
+            Box(Modifier.horizontalScroll(scroll, reverseScrolling = reversed)) {
+                AssignmentTable(specs = specs, rows = rows, anchor = anchor, minWidth = viewport)
+            }
+        }
+        Spacer(Modifier.height(AssignmentScrollbarGap))
+        MinputScrollbar(scroll, Orientation.Horizontal, reverse = reversed)
+    }
+}
+
+/**
  * The table: a fixed glyph column plus N content-sized assignment columns.
  *
  * A custom [Layout] rather than nested Rows because the columns must line up ACROSS the rows of
@@ -723,22 +797,37 @@ private fun GroupRows(
  * it; content-sized columns that only align are what Dylan asked for ("the columns are simply
  * there to ensure clean assignment display").
  *
- * Column width = the widest cell in that column. When the natural widths overflow the box the
- * surplus comes off the WIDEST columns first ([fitColumns]), so short cells stay whole and only
- * long output names ellipsize.
+ * Column width = the widest cell in that column, floored at [AssignmentColumnMinChars]
+ * characters so a column of short commands still reads as a column. Nothing is capped: the
+ * table overflows its box and [ScrollingAssignmentTable] scrolls it.
  *
  * Intrinsics, not a second measure pass: a `Measurable` may only be measured once, so the
  * natural widths come from `maxIntrinsicWidth` and the real measure runs after the column
  * widths are settled.
+ *
+ * [minWidth] is a floor on the table's own width (the viewport), NOT on the content — it's
+ * what keeps a mirrored table's glyph pinned to the box's right edge when its rows are short.
  */
 @Composable
 private fun AssignmentTable(
     specs: List<SimpleRowSpec>,
     rows: List<List<AssignmentCell>>,
     anchor: RowAnchor,
+    minWidth: Int,
     modifier: Modifier = Modifier,
 ) {
     val columnCount = rows.maxOfOrNull { it.size } ?: 0
+    // "N characters" measured off digits: they're tabular in every face Mappo ships, so the
+    // floor is stable rather than depending on which letters a command happens to use.
+    val measurer = rememberTextMeasurer()
+    val cellStyle = minputMiniTextStyle()
+    val columnFloor = remember(measurer, cellStyle) {
+        measurer.measure(
+            text = "0".repeat(AssignmentColumnMinChars),
+            style = cellStyle,
+            softWrap = false,
+        ).size.width
+    }
     Layout(
         modifier = modifier,
         content = {
@@ -749,7 +838,7 @@ private fun AssignmentTable(
                 rows[rowIndex].forEachIndexed { columnIndex, cell ->
                     Text(
                         text = cell.text,
-                        style = minputMiniTextStyle(),
+                        style = if (cell.italic) cellStyle.copy(fontStyle = FontStyle.Italic) else cellStyle,
                         color = cell.color,
                         maxLines = 1,
                         softWrap = false,
@@ -766,20 +855,18 @@ private fun AssignmentTable(
         val glyph = SummaryGlyphSize.roundToPx()
         val gap = AssignmentGap.roundToPx()
 
-        val natural = IntArray(columnCount) { column ->
-            rows.indices.maxOfOrNull { row ->
+        val columnWidths = IntArray(columnCount) { column ->
+            val natural = rows.indices.maxOfOrNull { row ->
                 slots[CellSlot(row, column)]?.maxIntrinsicWidth(rowHeight) ?: 0
             } ?: 0
+            maxOf(natural, columnFloor)
         }
-        // One gap per column: the glyph-to-first-column gap plus the inter-column ones.
-        val outerWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else natural.sum() +
-            glyph + gap * columnCount
-        val columnWidths = fitColumns(natural, (outerWidth - glyph - gap * columnCount).coerceAtLeast(0))
 
-        val width = (glyph + gap * columnCount + columnWidths.sum())
-            .coerceIn(constraints.minWidth, constraints.maxWidth)
-        val height = (specs.size * rowHeight + (specs.size - 1).coerceAtLeast(0) * spacing)
-            .coerceIn(constraints.minHeight, constraints.maxHeight)
+        // One gap per column: the glyph-to-first-column gap plus the inter-column ones. The
+        // width is deliberately NOT constrained — this table lives inside a scroller and is
+        // meant to overrun it.
+        val width = maxOf(glyph + gap * columnCount + columnWidths.sum(), minWidth)
+        val height = specs.size * rowHeight + (specs.size - 1).coerceAtLeast(0) * spacing
 
         // Column origins, walking outward FROM the glyph: left-to-right for a START row,
         // right-to-left for a mirrored END one.
@@ -826,26 +913,6 @@ private fun AssignmentTable(
             }
         }
     }
-}
-
-/**
- * Fit natural column widths into [budget] by water-filling: every column narrower than an equal
- * share keeps its full width, and what it leaves over is redistributed to the wider ones. Short
- * cells therefore never get squeezed to make room for a long output name — only the long names
- * ellipsize.
- */
-private fun fitColumns(natural: IntArray, budget: Int): IntArray {
-    if (natural.isEmpty() || natural.sum() <= budget) return natural
-    val fitted = IntArray(natural.size)
-    var remaining = budget
-    var unassigned = natural.size
-    natural.withIndex().sortedBy { it.value }.forEach { (index, value) ->
-        val take = minOf(value, remaining / unassigned)
-        fitted[index] = take
-        remaining -= take
-        unassigned--
-    }
-    return fitted
 }
 
 /** [AssignmentTable]'s layout slot ids. */
@@ -902,6 +969,9 @@ private fun GroupBox(
         }
     }
     val interaction = remember { MutableInteractionSource() }
+    // The box is one focus target (it opens the editor), so "this box has focus" is exactly
+    // "the stick should scroll this box's rows".
+    var focused by remember { mutableStateOf(false) }
     Box(
         // Full column width regardless of content — every box in a column reads as the same
         // fixed-width card, and the assignment table needs a known width to fit its columns to.
@@ -918,6 +988,7 @@ private fun GroupBox(
             .background(container)
             .border(minputBevelBorder(container, GroupCorner), shape)
             .focusRequester(focusRequester)
+            .onFocusChanged { focused = it.isFocused }
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -925,7 +996,7 @@ private fun GroupBox(
             .testTag("simple-group:${group.name}")
             .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        GroupRows(group, viewingSet, viewingLayer, config)
+        GroupRows(group, viewingSet, viewingLayer, config, stickScrollEnabled = focused)
     }
 }
 
@@ -946,6 +1017,28 @@ private val CentreSplitGap = 10.dp
 
 /** Gap between the flanking-columns section and the centre group's section beneath it. */
 private val SectionGap = 10.dp
+
+/** Floor on an assignment column, in characters. Columns never shrink below this and never
+ *  shrink to fit the box — the box scrolls instead. Dylan's starting value; tune here. */
+private const val AssignmentColumnMinChars = 10
+
+/** Gap between a table's rows and its scroll indicator. */
+private val AssignmentScrollbarGap = 3.dp
+
+/**
+ * The controller column's width, as a fraction of the flanking band's HEIGHT.
+ *
+ * **It is sized from the height on purpose.** The band's height is the one dimension that does
+ * NOT change between the 1:1 screen and the expanded one (or with the layouts drawer open), so
+ * taking the width from it pins the controller at the size it has in 1:1 — Dylan's ask — on any
+ * device, and hands every extra pixel of a wider screen to the flanking columns and the centre
+ * group instead. A hardcoded dp would have done the "doesn't scale" half and got the size wrong
+ * on anything but one device.
+ *
+ * The value reproduces the 1.1-of-3.1 weight share it replaced. **This is the knob for the
+ * controller's size now that nothing else drives it.**
+ */
+private const val ControllerColumnHeightRatio = 0.385f
 
 // The group editor's morph values — canonical in the library (MinputDefaults.kt); these
 // are the remap package's aliases. The layout/options panels no longer morph (they're

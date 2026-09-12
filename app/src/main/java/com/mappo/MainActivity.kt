@@ -19,7 +19,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import android.view.MotionEvent
+import com.mappo.ui.component.LocalRightStick
+import com.mappo.ui.component.rightStickFrom
 import com.themestudio.core.ThemeStudioProvider
 import com.themestudio.persistence.SharedPrefsThemeOverridesStorage
 import dagger.hilt.android.AndroidEntryPoint
@@ -39,6 +44,11 @@ class MainActivity : ComponentActivity() {
     // the same destination after backing out re-navigates — a plain String wouldn't re-fire.
     private var pendingRoute by mutableStateOf<String?>(null)
     private var routeNonce by mutableStateOf(0)
+
+    // The right stick's live deflection, for UI that scrolls from it (see LocalRightStick).
+    // The window is the only place joystick axes are observable — they arrive as generic
+    // motion events, which Compose's pointer pipeline never sees.
+    private val rightStick = mutableStateOf(Offset.Zero)
 
     override fun attachBaseContext(newBase: Context) {
         // App-level text size: the whole UI is tuned against the OS "Small" font scale, so
@@ -81,12 +91,24 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .windowInsetsPadding(WindowInsets.systemBars),
                         ) {
-                            MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
+                            CompositionLocalProvider(LocalRightStick provides rightStick) {
+                                MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Observe the right stick on its way through the window, without consuming it: this is
+     * `dispatch`, not `on…`, so the reading lands whether or not a view claims the event, and
+     * the return value is untouched so nothing about existing input handling changes.
+     */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        rightStickFrom(event)?.let { if (it != rightStick.value) rightStick.value = it }
+        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onNewIntent(intent: Intent) {
