@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -95,6 +96,7 @@ internal fun BoxScope.MinputMenuSurface(
     placement: MinputMenuPlacement,
     caret: Boolean,
     framePadding: Dp,
+    menuWidth: Dp,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -138,31 +140,35 @@ internal fun BoxScope.MinputMenuSurface(
     val anchorLeft = with(density) { (anchorRect?.left ?: 0f).toDp() }
     val windowWidth = with(density) { windowWidthPx.toDp() }
 
-    // ── Placement is computed WITHOUT the menu's own measured size ────────────────────────
+    // ── Placement: PREDICTED width, never the measured one ────────────────────────────────
     //
-    // Every input here (the anchor's rect, the window width, a fixed width assumption) is
-    // stable from the first frame the popup exists to the last. That is the point: feeding the
-    // MEASURED menu width back into the offset meant the placement changed once the popup had
-    // laid itself out, and again when the measurement was dropped — so the menu shifted on
-    // open and lurched across the screen while dismissing. The measurement now feeds the caret
-    // SHAPE only, which repositions nothing.
+    // [menuWidth] is computed from the menu's own labels and metrics before the popup exists
+    // (see [rememberMinputMenuWidth]), so it is identical on the first frame and the last.
+    // That stability is the requirement, not the avoidance of a width: an earlier pass fed the
+    // popup's MEASURED width back into its own offset, so placement changed once it had laid
+    // itself out — and changed again when the measurement was dropped on dismissal, which is
+    // what lurched a closing menu across the screen. The measurement now feeds the caret SHAPE
+    // only, which repositions nothing.
     //
-    // The other half of that discipline: a side placement that doesn't fit falls back to
-    // [Below], never to the opposite side. Mirroring needs the menu's real width to right-align
-    // it against the anchor (M3 only ever aligns a menu's START to the anchor plus an offset),
-    // and that is exactly the measurement this is avoiding.
+    // With an exact width up front, a cramped side MIRRORS to the opposite side (right-aligning
+    // against the anchor is just `-(width + caret)`); [Below] is only the last resort when
+    // neither side fits.
     val canFitTest = windowKnown && anchorRect != null
+    fun fitsEnd() = anchorLeft + anchorWidth + menuWidth + MinputMenuCaretDepth <= windowWidth
+    fun fitsStart() = anchorLeft - menuWidth - MinputMenuCaretDepth >= 0.dp
     val side = when {
         placement == MinputMenuPlacement.Below -> MinputMenuPlacement.Below
         !canFitTest -> placement
-        placement == MinputMenuPlacement.End ->
-            if (anchorLeft + anchorWidth + MinputMenuAssumedWidth + MinputMenuCaretDepth <= windowWidth) {
-                MinputMenuPlacement.End
-            } else MinputMenuPlacement.Below
-        else ->
-            if (anchorLeft - MinputMenuAssumedWidth - MinputMenuCaretDepth >= 0.dp) {
-                MinputMenuPlacement.Start
-            } else MinputMenuPlacement.Below
+        placement == MinputMenuPlacement.End -> when {
+            fitsEnd() -> MinputMenuPlacement.End
+            fitsStart() -> MinputMenuPlacement.Start
+            else -> MinputMenuPlacement.Below
+        }
+        else -> when {
+            fitsStart() -> MinputMenuPlacement.Start
+            fitsEnd() -> MinputMenuPlacement.End
+            else -> MinputMenuPlacement.Below
+        }
     }
 
     // M3's `offset` is anchor-relative and behaves exactly as documented: x shifts the menu's
@@ -172,11 +178,7 @@ internal fun BoxScope.MinputMenuSurface(
     val offset = when (side) {
         MinputMenuPlacement.Below -> DpOffset.Zero
         MinputMenuPlacement.End -> DpOffset(anchorWidth + MinputMenuCaretDepth, -anchorHeight)
-        // Approximate: right-aligning against the anchor needs the menu's real width, and
-        // [MinputMenuAssumedWidth] stands in for it. No caller requests Start today — the
-        // fallback for a cramped End is [Below] — so this is the one placement that can sit a
-        // few dp off if a menu turns out much wider or narrower than the assumption.
-        MinputMenuPlacement.Start -> DpOffset(-(MinputMenuAssumedWidth + MinputMenuCaretDepth), -anchorHeight)
+        MinputMenuPlacement.Start -> DpOffset(-(menuWidth + MinputMenuCaretDepth), -anchorHeight)
     }
 
     val wantsCaret = caret && side != MinputMenuPlacement.Below
@@ -236,6 +238,38 @@ internal fun BoxScope.MinputMenuSurface(
             ),
         content = content,
     )
+}
+
+/**
+ * The width a minput menu will take, worked out from its labels rather than read back from the
+ * laid-out popup.
+ *
+ * Predicting it is the point. Placement needs a width (to mirror a menu onto the start side, it
+ * has to be right-aligned against the anchor), and taking that from the popup's own measurement
+ * is a feedback loop: the menu lands, reports its size, and moves. Because minput owns the row
+ * layout, the width is simply decor + the widest label, and a [TextMeasurer] gives the label
+ * part exactly — before anything is shown, and identically on every frame after.
+ *
+ * Kept within M3's own menu envelope. Labels wider than the cap ellipsize.
+ */
+@Composable
+private fun rememberMinputMenuWidth(
+    labels: List<String>,
+    hasLeadingIcon: Boolean,
+    hasTrailingIcon: Boolean,
+): Dp {
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.labelLarge
+    val density = LocalDensity.current
+    return remember(labels, hasLeadingIcon, hasTrailingIcon, style, density) {
+        val widestLabelPx = labels.maxOfOrNull { measurer.measure(it, style).size.width } ?: 0
+        val decor = MinputMenuItemPadding * 2 +
+            (if (hasLeadingIcon) MinputMenuIconSize + MinputMenuItemPadding else 0.dp) +
+            (if (hasTrailingIcon) MinputMenuIconSize + MinputMenuItemPadding else 0.dp)
+        val label = with(density) { widestLabelPx.toDp() }
+        (decor + label + MinputMenuWidthSlack)
+            .coerceIn(MinputMenuMinWidth, MinputMenuMaxWidth)
+    }
 }
 
 /**
@@ -434,6 +468,11 @@ fun BoxScope.MinputActionMenu(
         placement = placement,
         caret = caret,
         framePadding = framePadding,
+        menuWidth = rememberMinputMenuWidth(
+            labels = actions.map { it.label },
+            hasLeadingIcon = true,
+            hasTrailingIcon = false,
+        ),
         modifier = modifier,
     ) {
         actions.forEach { action ->
@@ -495,6 +534,12 @@ fun <T> BoxScope.MinputDropdownMenu(
         placement = placement,
         caret = caret,
         framePadding = framePadding,
+        menuWidth = rememberMinputMenuWidth(
+            labels = options.map(optionLabel),
+            hasLeadingIcon = optionIcon != null,
+            // The check on the current option.
+            hasTrailingIcon = true,
+        ),
         modifier = modifier,
     ) {
         options.forEach { option ->
@@ -528,12 +573,14 @@ fun <T> BoxScope.MinputDropdownMenu(
 
 // ── Shared menu metrics ──────────────────────────────────────────────────────────────────────
 
-/** Width assumed for the side-placement fit test. A FIXED assumption on purpose — see the
- *  placement block in [MinputMenuSurface] for why the measured width must not feed back into
- *  positioning. M3's own `DropdownMenuItemDefaultMaxWidth` is 280dp; this sits mid-range, so a
- *  menu has to be unusually wide before the fit test is wrong, and being wrong only means
- *  dropping Below. */
-private val MinputMenuAssumedWidth = 180.dp
+/** A dp or two of headroom on the predicted width, so a label that measures to exactly the
+ *  available space doesn't ellipsize on a rounding difference. */
+private val MinputMenuWidthSlack = 2.dp
+
+/** Envelope for the predicted width. The cap is M3's own `DropdownMenuItemDefaultMaxWidth`; the
+ *  floor keeps a one-word menu from collapsing to a sliver. */
+private val MinputMenuMinWidth = 96.dp
+private val MinputMenuMaxWidth = 280.dp
 
 /** Glyph edge in a menu row. M3 defaults to a 24dp icon, which shouts next to this app's
  *  menu type scale; the SLOT stays M3's width (so labels still align down the column) and only

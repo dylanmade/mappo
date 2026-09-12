@@ -972,6 +972,10 @@ private fun CommandTile(
     // whatever the user aimed at.
     val movable = enabled && output != null
     var keyDownAt by remember { mutableLongStateOf(0L) }
+    // Did THIS tile see the press that this release belongs to? A held activate button keeps
+    // auto-repeating while focus moves, so the release lands on whatever tile focus ended on —
+    // and without this, that tile opened its menu for a press the user never made on it.
+    var sawOwnKeyDown by remember { mutableStateOf(false) }
     // The release that merely ENDS the lifting hold must not also count as a confirm. Tracked
     // explicitly rather than inferred from "target == origin", which was the earlier trick and
     // had a real cost: it made putting a tile back down where you picked it up impossible,
@@ -1040,17 +1044,24 @@ private fun CommandTile(
             // then d-padding away left the timer running on the tile behind you: it lifted a
             // tile you were no longer looking at, and the release — now delivered to whatever
             // had focus — dropped it there.
-            .onFocusChanged { if (!it.isFocused) keyDownAt = 0L }
+            .onFocusChanged {
+                if (!it.isFocused) {
+                    keyDownAt = 0L
+                    sawOwnKeyDown = false
+                }
+            }
             // Every tile is a focus stop, editable or not — a read-only layer view still
             // needs controller navigation to reach its menus.
             .focusable(interactionSource = focusInteraction)
             .onKeyEvent { event ->
                 if (event.key !in TileActivateKeys) {
-                    // ANY other key while the activate button is held abandons the hold. A
+                    // ANY other key while the activate button is held abandons the press
+                    // entirely — both the pending hold and the claim on the eventual release. A
                     // half-committed lift is the worst state this control can be in, so the
                     // gesture is treated as fragile on purpose: it survives holding still and
                     // nothing else. (Focus loss disarms it too, below.)
                     keyDownAt = 0L
+                    sawOwnKeyDown = false
                     return@onKeyEvent false
                 }
                 when (event.type) {
@@ -1060,6 +1071,7 @@ private fun CommandTile(
                         // hold here the moment focus arrived — lifting a tile the user had
                         // merely navigated onto, mid-hold.
                         val initialPress = event.nativeKeyEvent.repeatCount == 0
+                        if (initialPress) sawOwnKeyDown = true
                         if (movable && initialPress && !moveState.active && keyDownAt == 0L) {
                             keyDownAt = System.currentTimeMillis()
                         }
@@ -1067,12 +1079,15 @@ private fun CommandTile(
                     }
                     KeyEventType.KeyUp -> {
                         keyDownAt = 0L
-                        if (liftAwaitingRelease) {
+                        val ownPress = sawOwnKeyDown
+                        sawOwnKeyDown = false
+                        when {
                             // Absorb: this release is the end of the hold that lifted the
                             // tile, not a confirmation of anywhere to put it.
-                            liftAwaitingRelease = false
-                        } else {
-                            activate()
+                            liftAwaitingRelease -> liftAwaitingRelease = false
+                            // The press started somewhere else and merely finished here.
+                            !ownPress -> Unit
+                            else -> activate()
                         }
                         true
                     }
