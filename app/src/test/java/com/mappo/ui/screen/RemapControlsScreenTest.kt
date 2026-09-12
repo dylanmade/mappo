@@ -137,22 +137,43 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun simpleView_showsExtraInputBadge() {
-        setScreenLocal(sampleConfig(extraButtonAInput = true))
+    fun simpleView_showsAlternatePressAssignment_inline() {
+        setScreenLocal(
+            sampleConfig(boundButtonA = BindingOutput.KeyPress("ENTER"), extraButtonAInput = true),
+        )
 
-        // One command row beyond the standard press on button_a → a hair-spaced "+ 1"
-        // (leading hair space pads it off the box border) beside the face box.
-        composeRule.onNodeWithText("\u200A+\u200A1", useUnmergedTree = true).assertExists()
+        // 2026-09-11: a row renders EVERY assigned press type inline (Press then Long here),
+        // replacing the "+N" badge that only counted them.
+        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("KB: SPACE", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("\u200A+\u200A1", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
-    fun simpleView_extraInputBadges_arePerRow() {
-        setScreenLocal(sampleConfig(extraButtonAInput = true, extraButtonBInput = true))
+    fun simpleView_alternateOnlyRow_showsAssignmentNotRestingLabel() {
+        setScreenLocal(sampleConfig(extraButtonBInput = true))
 
-        // Extras on two different sub-inputs render one badge per row ("+\u200A1" twice), not
-        // a single group-total "+\u200A2".
-        composeRule.onAllNodesWithText("\u200A+\u200A1", useUnmergedTree = true).assertCountEquals(2)
-        composeRule.onAllNodesWithText("\u200A+\u200A2", useUnmergedTree = true).assertCountEquals(0)
+        // button_b's standard press is UNBOUND and its long press is bound: assignments close
+        // up rank (no empty leading slot), and the row stops showing its resting hardware name.
+        composeRule.onNodeWithText("KB: Q", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("B Button", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun simpleView_showsAssignment_evenWhenGroupModeIsDeviceDefault() {
+        setScreenLocal(
+            sampleConfig(
+                boundButtonA = BindingOutput.KeyPress("ENTER"),
+                faceMode = BindingMode.DEVICE_DEFAULT,
+            ),
+        )
+
+        // Regression (fixed 2026-09-11): the row label used to early-return the input's PHYSICAL
+        // name whenever the group's mode was DEVICE_DEFAULT, so a command assigned from the
+        // advanced table — which never consults the mode — showed as "A Button". A row with an
+        // assignment shows the assignment; the mode only decides the RESTING label.
+        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("A Button", useUnmergedTree = true).assertCountEquals(0)
     }
 
     private fun setScreenLocal(config: ControllerConfig) {
@@ -814,6 +835,7 @@ class RemapControlsScreenTest {
         buttonALabel: String? = null,
         extraButtonAInput: Boolean = false,
         extraButtonBInput: Boolean = false,
+        faceMode: BindingMode = BindingMode.BUTTON_PAD,
     ): ControllerConfig {
         val activator = Activator(id = 100L, groupInputId = 10L, type = ActivatorType.FULL_PRESS, orderIndex = 0)
         val binding = boundButtonA.toEntity().let { (type, args) ->
@@ -852,7 +874,7 @@ class RemapControlsScreenTest {
             )
         }
         val faceGroup = BindingGroupGraph(
-            group = BindingGroup(id = 1L, actionSetId = 1L, name = "face_buttons", mode = BindingMode.BUTTON_PAD),
+            group = BindingGroup(id = 1L, actionSetId = 1L, name = "face_buttons", mode = faceMode),
             inputs = listOf(
                 buttonAInput,
                 unboundInput(11L, "button_b", 1, extraInput = extraButtonBInput),

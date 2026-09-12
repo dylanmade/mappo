@@ -573,7 +573,6 @@ fun RemapControlsScreen(
                             viewingSet = viewingSet,
                             viewingLayer = viewingLayer,
                             config = config,
-                            onMap = { /* input-mapping wizard — UI-only CTA for now */ },
                             editorCallbacks = editorCallbacks,
                             // While the drawer is open, controller focus lives on its
                             // cards; browsing can remount this view (no-layout ↔ controls

@@ -14,19 +14,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,17 +45,21 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.mappo.R
@@ -88,12 +86,28 @@ import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
- * The simplified remap view: a controller diagram in the middle flanked by one tappable box per
- * input group, each row showing just the input glyph + what its **standard press** currently
- * does. Tapping a box animates it into the center of the screen (over the controller), morphing
- * into the in-place advanced editor ([RemapGroupEditor]); an invisible stand-in holds the
- * group's home position and the box animates back on close (or when another group is picked). The
- * top-center **Map** button is the future home of the input-mapping wizard (UI-only for now).
+ * The simplified remap view: a controller diagram flanked by one tappable box per input group,
+ * each row showing an input glyph + every command assigned to that input. Tapping a box animates
+ * it into the center of the screen (over the controller), morphing into the in-place advanced
+ * editor ([RemapGroupEditor]); an invisible stand-in holds the group's home position and the box
+ * animates back on close (or when another group is picked).
+ *
+ * **Restructured 2026-09-11 to follow the advanced view's table** ([RemapGroupEditor]), in three
+ * moves:
+ *
+ * 1. A row no longer shows only its standard press with a "+N" badge for the rest. Every press
+ *    type the user has assigned now renders inline, in the table's column order, tinted with
+ *    that column's identity color — the basic view as the table's compacted twin. There are no
+ *    visible empty slots here: assignments close up rank (see [AssignmentTable]).
+ * 2. The LEFT column's rows MIRROR the right column's instead of matching it — glyph at the
+ *    box's inner edge, assignments running outward. The centre group mirrors per ROW around its
+ *    own centre line and moved to its own full-plate-width section beneath the flanks, because
+ *    inline assignments need far more room than a third of the plate ([anchorFor]).
+ * 3. Row text resolution was fixed to mean what it says: the command's label, else the output's
+ *    name ([rowAssignments]).
+ *
+ * The **Map** CTA was removed the same day (Dylan, "for now") — it was a UI-only stand-in for
+ * the future input-mapping wizard, so nothing behind it was lost.
  *
  * Box styling: accent-tinted rounded boxes + bevel border (the treatment born on the retired
  * d-pad flower home's petal cards, now owned by the remap chrome). The whole band rides one
@@ -112,7 +126,6 @@ internal fun RemapSimpleView(
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
-    onMap: () -> Unit,
     editorCallbacks: RemapGroupEditorCallbacks,
     modifier: Modifier = Modifier,
     // Gates the controller-focus seat below. While a side drawer is open, focus belongs to
@@ -230,18 +243,18 @@ internal fun RemapSimpleView(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-                // The three-column band, now the plate's content and sized BY it.
+                // The input map, now in TWO sections on the plate (2026-09-11): the flanking
+                // columns with the controller between them, and the centre group beneath them
+                // on its own full-width row. The centre group moved out of the middle column
+                // because its rows now carry every press type's assignment inline and mirror
+                // around a centre line — it needs far more width than a third of the plate.
                 MinputPod(
                     // A plate, not a capsule: the pill default would round this to a lozenge.
                     corner = MinputPodPlateCorner,
-                    // Wide gutter keeps the side group boxes off the controller image.
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
                     // FILLS the content section rather than hugging the band (2026-08-30,
                     // Dylan): this plate is the middle region, not chrome floating in it.
                     // That retires the IntrinsicSize.Min the band used to measure itself by
-                    // — the columns take their height from the plate now, so the middle
-                    // column's Map button pins to the plate's top edge and the utility box
-                    // to its bottom, which is what the intrinsic pass was arranging by hand.
+                    // — the sections take their height from the plate now.
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     val box: @Composable (RemapSimpleGroup, Modifier) -> Unit = { group, boxModifier ->
@@ -261,67 +274,65 @@ internal fun RemapSimpleView(
                             modifier = boxModifier,
                         )
                     }
-                    // Left column, counterclockwise start: shoulder → d-pad → stick. Boxes anchor
-                    // toward the screen center (the controller), i.e. this column's END edge, and
-                    // cluster toward the vertical center.
                     Column(
-                        // start gutter reserves room for the boxes' outside-left +N badges (they're
-                        // zero-footprint overlays — without this they'd clip off the view edge).
-                        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = BadgeGutter),
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(SectionGap),
                     ) {
-                        box(RemapSimpleGroup.LEFT_SHOULDER, Modifier)
-                        box(RemapSimpleGroup.DPAD, Modifier)
-                        box(RemapSimpleGroup.LEFT_STICK, Modifier)
-                    }
-                    // Middle column: Map CTA top-aligned with the flanking columns' topmost boxes, the
-                    // utility box bottom-aligned with their bottommost, controller between. Weight
-                    // trimmed from 1.25 to hand the flanking group boxes a little more inner width
-                    // (the controller image shrinks with its column).
-                    Column(
-                        modifier = Modifier.weight(1.1f).fillMaxHeight(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Button(
-                            onClick = onMap,
-                            modifier = Modifier.testTag("map-button"),
+                        // ── Flanks: the two side columns and the controller between them ──
+                        // Takes all the slack the centre section leaves.
+                        Row(
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            // Wide gutter keeps the side group boxes off the controller image.
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
                         ) {
-                            Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Map")
+                            // Left column, counterclockwise start: shoulder → d-pad → stick.
+                            // Its rows are MIRRORED (glyph at the box's inner edge, assignments
+                            // running outward) so the flanks read as each other's reflection —
+                            // see [anchorFor]. The +N badge gutters the columns used to reserve
+                            // are gone with the badges themselves.
+                            Column(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                                horizontalAlignment = Alignment.End,
+                            ) {
+                                box(RemapSimpleGroup.LEFT_SHOULDER, Modifier)
+                                box(RemapSimpleGroup.DPAD, Modifier)
+                                box(RemapSimpleGroup.LEFT_STICK, Modifier)
+                            }
+                            // Middle: just the controller image now — the Map CTA was removed
+                            // 2026-09-11 (Dylan, "for now"; it was a UI-only stand-in for the
+                            // input-mapping wizard) and the centre group box moved down to its
+                            // own section.
+                            //
+                            // sizeToIntrinsics=false: the image contributes no intrinsic
+                            // height, so it never drives the band's measurement — it takes
+                            // whatever the flanking group boxes leave.
+                            Box(
+                                Modifier
+                                    .weight(1.1f)
+                                    .fillMaxHeight()
+                                    .padding(vertical = 8.dp)
+                                    .paint(
+                                        painter = painterResource(R.drawable.controller_placeholder),
+                                        sizeToIntrinsics = false,
+                                        contentScale = ContentScale.Fit,
+                                    ),
+                            )
+                            // Right column: shoulder → face buttons → stick. Glyph at the
+                            // box's inner (start) edge, assignments running outward.
+                            Column(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                                horizontalAlignment = Alignment.Start,
+                            ) {
+                                box(RemapSimpleGroup.RIGHT_SHOULDER, Modifier)
+                                box(RemapSimpleGroup.FACE, Modifier)
+                                box(RemapSimpleGroup.RIGHT_STICK, Modifier)
+                            }
                         }
-                        // sizeToIntrinsics=false: the image contributes no intrinsic height, so
-                        // it never drives the band's measurement — it takes the slack the
-                        // flanking group boxes leave (weight(1f) below).
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp)
-                                .paint(
-                                    painter = painterResource(R.drawable.controller_placeholder),
-                                    sizeToIntrinsics = false,
-                                    contentScale = ContentScale.Fit,
-                                ),
-                        )
-                        // SYMMETRIC gutter on the box only (not the column), at HALF depth: the box's
-                        // right-side +N badge can also spill into the 18dp inter-column gap, so a half
-                        // gutter keeps enough clearance without squeezing the box (full BadgeGutter ate
-                        // too much width once the middle column narrowed to 1.1).
-                        box(RemapSimpleGroup.UTILITY, Modifier.padding(horizontal = BadgeGutter / 2))
-                    }
-                    // Right column: shoulder → face buttons → stick. Boxes anchor toward the screen
-                    // center (this column's START edge).
-                    Column(
-                        // end gutter reserves room for the outside-right +N badges (see left column).
-                        modifier = Modifier.weight(1f).fillMaxHeight().padding(end = BadgeGutter),
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                        horizontalAlignment = Alignment.Start,
-                    ) {
-                        box(RemapSimpleGroup.RIGHT_SHOULDER, Modifier)
-                        box(RemapSimpleGroup.FACE, Modifier)
-                        box(RemapSimpleGroup.RIGHT_STICK, Modifier)
+                        // ── Centre: the utility group, the full width of the plate ──
+                        // Wrap height, so the flanks keep everything it doesn't need.
+                        box(RemapSimpleGroup.UTILITY, Modifier.fillMaxWidth())
                     }
                 }
         }
@@ -406,13 +417,12 @@ internal fun RemapSimpleView(
                 ) {
                     // Crossfade: the box's summary rows dissolve into the editor as it grows.
                     if (midFlight) {
-                        Column(
+                        Box(
                             modifier = Modifier
                                 .graphicsLayer { alpha = 1f - progress.value }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalArrangement = Arrangement.spacedBy(SummaryRowSpacing),
                         ) {
-                            GroupSummaryRows(vg, viewingSet, viewingLayer, config)
+                            GroupRows(vg, viewingSet, viewingLayer, config)
                         }
                     }
                     RemapGroupEditor(
@@ -496,39 +506,65 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
 }
 
 /**
- * Resolve what a row's standard press currently does, as a short label:
- * `(Device default)` mode or a present-but-unbound input → the input's own resting name
- * ([defaultRowLabel]); `None` → "None"; a bound FULL_PRESS command → its display label; an
- * active mode with no per-input row (analog modes) → the mode's name. Layer view resolves the
- * override first and falls through to the base set (ghost semantics).
+ * One assignment shown on a basic-view row: which press type it belongs to, and the text.
+ *
+ * The basic view is now the advanced table's COMPACTED twin (2026-09-11): every press type the
+ * user has assigned appears inline on the row, tinted with that column's identity color, in
+ * place of the old "+N" badge that only said how many there were. Unlike the table there are no
+ * visible empty slots — assignments close up rank, so a Press + Down input reads as two
+ * adjacent cells, not two cells with three gaps between them.
  */
-internal fun simpleRowLabel(
+internal data class RowAssignment(val type: ActivatorType, val text: String)
+
+/**
+ * Resolve one row's assignments, in the advanced table's column order ([pressTypeColumns]).
+ * Layer view resolves override→base per sub-input (ghost semantics), same as the table.
+ *
+ * **Text precedence: the command's user label when it has one, else the output's own display
+ * name.** That's Dylan's spec, and the fix for a long-standing mismatch: until 2026-09-11 this
+ * resolution early-returned the input's PHYSICAL name whenever the binding group's mode was
+ * `DEVICE_DEFAULT`, and only the aux sources (bumpers, Start/Select) ever leave that mode
+ * automatically — so a command assigned from the advanced table, which never consulted the
+ * mode, showed up here as "A Button", corresponding to neither the output nor the label. The
+ * mode now decides only the RESTING label ([rowRestingLabel]): what a row with no assignments
+ * at all says.
+ */
+internal fun rowAssignments(
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
+    spec: SimpleRowSpec,
+): List<RowAssignment> {
+    val groupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+        ?: viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+        ?: return emptyList()
+    return pressTypeColumns.mapNotNull { type ->
+        val activator = groupInput.firstActivatorOfType(type) ?: return@mapNotNull null
+        val binding = activator.bindings.firstOrNull() ?: return@mapNotNull null
+        val output = activator.primaryOutput
+        if (output == BindingOutput.Unbound) return@mapNotNull null
+        RowAssignment(type, binding.label?.takeIf { it.isNotBlank() } ?: output.displayLabel(config))
+    }
+}
+
+/**
+ * What a row with NO assignments says: `None` mode → "None"; an active mode that has no
+ * bindable row for this sub-input at all (the analog modes) → the mode's own name; anything
+ * else — device default, or a seeded-but-unbound row — → the input's physical name.
+ */
+internal fun rowRestingLabel(
+    viewingSet: ActionSetGraph?,
+    viewingLayer: ActionLayerGraph?,
     spec: SimpleRowSpec,
 ): String {
     val layerGroup: BindingGroupGraph? = viewingLayer?.presetFor(spec.source)?.group
     val baseGroup: BindingGroupGraph? = viewingSet?.presetFor(spec.source)?.group
     val effective = layerGroup ?: baseGroup ?: return defaultRowLabel(spec)
-    when (effective.group.mode) {
-        BindingMode.DEVICE_DEFAULT -> return defaultRowLabel(spec)
-        BindingMode.NONE -> return "None"
-        else -> Unit
-    }
-    val groupInput = layerGroup?.inputByKey(spec.subInputKey)
-        ?: baseGroup?.inputByKey(spec.subInputKey)
-    val primary = groupInput?.activators?.firstOrNull { it.activator.type == ActivatorType.FULL_PRESS }
-        ?: groupInput?.activators?.firstOrNull()
-    // A user-given label always wins over the raw assignment in the basic view.
-    val userLabel = primary?.bindings?.firstOrNull()?.label
-    if (!userLabel.isNullOrBlank()) return userLabel
-    val output = primary?.primaryOutput
+    val hasRow = layerGroup?.inputByKey(spec.subInputKey) != null ||
+        baseGroup?.inputByKey(spec.subInputKey) != null
     return when {
-        // Unbound displays as "(Device default)" in the editor; the summary shows the
-        // input's resting name.
-        output != null && output != BindingOutput.Unbound -> output.displayLabel(config)
-        groupInput != null -> defaultRowLabel(spec)
+        effective.group.mode == BindingMode.NONE -> "None"
+        effective.group.mode == BindingMode.DEVICE_DEFAULT || hasRow -> defaultRowLabel(spec)
         else -> effective.group.mode.displayNameFor(spec.source)
     }
 }
@@ -573,71 +609,248 @@ internal fun defaultRowLabel(spec: SimpleRowSpec): String = when (spec.source) {
     else -> "Default"
 }
 
+/** Which edge of its box a row's glyph anchors to — and so which way its assignments extend. */
+internal enum class RowAnchor { START, END }
+
 /**
- * Per-row +N counts: how many command rows each displayed sub-input carries beyond its
- * primary, plus BOUND rows on sub-inputs the box doesn't summarize (soft pulls, outer rings —
- * their seeded-but-unbound rows don't count), attributed to that source's FIRST displayed row.
- * Each nonzero entry surfaces as a +N badge beside its own summary row; the values sum to the
- * group's total extras.
+ * Row anchoring, per Dylan's 2026-09-11 restructure: the LEFT column's groups now MIRROR the
+ * right column's rather than matching it — glyph at the box's inner (right) edge, assignments
+ * running outward to the left — so both flanks read as extending away from the controller
+ * between them.
+ *
+ * The centre group is anchored per ROW instead of per box: its left-hand inputs (Select) sit on
+ * the box's left half mirrored, its right-hand inputs (Start) on the right half normal, and the
+ * two meet at the box's centre line. That's what makes it the "centred" group, and why it gets
+ * the whole plate width in its own section beneath the flanks.
  */
-internal fun rowExtraInputCounts(
-    group: RemapSimpleGroup,
-    viewingSet: ActionSetGraph?,
-    viewingLayer: ActionLayerGraph?,
-): Map<SimpleRowSpec, Int> {
-    val counts = mutableMapOf<SimpleRowSpec, Int>()
-    val displayedKeysBySource = group.rows.groupBy({ it.source }, { it.subInputKey })
-    for ((source, displayedKeys) in displayedKeysBySource) {
-        val layerGroup = viewingLayer?.presetFor(source)?.group
-        val baseGroup = viewingSet?.presetFor(source)?.group
-        val effective = layerGroup ?: baseGroup ?: continue
-        val mode = effective.group.mode
-        if (mode == BindingMode.DEVICE_DEFAULT || mode == BindingMode.NONE) continue
-        for ((subKey, _) in RemapSections.bindableSubInputsFor(source, mode)) {
-            val groupInput = layerGroup?.inputByKey(subKey) ?: baseGroup?.inputByKey(subKey) ?: continue
-            val rows = groupInput.activators.flatMap { ag -> ag.bindings }
-            val spec: SimpleRowSpec
-            val extra: Int
-            if (subKey in displayedKeys) {
-                spec = SimpleRowSpec(source, subKey)
-                extra = (rows.size - 1).coerceAtLeast(0)
-            } else {
-                // Hidden sub-inputs have no row of their own — they surface on their
-                // source's first displayed row (soft pull → the trigger's full-pull row).
-                spec = group.rows.first { it.source == source }
-                extra = rows.count { BindingOutput.fromEntity(it.outputType, it.args) != BindingOutput.Unbound }
-            }
-            if (extra > 0) counts[spec] = (counts[spec] ?: 0) + extra
-        }
-    }
-    return counts
+internal fun RemapSimpleGroup.anchorFor(spec: SimpleRowSpec): RowAnchor = when (this) {
+    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK ->
+        RowAnchor.END
+    RemapSimpleGroup.UTILITY ->
+        if (spec.source == InputSource.SWITCH_SELECT) RowAnchor.END else RowAnchor.START
+    else -> RowAnchor.START
 }
 
-/** The glyph + standard-press summary rows of one group (shared by the box and the morph). */
+/** One resolved cell of a group box's assignment table: its text, and the color that says which
+ *  press type it came from. */
+private data class AssignmentCell(val text: String, val color: Color)
+
+/**
+ * Resolve a row to its display cells — the assignments when it has any, otherwise the single
+ * resting label.
+ *
+ * Press keeps the plain content color (its palette entry is deliberately neutral, and the
+ * standard press is the row's subject); every alternate wears its column's HEADER color from
+ * the advanced table, which is the whole cue for which press type it is. The resting label is
+ * dimmed to `onSurfaceVariant` so "nothing is assigned here, this is the hardware default"
+ * reads differently at a glance from a real assignment — the distinction the old resolution
+ * couldn't make, since it showed the physical name for both.
+ */
 @Composable
-private fun GroupSummaryRows(
+private fun assignmentCells(
+    viewingSet: ActionSetGraph?,
+    viewingLayer: ActionLayerGraph?,
+    config: ControllerConfig?,
+    spec: SimpleRowSpec,
+): List<AssignmentCell> {
+    val assignments = rowAssignments(viewingSet, viewingLayer, config, spec)
+    if (assignments.isEmpty()) {
+        return listOf(
+            AssignmentCell(
+                text = rowRestingLabel(viewingSet, viewingLayer, spec),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+        )
+    }
+    return assignments.map { assignment ->
+        AssignmentCell(
+            text = assignment.text,
+            color = if (assignment.type == ActivatorType.FULL_PRESS) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                assignment.type.columnColors().header
+            },
+        )
+    }
+}
+
+/**
+ * The glyph + assignment rows of one group (shared by the box and the morph crossfade).
+ *
+ * A group whose rows all anchor the same way is ONE table filling the box. The centre group
+ * anchors its rows both ways, so it splits into two half-width tables meeting at the box's
+ * centre line — see [anchorFor]. Splitting by anchor rather than special-casing `UTILITY` keeps
+ * this general: give any group a mixed set of anchors and it lays out the same way.
+ */
+@Composable
+private fun GroupRows(
     group: RemapSimpleGroup,
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
+    modifier: Modifier = Modifier,
 ) {
-    group.rows.forEach { spec ->
+    val endRows = group.rows.filter { group.anchorFor(it) == RowAnchor.END }
+    val startRows = group.rows.filter { group.anchorFor(it) == RowAnchor.START }
+    val table: @Composable (List<SimpleRowSpec>, RowAnchor, Modifier) -> Unit = { specs, anchor, m ->
+        AssignmentTable(
+            specs = specs,
+            rows = specs.map { assignmentCells(viewingSet, viewingLayer, config, it) },
+            anchor = anchor,
+            modifier = m,
+        )
+    }
+    if (endRows.isEmpty() || startRows.isEmpty()) {
+        table(group.rows, group.anchorFor(group.rows.first()), modifier.fillMaxWidth())
+    } else {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            modifier = Modifier.height(SummaryRowHeight),
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CentreSplitGap),
+            verticalAlignment = Alignment.Top,
         ) {
-            InputGlyphs.SubInputGlyph(spec.source, spec.subInputKey, size = 14.dp)
-            Text(
-                text = simpleRowLabel(viewingSet, viewingLayer, config, spec),
-                style = minputMiniTextStyle(),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            table(endRows, RowAnchor.END, Modifier.weight(1f))
+            table(startRows, RowAnchor.START, Modifier.weight(1f))
         }
     }
 }
+
+/**
+ * The table: a fixed glyph column plus N content-sized assignment columns.
+ *
+ * A custom [Layout] rather than nested Rows because the columns must line up ACROSS the rows of
+ * one box while still being sized BY their content. Equal-weight columns would let a row whose
+ * only alternate is a one-letter command steal a third of the box from the Press command above
+ * it; content-sized columns that only align are what Dylan asked for ("the columns are simply
+ * there to ensure clean assignment display").
+ *
+ * Column width = the widest cell in that column. When the natural widths overflow the box the
+ * surplus comes off the WIDEST columns first ([fitColumns]), so short cells stay whole and only
+ * long output names ellipsize.
+ *
+ * Intrinsics, not a second measure pass: a `Measurable` may only be measured once, so the
+ * natural widths come from `maxIntrinsicWidth` and the real measure runs after the column
+ * widths are settled.
+ */
+@Composable
+private fun AssignmentTable(
+    specs: List<SimpleRowSpec>,
+    rows: List<List<AssignmentCell>>,
+    anchor: RowAnchor,
+    modifier: Modifier = Modifier,
+) {
+    val columnCount = rows.maxOfOrNull { it.size } ?: 0
+    Layout(
+        modifier = modifier,
+        content = {
+            specs.forEachIndexed { rowIndex, spec ->
+                Box(Modifier.layoutId(GlyphSlot(rowIndex))) {
+                    InputGlyphs.SubInputGlyph(spec.source, spec.subInputKey, size = SummaryGlyphSize)
+                }
+                rows[rowIndex].forEachIndexed { columnIndex, cell ->
+                    Text(
+                        text = cell.text,
+                        style = minputMiniTextStyle(),
+                        color = cell.color,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.layoutId(CellSlot(rowIndex, columnIndex)),
+                    )
+                }
+            }
+        },
+    ) { measurables, constraints ->
+        val slots = measurables.associateBy { it.layoutId }
+        val rowHeight = SummaryRowHeight.roundToPx()
+        val spacing = SummaryRowSpacing.roundToPx()
+        val glyph = SummaryGlyphSize.roundToPx()
+        val gap = AssignmentGap.roundToPx()
+
+        val natural = IntArray(columnCount) { column ->
+            rows.indices.maxOfOrNull { row ->
+                slots[CellSlot(row, column)]?.maxIntrinsicWidth(rowHeight) ?: 0
+            } ?: 0
+        }
+        // One gap per column: the glyph-to-first-column gap plus the inter-column ones.
+        val outerWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else natural.sum() +
+            glyph + gap * columnCount
+        val columnWidths = fitColumns(natural, (outerWidth - glyph - gap * columnCount).coerceAtLeast(0))
+
+        val width = (glyph + gap * columnCount + columnWidths.sum())
+            .coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = (specs.size * rowHeight + (specs.size - 1).coerceAtLeast(0) * spacing)
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
+
+        // Column origins, walking outward FROM the glyph: left-to-right for a START row,
+        // right-to-left for a mirrored END one.
+        val columnLefts = IntArray(columnCount)
+        if (anchor == RowAnchor.START) {
+            var x = glyph + gap
+            for (column in 0 until columnCount) {
+                columnLefts[column] = x
+                x += columnWidths[column] + gap
+            }
+        } else {
+            var right = width - glyph - gap
+            for (column in 0 until columnCount) {
+                columnLefts[column] = right - columnWidths[column]
+                right -= columnWidths[column] + gap
+            }
+        }
+
+        val glyphs = specs.indices.map { slots[GlyphSlot(it)]?.measure(Constraints.fixed(glyph, glyph)) }
+        val cells = rows.mapIndexed { row, rowCells ->
+            rowCells.indices.map { column ->
+                slots[CellSlot(row, column)]?.measure(Constraints(maxWidth = columnWidths[column]))
+            }
+        }
+
+        layout(width, height) {
+            specs.indices.forEach { row ->
+                val top = row * (rowHeight + spacing)
+                glyphs[row]?.let { placeable ->
+                    val x = if (anchor == RowAnchor.START) 0 else width - glyph
+                    placeable.place(x, top + (rowHeight - placeable.height) / 2)
+                }
+                cells[row].forEachIndexed { column, placeable ->
+                    if (placeable == null) return@forEachIndexed
+                    // A cell hugs the GLYPH side of its column, so a mirrored row reads outward
+                    // from the glyph and a normal one reads into the box.
+                    val x = if (anchor == RowAnchor.START) {
+                        columnLefts[column]
+                    } else {
+                        columnLefts[column] + columnWidths[column] - placeable.width
+                    }
+                    placeable.place(x, top + (rowHeight - placeable.height) / 2)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fit natural column widths into [budget] by water-filling: every column narrower than an equal
+ * share keeps its full width, and what it leaves over is redistributed to the wider ones. Short
+ * cells therefore never get squeezed to make room for a long output name — only the long names
+ * ellipsize.
+ */
+private fun fitColumns(natural: IntArray, budget: Int): IntArray {
+    if (natural.isEmpty() || natural.sum() <= budget) return natural
+    val fitted = IntArray(natural.size)
+    var remaining = budget
+    var unassigned = natural.size
+    natural.withIndex().sortedBy { it.value }.forEach { (index, value) ->
+        val take = minOf(value, remaining / unassigned)
+        fitted[index] = take
+        remaining -= take
+        unassigned--
+    }
+    return fitted
+}
+
+/** [AssignmentTable]'s layout slot ids. */
+private data class GlyphSlot(val row: Int)
+private data class CellSlot(val row: Int, val column: Int)
 
 /**
  * One tappable group box (the accent-tinted petal-card treatment). While the group is
@@ -660,7 +873,6 @@ private fun GroupBox(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(GroupCorner)
-    val accent = MaterialTheme.colorScheme.primary
     if (placeholder && placeholderSize != null) {
         // Invisible same-size stand-in, sized to the box's last measured bounds: holds the
         // home position (and the animate-back rect) while the group lives in the editor. The
@@ -680,11 +892,6 @@ private fun GroupBox(
     // Shared box treatment (same identity as the home flower's petal cards) — also the basis
     // the pill controls now copy, via the minputBoxContainer/remapBoxOutline helpers.
     val container = minputBoxContainer()
-    val rowExtras = rowExtraInputCounts(group, viewingSet, viewingLayer)
-    // Each +N hangs OUTSIDE the box as a ZERO-FOOTPRINT overlay, aligned with ITS OWN summary
-    // row (per-row extras, not one group total). Zero-footprint: it reports no layout size, so
-    // it can never shift the box (the centered utility box drifted left when the badge took
-    // real width) and never wraps (measured unconstrained). It draws into the column gutter.
     val focusRequester = remember { FocusRequester() }
     if (requestFocus) {
         // LaunchedEffect (not an inline call): the box may be freshly recomposed from its
@@ -695,85 +902,50 @@ private fun GroupBox(
         }
     }
     val interaction = remember { MutableInteractionSource() }
-    Box(modifier = modifier) {
-        Column(
-            // Full column width regardless of label content — every box in a column reads as
-            // the same fixed-width card.
-            modifier = Modifier
-                .fillMaxWidth()
-                // Bounds capture must sit OUTSIDE the lift layer: localBoundingBoxOf maps
-                // through graphicsLayer transforms, so capturing inside it would bake the
-                // focus offset (historically the 1.05× focus grow) into the placeholder/
-                // morph-origin rect — the stand-in came out displaced/oversized and the
-                // neighboring boxes jumped during the morph.
-                .onGloballyPositioned(onPositioned)
-                .minputInteractiveMotion(interaction)
-                .clip(shape)
-                .background(container)
-                .border(minputBevelBorder(container, GroupCorner), shape)
-                .focusRequester(focusRequester)
-                .clickable(
-                    interactionSource = interaction,
-                    indication = LocalIndication.current,
-                ) { onOpenGroup(group) }
-                .testTag("simple-group:${group.name}")
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(SummaryRowSpacing),
-        ) {
-            GroupSummaryRows(group, viewingSet, viewingLayer, config)
-        }
-        if (rowExtras.isNotEmpty()) {
-            val onLeft = group.badgeOnLeft
-            val gapPx = with(LocalDensity.current) { 4.dp.toPx() }
-            val topPx = with(LocalDensity.current) { BadgeFirstRowAlignPadding.toPx() }
-            val pitchPx = with(LocalDensity.current) { (SummaryRowHeight + SummaryRowSpacing).toPx() }
-            group.rows.forEachIndexed { index, spec ->
-                val extra = rowExtras[spec] ?: return@forEachIndexed
-                Text(
-                    // Hair spaces: between the plus and the count (thin space read a touch too
-                    // wide), and on the box-facing side to pad the badge off the box border.
-                    text = if (onLeft) "+\u200A$extra\u200A" else "\u200A+\u200A$extra",
-                    style = minputMiniTextStyle(),
-                    color = accent,
-                    maxLines = 1,
-                    softWrap = false,
-                    modifier = Modifier
-                        .align(if (onLeft) Alignment.TopStart else Alignment.TopEnd)
-                        .layout { measurable, _ ->
-                            // Measure at intrinsic size, report ZERO size to the parent, and
-                            // hang the text off the box's outer edge, at this row's height.
-                            val placeable = measurable.measure(androidx.compose.ui.unit.Constraints())
-                            layout(0, 0) {
-                                val x = if (onLeft) -(placeable.width + gapPx) else gapPx
-                                placeable.place(x.roundToInt(), (topPx + pitchPx * index).roundToInt())
-                            }
-                        },
-                )
-            }
-        }
+    Box(
+        // Full column width regardless of content — every box in a column reads as the same
+        // fixed-width card, and the assignment table needs a known width to fit its columns to.
+        modifier = modifier
+            .fillMaxWidth()
+            // Bounds capture must sit OUTSIDE the lift layer: localBoundingBoxOf maps
+            // through graphicsLayer transforms, so capturing inside it would bake the
+            // focus offset (historically the 1.05× focus grow) into the placeholder/
+            // morph-origin rect — the stand-in came out displaced/oversized and the
+            // neighboring boxes jumped during the morph.
+            .onGloballyPositioned(onPositioned)
+            .minputInteractiveMotion(interaction)
+            .clip(shape)
+            .background(container)
+            .border(minputBevelBorder(container, GroupCorner), shape)
+            .focusRequester(focusRequester)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+            ) { onOpenGroup(group) }
+            .testTag("simple-group:${group.name}")
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        GroupRows(group, viewingSet, viewingLayer, config)
     }
 }
 
-/** Left column boxes carry their +N badge on the left (outside edge toward the screen center
- *  is already occupied by the box anchor); middle + right columns carry it on the right. */
-private val RemapSimpleGroup.badgeOnLeft: Boolean
-    get() = this == RemapSimpleGroup.LEFT_SHOULDER ||
-        this == RemapSimpleGroup.DPAD ||
-        this == RemapSimpleGroup.LEFT_STICK
-
-/** Height of one glyph + label summary row inside a group box. */
+/** Height of one glyph + assignment row inside a group box. */
 private val SummaryRowHeight = 17.dp
 
-/** Vertical gap between summary rows — with [SummaryRowHeight], sets the +N badges' row pitch. */
+/** Vertical gap between a box's rows. */
 private val SummaryRowSpacing = 4.dp
 
-/** Aligns a +N badge's text with its summary row (6dp box padding + the 17dp row against the
- *  badge's 14sp line height → 6 + (17−14)/2); each subsequent row adds one row pitch. */
-private val BadgeFirstRowAlignPadding = 7.5.dp
+/** The input glyph that anchors every row. */
+private val SummaryGlyphSize = 14.dp
 
-/** Column-edge reserve for the zero-footprint +N badges (badge width + its 4dp gap) — kept as
- *  tight as the badge allows so the group boxes get the widest possible footprint. */
-private val BadgeGutter = 18.dp
+/** Gap between the glyph and its first assignment column, and between assignment columns. */
+private val AssignmentGap = 5.dp
+
+/** Gutter at the centre group's centre line, keeping its two halves' glyphs off each other. */
+private val CentreSplitGap = 10.dp
+
+/** Gap between the flanking-columns section and the centre group's section beneath it. */
+private val SectionGap = 10.dp
 
 // The group editor's morph values — canonical in the library (MinputDefaults.kt); these
 // are the remap package's aliases. The layout/options panels no longer morph (they're
