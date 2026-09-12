@@ -482,10 +482,17 @@ private fun AdvancedTable(
     val previewOrigin = moveState.origin
     val previewTarget = moveState.target
 
+    // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
+    // because a held activate button auto-repeats while focus moves, so the release can arrive
+    // at a different tile than the one that was lifted — there is no single tile that can
+    // reliably see both ends of the press. The table sees all of it.
+    var liftHeld by remember { mutableStateOf(false) }
+
     fun commitMove(pair: Pair<CellKey, CellKey>?) {
         val (from, to) = pair ?: return
         val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey } ?: return
         val groupId = bindingGroupIdFor(spec) ?: return
+        liftHeld = false
         callbacks.onMoveCell(groupId, from.inputKey, from.type, to.inputKey, to.type)
         // No focus handling here, deliberately. On the controller path focus already TRACKS the
         // drop target (see stepMoveTarget), so by the time a move commits it is on the
@@ -505,6 +512,7 @@ private fun AdvancedTable(
     // and covers this anyway; the "+" layer sits underneath.)
     fun showsSlot(key: CellKey): Boolean =
         !isDefined(key) || (previewOrigin != null && key == previewOrigin)
+
 
     // GREEN marks where the lifted tile will land, BLUE where it was picked up from; green wins
     // when they're the same cell, which is how "put it back where I found it" reads as a real
@@ -607,24 +615,49 @@ private fun AdvancedTable(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                // While a CONTROLLER move is in flight the table owns the d-pad: arrows walk
-                // the drop target and B/Escape cancels, while the lifted tile keeps focus and
-                // owns the confirm. Pointer-driven moves don't take this path — the finger is
-                // already saying where to land.
+                // While a CONTROLLER move is in flight the table owns the WHOLE keyboard:
+                // arrows walk the drop target, B/Escape cancels, and the activate keys confirm.
+                // The activate keys belong here rather than on the focused tile because a held
+                // button auto-repeats while focus moves, so a press and its release can land on
+                // different tiles — no single tile sees both ends of the gesture. Pointer-driven
+                // moves don't take this path; the finger is already saying where to land.
                 .onKeyEvent { event ->
                     if (!moveState.active || moveState.pointerDriven) return@onKeyEvent false
+
+                    // Activate FIRST, and on the key's release — which is why this sits above
+                    // the key-down filter below. (It didn't, once, and the filter ate every
+                    // confirm before this branch could see it.)
+                    if (event.key in TileActivateKeys) {
+                        if (event.type == KeyEventType.KeyUp) {
+                            val wasLiftingPress = liftHeld
+                            liftHeld = false
+                            // Releasing the button that LIFTED the tile confirms, provided the
+                            // target moved while it was held — ordinary drag-and-drop. Released
+                            // without having moved, it reads as the user taking their thumb off
+                            // a tile they've picked up to look around with, so the move stays
+                            // live and a later press confirms. That later press is also how a
+                            // tile gets put back down exactly where it came from.
+                            val movedWhileHeld = moveState.target != moveState.origin
+                            if (!wasLiftingPress || movedWhileHeld) {
+                                commitMove(moveState.commit())
+                            }
+                        }
+                        return@onKeyEvent true
+                    }
+
                     if (event.type != KeyEventType.KeyDown) return@onKeyEvent true
                     when (event.key) {
                         // Consuming the arrows is what stops normal focus traversal — focus
-                        // must stay on the lifted tile for the whole move.
+                        // tracks the drop target instead (see stepMoveTarget).
                         Key.DirectionUp -> { stepMoveTarget(-1, 0); true }
                         Key.DirectionDown -> { stepMoveTarget(1, 0); true }
                         Key.DirectionLeft -> { stepMoveTarget(0, -1); true }
                         Key.DirectionRight -> { stepMoveTarget(0, 1); true }
-                        Key.Back, Key.Escape, Key.ButtonB -> { moveState.cancel(); true }
-                        // NB: the activate keys are deliberately absent. The focused tile
-                        // handles its own activation (see CommandTile) and events reach it
-                        // first; a commit branch here would be a second, competing path.
+                        Key.Back, Key.Escape, Key.ButtonB -> {
+                            moveState.cancel()
+                            liftHeld = false
+                            true
+                        }
                         else -> true // swallow the rest so focus can't wander mid-move
                     }
                 },
@@ -763,6 +796,7 @@ private fun AdvancedTable(
                                         displacement = displacementFor(cellKey),
                                         previewOrigin = previewOrigin,
                                         onCommitMove = { commitMove(it) },
+                                        onControllerLift = { liftHeld = true },
                                         actions = {
                                             if (!editable) {
                                                 // Layer view is read-only here: editing routes to
@@ -914,6 +948,9 @@ private fun CommandTile(
      *  "dragging" to "written, waiting for the reload". */
     previewOrigin: CellKey?,
     onCommitMove: (Pair<CellKey, CellKey>?) -> Unit,
+    /** Reports a controller-driven lift, so the table can track whether the button that
+     *  started it is still held. */
+    onControllerLift: () -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
 ) {
@@ -976,24 +1013,14 @@ private fun CommandTile(
     // auto-repeating while focus moves, so the release lands on whatever tile focus ended on —
     // and without this, that tile opened its menu for a press the user never made on it.
     var sawOwnKeyDown by remember { mutableStateOf(false) }
-    // The release that merely ENDS the lifting hold must not also count as a confirm. Tracked
-    // explicitly rather than inferred from "target == origin", which was the earlier trick and
-    // had a real cost: it made putting a tile back down where you picked it up impossible,
-    // because that confirm is indistinguishable from the lift's own release.
-    var liftAwaitingRelease by remember { mutableStateOf(false) }
     LaunchedEffect(keyDownAt) {
         if (keyDownAt == 0L) return@LaunchedEffect
         delay(viewConfiguration.longPressTimeoutMillis)
         if (keyDownAt != 0L && !moveState.active) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            liftAwaitingRelease = true
             moveState.pickUp(cellKey, byPointer = false)
+            onControllerLift()
         }
-    }
-    // Don't let the flag outlive its move: if focus moved away while the button was still held,
-    // this tile never sees the release, and a stale flag would swallow its next activation.
-    LaunchedEffect(moveState.active) {
-        if (!moveState.active) liftAwaitingRelease = false
     }
 
     /**
@@ -1054,6 +1081,9 @@ private fun CommandTile(
             // needs controller navigation to reach its menus.
             .focusable(interactionSource = focusInteraction)
             .onKeyEvent { event ->
+                // While a CONTROLLER move is in flight the table owns the activate keys; see
+                // its handler. Returning false lets them bubble up to it.
+                if (moveState.active && !moveState.pointerDriven) return@onKeyEvent false
                 if (event.key !in TileActivateKeys) {
                     // ANY other key while the activate button is held abandons the press
                     // entirely — both the pending hold and the claim on the eventual release. A
@@ -1081,14 +1111,8 @@ private fun CommandTile(
                         keyDownAt = 0L
                         val ownPress = sawOwnKeyDown
                         sawOwnKeyDown = false
-                        when {
-                            // Absorb: this release is the end of the hold that lifted the
-                            // tile, not a confirmation of anywhere to put it.
-                            liftAwaitingRelease -> liftAwaitingRelease = false
-                            // The press started somewhere else and merely finished here.
-                            !ownPress -> Unit
-                            else -> activate()
-                        }
+                        // Only a release whose press this tile actually saw activates it.
+                        if (ownPress) activate()
                         true
                     }
                     else -> false
