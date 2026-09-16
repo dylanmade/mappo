@@ -183,6 +183,7 @@ fun MainScreen(
     val activeLayout by viewModel.activeLayout.collectAsStateWithLifecycle()
     val steamAccountName by viewModel.steamAccountName.collectAsStateWithLifecycle()
     val allLayouts by viewModel.allLayouts.collectAsStateWithLifecycle()
+    val layoutsLoaded by viewModel.layoutsLoaded.collectAsStateWithLifecycle()
     val tabContextMenuFor by viewModel.tabContextMenuFor.collectAsStateWithLifecycle()
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     // Session clipboard for the advanced table's cell Copy/Paste — read here so the tile
@@ -482,6 +483,8 @@ fun MainScreen(
                 RemapControlsScreen(
                     config = viewedControllerConfig,
                     layoutName = viewedLayout?.name,
+                    viewedLayoutId = viewedLayout?.id,
+                    layoutsLoaded = layoutsLoaded,
                     viewedAppPackage = viewedAppPackage,
                     // ── Layout settings panel: the layout-scoped entries (the global
                     // options moved to the wordmark drawer) ──

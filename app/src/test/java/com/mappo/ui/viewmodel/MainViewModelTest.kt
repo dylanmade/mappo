@@ -927,6 +927,69 @@ class MainViewModelTest {
         ioDispatcher = testDispatcher,
     )
 
+
+    /**
+     * The controls screen edits the layout it is VIEWING, so that is what the mutator guards
+     * have to check. Guarding on the ACTIVE layout instead (as they all did until 2026-09-12)
+     * made every edit a silent no-op whenever nothing was active — a fresh install left the
+     * whole remap UI inert — and tied editing a previewed layout to some unrelated layout
+     * happening to be active.
+     */
+    @Test
+    fun setControllerBinding_viewedButNotActiveLayout_delegatesToRepository() = runTest(testDispatcher) {
+        activeLayout.value = null
+        allProfiles.value = listOf(Layout(id = 9L, name = "Previewed"))
+        advanceUntilIdle()
+
+        subject.setViewingLayout(9L)
+        subject.setControllerBinding(activatorId = 42L, output = BindingOutput.KeyPress("ENTER"))
+        advanceUntilIdle()
+
+        coVerify { controllerConfigRepo.setBinding(42L, BindingOutput.KeyPress("ENTER")) }
+    }
+
+    @Test
+    fun setControllerBinding_nothingViewedOrActive_isNoOp() = runTest(testDispatcher) {
+        activeLayout.value = null
+        allProfiles.value = emptyList()
+        advanceUntilIdle()
+
+        subject.setControllerBinding(activatorId = 42L, output = BindingOutput.KeyPress("ENTER"))
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { controllerConfigRepo.setBinding(any(), any()) }
+    }
+
+    /**
+     * A fresh install has no active layout, so the first layout the user creates has to become
+     * it — otherwise they land in an editor whose edits drive no physical input.
+     */
+    @Test
+    fun createLayout_withNothingActive_activatesTheNewLayout() = runTest(testDispatcher) {
+        activeLayout.value = null
+        coEvery { layoutRepo.addLayout(any(), any()) } returns 7L
+        coEvery { layoutRepo.setActiveLayoutById(7L) } returns Layout(id = 7L, name = "First")
+
+        subject.createLayout("First", packageName = null)
+        advanceUntilIdle()
+
+        coVerify { layoutRepo.setActiveLayoutById(7L) }
+    }
+
+    @Test
+    fun createLayout_withAnActiveLayout_leavesItActive() = runTest(testDispatcher) {
+        activeLayout.value = Layout(id = 1L, name = "Existing", packageName = "com.other")
+        coEvery { layoutRepo.addLayout(any(), any()) } returns 7L
+
+        subject.createLayout("Second", packageName = "com.fresh")
+        advanceUntilIdle()
+
+        // Cross-application: binding the new layout to its own app is fine, but stealing the
+        // active pointer from another app's layout is exactly what the activate warning exists
+        // to prevent.
+        coVerify(exactly = 0) { layoutRepo.setActiveLayoutById(any()) }
+    }
+
     @Test
     fun setControllerBinding_noActiveProfile_isNoOp() = runTest(testDispatcher) {
         activeLayout.value = null

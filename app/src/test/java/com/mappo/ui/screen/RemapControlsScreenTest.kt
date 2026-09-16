@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
@@ -971,6 +972,53 @@ class RemapControlsScreenTest {
                 ),
             ),
         )
+    }
+
+
+    @Test
+    fun noLayoutViewed_showsNoLayoutState_notAPhantomLayout() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = null,
+                        viewedLayoutId = null,
+                        layoutsLoaded = true,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        // A fresh install used to fall through to the controls view and render a phantom
+        // layout called "Layout" — interactive group boxes over no binding graph at all.
+        composeRule.onNodeWithText("No layout selected").assertExists()
+        composeRule.onAllNodesWithTag("simple-group:FACE").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Layout").assertCountEquals(0)
+    }
+
+    @Test
+    fun noLayoutViewed_beforeLayoutsLoad_doesNotShowNoLayoutState() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = null,
+                        viewedLayoutId = null,
+                        // The cold-start shape: nothing resolved yet. An empty layout list
+                        // means "still loading" here, not "there are none".
+                        layoutsLoaded = false,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onAllNodesWithText("No layout selected").assertCountEquals(0)
     }
 
     private fun sampleConfig(

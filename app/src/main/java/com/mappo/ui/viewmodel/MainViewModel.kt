@@ -192,6 +192,16 @@ class MainViewModel @Inject constructor(
     private val _allLayouts = MutableStateFlow<ImmutableList<Layout>>(persistentListOf())
     val allLayouts: StateFlow<ImmutableList<Layout>> = _allLayouts.asStateFlow()
 
+    /**
+     * Whether [allLayouts] has actually been read from the database yet.
+     *
+     * An empty list means two different things — "still loading" and "there are none" — and the
+     * controls screen has to tell them apart: it shows the no-layout state for the second, and
+     * showing it for the first would flash that screen over every cold start.
+     */
+    private val _layoutsLoaded = MutableStateFlow(false)
+    val layoutsLoaded: StateFlow<Boolean> = _layoutsLoaded.asStateFlow()
+
     override val remapEnabled: StateFlow<Boolean> = keyboardController.remapEnabled
 
     val autoSwitchEnabled: StateFlow<Boolean> = autoSwitchSettings.autoSwitchEnabled
@@ -253,10 +263,23 @@ class MainViewModel @Inject constructor(
     /** The layout the controls screen shows: the viewed one, falling back to the active
      *  layout when nothing specific is viewed (or the viewed id disappeared). */
     val viewedLayout: StateFlow<Layout?> =
-        combine(_viewingLayoutId, activeLayout, _allLayouts) { viewingId, active, all ->
-            if (viewingId == null) active
-            else all.firstOrNull { it.id == viewingId } ?: active
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        combine(_viewingLayoutId, activeLayout, _allLayouts, ::resolveViewedLayout)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * The rule behind [viewedLayout], as a pure function so the flow and the mutator guards
+     * below can share ONE definition without the guards reading the flow.
+     *
+     * They must not read it: `stateIn` is a shared, conflated flow, so `viewedLayout.value`
+     * both lags its inputs by a dispatch and sits at its initial null whenever nothing is
+     * collecting. Either would make an edit a silent no-op depending on timing.
+     */
+    private fun resolveViewedLayout(viewingId: Long?, active: Layout?, all: List<Layout>): Layout? =
+        if (viewingId == null) active else all.firstOrNull { it.id == viewingId } ?: active
+
+    /** The layout the controls screen's editors write to, resolved now. See [viewedLayout]. */
+    private fun editedLayout(): Layout? =
+        resolveViewedLayout(_viewingLayoutId.value, activeLayout.value, _allLayouts.value)
 
     /**
      * The materialized binding graph the controls screen EDITS — the viewed layout's.
@@ -351,7 +374,10 @@ class MainViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            layoutRepository.getAllLayouts().collect { _allLayouts.value = it.toImmutableList() }
+            layoutRepository.getAllLayouts().collect {
+                _allLayouts.value = it.toImmutableList()
+                _layoutsLoaded.value = true
+            }
         }
         // Relay run-mode dispatch errors from the controller into this VM's toast stream
         // so MainScreen's existing `toastMessage` collector keeps surfacing them.
@@ -500,7 +526,17 @@ class MainViewModel @Inject constructor(
             val newId = layoutRepository.addLayout(name, packageName = packageName)
             val activePackage = activeApplicationStore.activeAppPackage.value
                 ?: activeLayout.value?.packageName
-            if (packageName != null && packageName == activePackage) {
+            if (activeLayout.value == null) {
+                // NOTHING is active yet — a fresh install, or every layout deleted. The
+                // layout the user just made becomes the active one: there is no current
+                // context to displace, so the cross-app warning this would otherwise need
+                // has nothing to warn about, and leaving it inactive strands the user on a
+                // layout whose edits don't drive any physical input (2026-09-12, Dylan).
+                layoutRepository.setActiveLayoutById(newId)?.let {
+                    keyboardController.setSelectedIndex(0)
+                    if (packageName != null) appLayoutBindingRepository.bind(packageName, newId)
+                }
+            } else if (packageName != null && packageName == activePackage) {
                 // A new layout for the ACTIVE application activates immediately
                 // (2026-08-27): the user is standing in that app's context, so the fresh
                 // layout becomes its functional default — a same-app move, so auto
@@ -604,12 +640,19 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * Replaces the single binding on [activatorId] with [output]. Active-layout guard
-     * means picker round-trips that fire after the layout is gone become no-ops
-     * rather than throwing.
+     * Replaces the single binding on [activatorId] with [output].
+     *
+     * **Guarded on [viewedLayout], not [activeLayout]** — the controls screen edits the layout
+     * it is VIEWING, and that is the one whose disappearance has to make a late picker
+     * round-trip a no-op instead of a throw. Guarding on the ACTIVE layout (as every mutator
+     * here did until 2026-09-12) silently dropped every edit whenever nothing was active at
+     * all — a fresh install with no active layout left the whole remap UI inert, which is
+     * exactly how Dylan hit it. It also meant a previewed layout could only be edited while
+     * some other layout happened to be active, which was never the intent: previewing is a
+     * viewing move, and edits to what you are looking at must persist.
      */
     fun setControllerBinding(activatorId: Long, output: BindingOutput) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.setBinding(activatorId, output) }
     }
 
@@ -619,19 +662,19 @@ class MainViewModel @Inject constructor(
      * editor when each command row owns its own picker result.
      */
     fun setControllerCommand(bindingId: Long, output: BindingOutput) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.setCommand(bindingId, output) }
     }
 
     /** Append a new Unbound command to [activatorId]. See `addCommand` in the repository. */
     fun addControllerCommand(activatorId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.addCommand(activatorId) }
     }
 
     /** Delete a specific command (Binding row). The UI guards against removing the last. */
     fun removeControllerCommand(bindingId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.removeCommand(bindingId) }
     }
 
@@ -639,25 +682,25 @@ class MainViewModel @Inject constructor(
 
     /** Add an input row of [type] to a group input (defaults to a regular press). */
     fun addInputRow(groupInputId: Long, type: com.mappo.data.model.steam.ActivatorType = com.mappo.data.model.steam.ActivatorType.FULL_PRESS) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.addInputRow(groupInputId, type) }
     }
 
     /** Change an input row's press type (reparents the binding into the type's bucket). */
     fun setInputRowPressType(bindingId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.setInputRowPressType(bindingId, type) }
     }
 
     /** Set an input row's user label ([com.mappo.data.model.steam.Binding.label]). */
     fun setInputRowLabel(bindingId: Long, label: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.setInputRowLabel(bindingId, label) }
     }
 
     /** Delete an input row. UI disables this when it's the group input's last remaining row. */
     fun deleteInputRow(bindingId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.deleteInputRow(bindingId) }
     }
 
@@ -684,7 +727,7 @@ class MainViewModel @Inject constructor(
         type: com.mappo.data.model.steam.ActivatorType,
         onReady: (bindingId: Long) -> Unit,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             onReady(controllerConfigRepository.ensureInputCell(bindingGroupId, inputKey, type))
         }
@@ -696,7 +739,7 @@ class MainViewModel @Inject constructor(
         inputKey: String,
         type: com.mappo.data.model.steam.ActivatorType,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.clearInputCell(bindingGroupId, inputKey, type)
         }
@@ -717,7 +760,7 @@ class MainViewModel @Inject constructor(
         toKey: String,
         toType: com.mappo.data.model.steam.ActivatorType,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewedControllerConfig.value?.let { current ->
             _optimisticControllerConfig.value =
                 current.withInputCellMoved(bindingGroupId, fromKey, fromType, toKey, toType)
@@ -745,7 +788,7 @@ class MainViewModel @Inject constructor(
         inputKey: String,
         type: com.mappo.data.model.steam.ActivatorType,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         val snapshot = _inputCellClipboard.value ?: return
         viewModelScope.launch {
             controllerConfigRepository.writeInputCell(bindingGroupId, inputKey, type, snapshot)
@@ -770,7 +813,7 @@ class MainViewModel @Inject constructor(
      */
     fun addControllerActionSet(name: String, title: String, inheritFromSetId: Long? = null) {
         val cpId = viewedControllerConfig.value?.controllerProfile?.id ?: return
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.addActionSet(cpId, name, title, inheritFromSetId)
             _viewingActionSetId.value = newId
@@ -779,7 +822,7 @@ class MainViewModel @Inject constructor(
 
     /** Rename action set [actionSetId]. No-op for unknown ids or when no layout is active. */
     fun renameControllerActionSet(actionSetId: Long, name: String, title: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.renameActionSet(actionSetId, name, title) }
     }
 
@@ -789,7 +832,7 @@ class MainViewModel @Inject constructor(
      * hunting for it.
      */
     fun duplicateControllerActionSet(sourceSetId: Long, name: String, title: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.duplicateActionSet(sourceSetId, name, title)
             _viewingActionSetId.value = newId
@@ -803,7 +846,7 @@ class MainViewModel @Inject constructor(
      * `activeControllerConfig` collector when the deletion lands.
      */
     fun deleteControllerActionSet(actionSetId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.deleteActionSet(actionSetId) }
     }
 
@@ -825,7 +868,7 @@ class MainViewModel @Inject constructor(
      * `addControllerActionSet` flips the set pointer to the new set).
      */
     fun addControllerActionLayer(actionSetId: Long, name: String, title: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.addLayer(actionSetId, name, title)
             _viewingLayerId.value = newId
@@ -834,7 +877,7 @@ class MainViewModel @Inject constructor(
 
     /** Rename layer [layerId]. No-op for unknown ids or when no layout is active. */
     fun renameControllerActionLayer(layerId: Long, name: String, title: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.renameLayer(layerId, name, title) }
     }
 
@@ -843,7 +886,7 @@ class MainViewModel @Inject constructor(
      * so the user can immediately tweak the copy.
      */
     fun duplicateControllerActionLayer(sourceLayerId: Long, name: String, title: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             val newId = controllerConfigRepository.duplicateLayer(sourceLayerId, name, title)
             _viewingLayerId.value = newId
@@ -856,7 +899,7 @@ class MainViewModel @Inject constructor(
      * here.
      */
     fun deleteControllerActionLayer(layerId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.deleteLayer(layerId) }
     }
 
@@ -875,7 +918,7 @@ class MainViewModel @Inject constructor(
         inputSource: com.mappo.data.model.steam.InputSource,
         groupInputKey: String,
     ): Long? {
-        if (activeLayout.value == null) return null
+        if (editedLayout() == null) return null
         return controllerConfigRepository.materializeLayerOverride(
             layerId = layerId,
             inputSource = inputSource,
@@ -894,7 +937,7 @@ class MainViewModel @Inject constructor(
         inputSource: com.mappo.data.model.steam.InputSource,
         groupInputKey: String,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.clearLayerOverride(layerId, inputSource, groupInputKey)
         }
@@ -908,7 +951,7 @@ class MainViewModel @Inject constructor(
      * filters them, so a mode switch is reversible by picking the original back.
      */
     fun setBindingGroupMode(bindingGroupId: Long, mode: com.mappo.data.model.steam.BindingMode) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateBindingGroupMode(bindingGroupId, mode)
         }
@@ -919,7 +962,7 @@ class MainViewModel @Inject constructor(
      * settings cog on each Remap Controls source row.
      */
     fun setBindingGroupSettings(bindingGroupId: Long, settingsJson: String) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateBindingGroupSettings(bindingGroupId, settingsJson)
         }
@@ -934,7 +977,7 @@ class MainViewModel @Inject constructor(
      * its row.
      */
     fun addModeShiftToSet(actionSetId: Long, ownerSource: com.mappo.data.model.steam.InputSource) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.addModeShiftToSet(actionSetId, ownerSource)
         }
@@ -942,7 +985,7 @@ class MainViewModel @Inject constructor(
 
     /** Layer-owned variant of [addModeShiftToSet]. */
     fun addModeShiftToLayer(actionLayerId: Long, ownerSource: com.mappo.data.model.steam.InputSource) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.addModeShiftToLayer(actionLayerId, ownerSource)
         }
@@ -950,7 +993,7 @@ class MainViewModel @Inject constructor(
 
     /** Remove [modeShiftId]; its target binding group cascade-deletes too. */
     fun removeModeShift(modeShiftId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.removeModeShift(modeShiftId) }
     }
 
@@ -963,7 +1006,7 @@ class MainViewModel @Inject constructor(
         triggerSource: com.mappo.data.model.steam.InputSource?,
         triggerSubInput: String?,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.setModeShiftTrigger(modeShiftId, triggerSource, triggerSubInput)
         }
@@ -977,7 +1020,7 @@ class MainViewModel @Inject constructor(
      * await before navigating.
      */
     suspend fun materializeModeShiftInput(modeShiftId: Long, groupInputKey: String): Long {
-        if (activeLayout.value == null) return 0L
+        if (editedLayout() == null) return 0L
         return controllerConfigRepository.materializeModeShiftInput(modeShiftId, groupInputKey)
     }
 
@@ -986,19 +1029,19 @@ class MainViewModel @Inject constructor(
      * Used by the per-input editor screen's `[+ Add Activator]` action.
      */
     fun addControllerActivator(groupInputId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.addActivator(groupInputId, type) }
     }
 
     /** Delete an activator from the active config. */
     fun removeControllerActivator(activatorId: Long) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.removeActivator(activatorId) }
     }
 
     /** Change an activator's [com.mappo.data.model.steam.ActivatorType]. Bindings preserved. */
     fun setControllerActivatorType(activatorId: Long, type: com.mappo.data.model.steam.ActivatorType) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch { controllerConfigRepository.updateActivatorType(activatorId, type) }
     }
 
@@ -1011,7 +1054,7 @@ class MainViewModel @Inject constructor(
         activatorId: Long,
         settings: com.mappo.service.input.CompiledActivatorSettings,
     ) {
-        if (activeLayout.value == null) return
+        if (editedLayout() == null) return
         viewModelScope.launch {
             controllerConfigRepository.updateActivatorSettings(activatorId, settings.toJson())
         }

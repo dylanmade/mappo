@@ -129,6 +129,13 @@ fun RemapControlsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     layoutName: String? = null,
+    // The layout being VIEWED, or null when there is none at all — a fresh install, or every
+    // layout deleted. Distinct from [activeLayoutId]: viewing is independent of what's active.
+    viewedLayoutId: Long? = null,
+    // Whether the layout list has actually loaded. Defaults FALSE so a null [viewedLayoutId]
+    // is never read as "there are none" until the caller says the list is known — that keeps
+    // the no-layout state off the screen during a cold start, when everything is still null.
+    layoutsLoaded: Boolean = false,
     viewingActionSetId: Long? = null,
     onSelectActionSet: (Long) -> Unit = {},
     onAddActionSet: (title: String, inheritFromSetId: Long?) -> Unit = { _, _ -> },
@@ -292,6 +299,14 @@ fun RemapControlsScreen(
         effectiveAppPackage.let { pkg ->
             appBindings[pkg]?.let { id -> layouts.firstOrNull { it.id == id } }
         } == null
+    // There is no layout AT ALL to show — a fresh install, or every layout deleted. Until
+    // 2026-09-12 only the per-application case above reached the no-layout state, so this one
+    // fell through to the controls view and rendered a phantom layout called "Layout": a full
+    // controller diagram, group boxes that opened an editor, and nothing behind any of it. The
+    // editor's mode pill degraded to its dead "DEFAULT" label and every tile was disabled,
+    // because there was no binding group to resolve. Both cases are the same state to the
+    // user — nothing to edit — so both get the same screen.
+    val showNoLayoutState = (layoutsLoaded && viewedLayoutId == null) || effectiveAppHasNoLayout
     // The viewed application's display label (launcher label, package-name fallback) —
     // feeds the bar's "<application> layout" overline and the no-layout state.
     val effectiveAppLabel = installedApps
@@ -497,7 +512,7 @@ fun RemapControlsScreen(
                     // application itself is carried by the leading launcher icon since
                     // the two-line identity stack collapsed into a pill (2026-08-29).
                     layoutLabel = buildString {
-                        append(if (effectiveAppHasNoLayout) "None" else layoutName ?: "Layout")
+                        append(if (showNoLayoutState) "None" else layoutName ?: "Layout")
                         if (!isActiveLayout) append(" (Preview)")
                     },
                     appPackage = effectiveAppPackage,
@@ -559,9 +574,9 @@ fun RemapControlsScreen(
                     // instead of another app's controls — tiles route into layout
                     // creation and the layouts drawer (which holds the Community section
                     // once sharing lands).
-                    if (effectiveAppHasNoLayout) {
+                    if (showNoLayoutState) {
                         NoLayoutAssignedView(
-                            appLabel = effectiveAppLabel.orEmpty(),
+                            appLabel = effectiveAppLabel,
                             onCreateLayout = { addLayoutOpen = true },
                             onBrowseLayouts = { layoutsDrawerOpen = true },
                         )
@@ -955,14 +970,20 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
  */
 @Composable
 private fun NoLayoutAssignedView(
-    appLabel: String,
+    // Null when there is no application context either — a fresh install with nothing
+    // detected. "No layout assigned for " with a blank tail is worse than saying less.
+    appLabel: String?,
     onCreateLayout: () -> Unit,
     onBrowseLayouts: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "No layout assigned for $appLabel",
+                text = if (appLabel.isNullOrBlank()) {
+                    "No layout selected"
+                } else {
+                    "No layout assigned for $appLabel"
+                },
                 style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
