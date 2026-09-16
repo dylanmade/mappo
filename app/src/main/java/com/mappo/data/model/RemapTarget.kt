@@ -37,7 +37,7 @@ sealed class RemapTarget {
 
 fun RemapTarget.displayLabel(): String = when (this) {
     is RemapTarget.Unbound  -> "(Device default)"
-    is RemapTarget.Gamepad  -> "GP: $button"
-    is RemapTarget.Keyboard -> "KB: $code"
-    is RemapTarget.Mouse    -> "MS: $code"
+    is RemapTarget.Gamepad  -> "${OutputNames.GAMEPAD_PREFIX}: ${OutputNames.gamepadName(button)}"
+    is RemapTarget.Keyboard -> "${OutputNames.KEYBOARD_PREFIX}: ${OutputNames.keyboardName(code)}"
+    is RemapTarget.Mouse    -> "${OutputNames.MOUSE_PREFIX}: ${OutputNames.mouseName(code)}"
 }

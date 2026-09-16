@@ -1,0 +1,16 @@
+<!-- Kenney Input Prompts 1.5 (CC0) — Xbox Series set. The plain top-down stick (no direction
+     arrow): derived from xbox_stick_l_up by closing the ring where the arrow notched it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M43 10.1 Q46.2 11.4 48.95 13.65 56 19.4 56 27.4 L56 30.65 Q56 38.7 48.95 44.3 46.2 46.55 43 47.9 L43 50 Q43 52.5 39.75 54.25 36.55 56 32 56 27.5 56 24.25 54.25 21 52.5 21 50 L21 47.9 Q17.8 46.55 15 44.3 8 38.7 8 30.65 L8 27.4 Q8 19.4 15 13.65 17.8 11.4 21 10.1 Q32 5.3 43 10.1 Z M22.75 14 Q19.85 15.15 17.4 17.1 Q12.15 21.4 12 27.4 12.1 33.45 17.4 37.65 23.45 42.5 32 42.5 40.55 42.5 46.55 37.7 Q51.9 33.4 52 27.4 51.85 21.4 46.55 17.1 44.1 15.15 41.3 14 Q32 10.5 22.75 14 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M31.2 15 L32.8 15 Q39.45 15.25 44.2 19 Q47.7 22 48 26 Q47.7 30 44.2 32.9 Q39.05 37 32 37 24.85 37 19.8 32.95 Q16.3 30 16 26.1 Q16.25 22 19.85 19 Q24.7 15.2 31.2 15 Z M31 30 L31 20 28 20 28 33 37 33 37 30 31 30 Z" />
+</vector>

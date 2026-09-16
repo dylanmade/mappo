@@ -91,6 +91,27 @@ class RemapControlsScreenTest {
     }
 
     @Test
+    fun simpleView_sticksSummarizeMovementAsOneRow() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = sampleConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("L-Stick Move", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("R-Stick Move", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("L-Stick Up", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("R-Stick Left", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
     fun tappingDpadBox_morphsIntoGroupEditor() {
         composeRule.setContent {
             MaterialTheme {

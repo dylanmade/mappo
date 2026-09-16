@@ -1,5 +1,6 @@
 package com.mappo.data.model.steam
 
+import com.mappo.data.model.OutputNames
 import com.mappo.data.model.RemapTarget
 
 /**
@@ -147,15 +148,15 @@ fun BindingOutput.isGamepadOutput(): Boolean = when (this) {
  */
 fun BindingOutput.requiresShizuku(): Boolean = isGamepadOutput()
 
-/** One-line display label for a binding output, suitable for trailing row text. */
+/** One-line display label for a binding output, suitable for trailing row text. Device output
+ *  names come from [OutputNames]. */
 fun BindingOutput.displayLabel(): String = when (this) {
     BindingOutput.Unbound          -> "(Device default)"
-    is BindingOutput.KeyPress      -> "KB: $keyCode"
-    is BindingOutput.XInputButton  -> "GP: $button"
-    is BindingOutput.XInputStick   -> "GP: ${if (stick == "LEFT") "Left" else "Right"} Stick " +
-        direction.lowercase().replaceFirstChar { it.uppercase() }
-    is BindingOutput.MouseButton   -> "MS: $button"
-    is BindingOutput.MouseWheel    -> "MS: $direction"
+    is BindingOutput.KeyPress      -> "${OutputNames.KEYBOARD_PREFIX}: ${OutputNames.keyboardName(keyCode)}"
+    is BindingOutput.XInputButton  -> "${OutputNames.GAMEPAD_PREFIX}: ${OutputNames.gamepadName(button)}"
+    is BindingOutput.XInputStick   -> "${OutputNames.GAMEPAD_PREFIX}: ${OutputNames.gamepadName(token())}"
+    is BindingOutput.MouseButton   -> "${OutputNames.MOUSE_PREFIX}: ${OutputNames.mouseName(button)}"
+    is BindingOutput.MouseWheel    -> "${OutputNames.MOUSE_PREFIX}: ${OutputNames.mouseName(direction)}"
     is BindingOutput.GameAction    -> "Action: $setName/$actionName"
     is BindingOutput.ControllerAction -> when {
         changePresetLabelOrNull() != null ->

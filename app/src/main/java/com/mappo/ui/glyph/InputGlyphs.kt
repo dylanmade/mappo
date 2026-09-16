@@ -134,6 +134,9 @@ object InputGlyphs {
             "dpad_left" -> R.drawable.xbox_stick_l_left
             "dpad_right" -> R.drawable.xbox_stick_l_right
             "click" -> R.drawable.xbox_stick_side_l
+            // The basic view's summary row for the whole stick's movement (UI-only key —
+            // see RemapSimpleView's StickMoveKey); the plain stick, no direction arrow.
+            "move" -> R.drawable.xbox_stick_l
             else -> null
         }
         InputSource.RIGHT_JOYSTICK -> when (subInputKey) {
@@ -142,6 +145,9 @@ object InputGlyphs {
             "dpad_left" -> R.drawable.xbox_stick_r_left
             "dpad_right" -> R.drawable.xbox_stick_r_right
             "click" -> R.drawable.xbox_stick_side_r
+            // The basic view's summary row for the whole stick's movement (UI-only key —
+            // see RemapSimpleView's StickMoveKey); the plain stick, no direction arrow.
+            "move" -> R.drawable.xbox_stick_r
             else -> null
         }
         // Triggers: one prompt for every pull depth — the row label carries full vs soft.
