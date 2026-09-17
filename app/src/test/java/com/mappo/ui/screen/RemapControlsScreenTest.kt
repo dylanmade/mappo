@@ -129,7 +129,7 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         composeRule.waitForIdle()
 
-        // The box morphs into the in-place group editor; its home spot becomes a placeholder.
+        // The view zooms into the scene, with the camera on the group that was activated.
         composeRule.onNodeWithTag("group-editor").assertExists()
         composeRule.onNodeWithContentDescription("Close").assertExists()
     }
@@ -612,6 +612,38 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Override actions").assertCountEquals(0)
     }
 
+    /**
+     * The zoomed scene's framing (2026-09-17): opening a group puts ITS table on its own side of
+     * the screen with the centre column — the controller — beside it, and leaves the groups
+     * around it a pan away rather than gone. Bounds, not existence: the first cut of the camera
+     * placed the scene correctly and then drew it half a viewport off, which every
+     * existence-based assertion in this file happily passed.
+     */
+    @Test
+    fun zoomScene_framesTheOpenedGroup_withTheControllerBeside() {
+        setScreenLocal(seedShapedConfig())
+        val viewport = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        val face = composeRule.onNodeWithTag("zoom-card:FACE", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        // A right-hand group clamps flush to the right edge, and leaves the left third of the
+        // screen to the centre column.
+        assert(face.right >= viewport.right - 20f) { "face card should reach the right edge: $face" }
+        assert(face.left > viewport.width * 0.2f) { "face card should leave room for the controller: $face" }
+
+        composeRule.onNodeWithContentDescription("Close").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        val dpad = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        // And a left-hand group frames the other way about.
+        assert(dpad.left <= viewport.left + 20f) { "dpad card should reach the left edge: $dpad" }
+        assert(dpad.right < viewport.width * 0.8f) { "dpad card should leave room for the controller: $dpad" }
+    }
+
     @Test
     fun overlayMode_overriddenRow_showsLayerBindingAndOverflowMenu() {
         composeRule.setContent {
@@ -641,9 +673,9 @@ class RemapControlsScreenTest {
         // and button_a's Press cell carries the layer menu.
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-table")
-            .performScrollToNode(hasTestTag("cell:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:button_a:FULL_PRESS").assertIsDisplayed()
+        composeRule.onNodeWithTag("group-editor-table:FACE")
+            .performScrollToNode(hasTestTag("cell:FACE:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:button_a:FULL_PRESS").assertIsDisplayed()
     }
 
     @Test
@@ -672,9 +704,9 @@ class RemapControlsScreenTest {
 
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-table")
-            .performScrollToNode(hasTestTag("cell:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:button_a:FULL_PRESS").performClick()
+        composeRule.onNodeWithTag("group-editor-table:FACE")
+            .performScrollToNode(hasTestTag("cell:FACE:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:button_a:FULL_PRESS").performClick()
         // Driven through semantics rather than performClick: menu rows live in a Popup, and
         // popup bounds come back NEGATED under Robolectric (a menu anchored at x=56 reports
         // x=-56), so a coordinate-based click can miss depending on where the menu sits.
@@ -927,9 +959,9 @@ class RemapControlsScreenTest {
         }
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-table")
-            .performScrollToNode(hasTestTag("cell:button_a:LONG_PRESS"))
-        composeRule.onNodeWithTag("cell:button_a:LONG_PRESS").performClick()
+        composeRule.onNodeWithTag("group-editor-table:FACE")
+            .performScrollToNode(hasTestTag("cell:FACE:button_a:LONG_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:button_a:LONG_PRESS").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
         assert(ensured == Triple(1L, "button_a", ActivatorType.LONG_PRESS)) {

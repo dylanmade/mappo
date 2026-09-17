@@ -860,6 +860,82 @@ class ControllerConfigRepositoryTest {
         return config.activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!.group.group.id
     }
 
+    // ── Cross-group moves, row replace, group reset (basic-view inline editing) ──
+
+    private suspend fun seededGroupId(source: InputSource): Long {
+        val config = subject.observeActiveConfig(1L).first()!!
+        return config.activeActionSet!!.presetFor(source)!!.group.group.id
+    }
+
+    @Test
+    fun moveInputCell_acrossBindingGroups_swapsBothCommands() = runTest {
+        val faceId = seededFaceGroupId()
+        val dpadId = seededGroupId(InputSource.DPAD)
+        bindCell(faceId, "button_a", ActivatorType.FULL_PRESS, "A")
+        bindCell(dpadId, "dpad_up", ActivatorType.LONG_PRESS, "UP")
+
+        subject.moveInputCell(
+            bindingGroupId = faceId, fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
+            toKey = "dpad_up", toType = ActivatorType.LONG_PRESS, toBindingGroupId = dpadId,
+        )
+
+        assertEquals("A", cellOutput(dpadId, "dpad_up", ActivatorType.LONG_PRESS))
+        assertEquals("UP", cellOutput(faceId, "button_a", ActivatorType.FULL_PRESS))
+    }
+
+    @Test
+    fun optimisticMove_acrossBindingGroups_matchesRepository() = runTest {
+        val faceId = seededFaceGroupId()
+        val dpadId = seededGroupId(InputSource.DPAD)
+        bindCell(faceId, "button_a", ActivatorType.FULL_PRESS, "A")
+        bindCell(dpadId, "dpad_up", ActivatorType.LONG_PRESS, "UP")
+
+        val before = subject.observeActiveConfig(1L).first()!!
+        val optimistic = before.withInputCellMoved(
+            faceId, "button_a", ActivatorType.FULL_PRESS, "dpad_up", ActivatorType.LONG_PRESS, dpadId,
+        )
+        subject.moveInputCell(
+            faceId, "button_a", ActivatorType.FULL_PRESS, "dpad_up", ActivatorType.LONG_PRESS, dpadId,
+        )
+        val persisted = subject.observeActiveConfig(1L).first()!!
+        assertEquals(renderedCells(persisted, faceId), renderedCells(optimistic, faceId))
+        assertEquals(renderedCells(persisted, dpadId), renderedCells(optimistic, dpadId))
+    }
+
+    @Test
+    fun replaceRowCells_replacesTheRowWholesale() = runTest {
+        val faceId = seededFaceGroupId()
+        val dpadId = seededGroupId(InputSource.DPAD)
+        bindCell(faceId, "button_a", ActivatorType.LONG_PRESS, "A_LONG")
+        bindCell(dpadId, "dpad_up", ActivatorType.FULL_PRESS, "OLD_PRESS")
+
+        val row = subject.readRowCells(faceId, "button_a")
+        subject.replaceRowCells(dpadId, "dpad_up", row)
+
+        assertEquals("A_LONG", cellOutput(dpadId, "dpad_up", ActivatorType.LONG_PRESS))
+        assertNull(cellOutput(dpadId, "dpad_up", ActivatorType.FULL_PRESS))
+    }
+
+    @Test
+    fun resetBindingGroup_restoresTheSeed() = runTest {
+        val faceId = seededFaceGroupId()
+        bindCell(faceId, "button_a", ActivatorType.LONG_PRESS, "A_LONG")
+        subject.updateBindingGroupMode(faceId, BindingMode.NONE)
+        subject.updateBindingGroupSettings(faceId, """{"x":1}""")
+
+        subject.resetBindingGroup(faceId)
+
+        val group = subject.observeActiveConfig(1L).first()!!
+            .activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!.group
+        assertEquals(BindingMode.BUTTON_PAD, group.group.mode)
+        assertEquals("{}", group.group.settingsJson)
+        assertNull(cellOutput(faceId, "button_a", ActivatorType.LONG_PRESS))
+        assertEquals(
+            setOf("button_a", "button_b", "button_x", "button_y"),
+            group.inputs.map { it.input.inputKey }.toSet(),
+        )
+    }
+
     @Test
     fun optimisticMove_ontoOccupiedCell_matchesRepository() = runTest {
         val groupId = seededFaceGroupId()

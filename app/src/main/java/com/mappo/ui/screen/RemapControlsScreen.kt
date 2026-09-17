@@ -198,10 +198,24 @@ fun RemapControlsScreen(
     ) -> Unit = { _, _, _, _, _ -> },
     /** Whether the cell clipboard holds anything — greys the tile menus' Paste. */
     cellClipboardOccupied: Boolean = false,
-    // Row duplication and whole-group reset need dedicated repo ops (duplicates must own their
-    // data); default no-ops until those land — the menu items render but do nothing.
+    // ── Group-level ops: carrying commands between input groups, and whole-group
+    // copy / paste / reset (2026-09-16) ──
+    /** A cell move whose destination is in another binding group (a command carried between
+     *  input groups). */
+    onMoveInputCellAcross: (
+        fromBindingGroupId: Long, fromKey: String, fromType: ActivatorType,
+        toBindingGroupId: Long, toKey: String, toType: ActivatorType,
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    groupClipboard: com.mappo.data.repository.ControllerConfigRepository.InputGroupSnapshot? = null,
+    onCopyInputGroup: (rows: List<Pair<Long, String>>, settingsGroupId: Long?, inputs: Boolean, settings: Boolean) -> Unit =
+        { _, _, _, _ -> },
+    /** Paste the group clipboard's rows + settings JSON. Its MODE is applied separately, through
+     *  this screen's Shizuku-gated mode setter. */
+    onPasteInputGroup: (rows: List<Pair<Long, String>>, settingsGroupId: Long?) -> Unit = { _, _ -> },
+    onResetBindingGroups: (bindingGroupIds: List<Long>) -> Unit = {},
+    // Row duplication needs a dedicated repo op (duplicates must own their data); default no-op
+    // until it lands — the menu item renders but does nothing.
     onDuplicateInputRow: (bindingId: Long) -> Unit = {},
-    onResetBindingGroup: (bindingGroupId: Long) -> Unit = {},
     // ── The viewed application context (rides the route from the layouts view; the home
     // instance derives it from the active layout's binding) ────────────────────────
     viewedAppPackage: String? = null,
@@ -399,7 +413,6 @@ fun RemapControlsScreen(
             viewingLayer?.layer?.id?.let { onClearLayerOverride(it, inputSource, groupInputKey) }
         },
         onSetLabel = onSetInputRowLabel,
-        onResetGroup = onResetBindingGroup,
         onConfigure = onOpenActivatorSettings,
         // "New" on an empty cell and "Edit" on a defined one are the same flow: make sure the
         // cell exists, then open the command picker against its binding. The ensure step is a
@@ -414,6 +427,18 @@ fun RemapControlsScreen(
         onPasteCell = onPasteInputCell,
         onMoveCell = onMoveInputCell,
         clipboardOccupied = cellClipboardOccupied,
+        onMoveCellAcross = onMoveInputCellAcross,
+        groupClipboard = groupClipboard,
+        onCopyGroup = onCopyInputGroup,
+        onPasteGroup = { rows, settingsGroupId ->
+            onPasteInputGroup(rows, settingsGroupId)
+            val mode = groupClipboard?.mode
+            if (settingsGroupId != null && mode != null) gatedSetBindingGroupMode(settingsGroupId, mode)
+        },
+        // The advanced header's Reset had a callback that was never wired to a repository op
+        // (it did nothing); both menus now reach the real reset.
+        onResetGroups = onResetBindingGroups,
+        onResetGroup = { onResetBindingGroups(listOf(it)) },
     )
 
     // Controller-focus plumbing. Focus is ALWAYS seated on a real button, never a container

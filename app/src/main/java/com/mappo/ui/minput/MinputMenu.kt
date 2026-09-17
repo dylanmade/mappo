@@ -194,8 +194,8 @@ internal fun BoxScope.MinputMenuSurface(
         remember(onStart, centerFromTopPx) {
             MinputCaretMenuShape(
                 corner = MinputMenuCorner,
-                caretOnStart = onStart,
-                caretCenterFromTopPx = centerFromTopPx,
+                edge = if (onStart) MinputCaretEdge.Start else MinputCaretEdge.End,
+                caretCenterPx = centerFromTopPx,
                 caretHalfWidth = MinputMenuCaretWidth / 2,
                 caretDepth = MinputMenuCaretDepth,
             )
@@ -379,17 +379,22 @@ internal fun MinputMenuRow(
     }
 }
 
+/** Which edge of a menu surface its caret protrudes from. Start/End are the side placements;
+ *  Top/Bottom exist for [MinputMenuPanel], which can sit above or below what summoned it. */
+enum class MinputCaretEdge { Start, End, Top, Bottom }
+
 /**
  * The menu surface's outline with a caret pointing back at the anchor: a rounded rect inset by
- * [caretDepth] on the anchor side, plus a triangle filling that inset.
+ * [caretDepth] on the [edge] side, plus a triangle filling that inset. [caretCenterPx] is the
+ * caret's position ALONG that edge — from the top for Start/End, from the left for Top/Bottom.
  *
  * A [Shape] rather than a drawn overlay so the caret is part of the surface — it inherits the
  * menu's fill, border and shadow for free, and no second layer can drift out of alignment.
  */
-private class MinputCaretMenuShape(
+internal class MinputCaretMenuShape(
     private val corner: Dp,
-    private val caretOnStart: Boolean,
-    private val caretCenterFromTopPx: Float,
+    private val edge: MinputCaretEdge,
+    private val caretCenterPx: Float,
     private val caretHalfWidth: Dp,
     private val caretDepth: Dp,
 ) : Shape {
@@ -401,29 +406,44 @@ private class MinputCaretMenuShape(
         val r = with(density) { corner.toPx() }
         val depth = with(density) { caretDepth.toPx() }
         val half = with(density) { caretHalfWidth.toPx() }
+        val vertical = edge == MinputCaretEdge.Start || edge == MinputCaretEdge.End
         // Keep the caret's base inside the straight run between the corners so it never grows
         // out of an arc — and so a menu shorter than its anchor still resolves sanely.
+        val run = if (vertical) size.height else size.width
         val lo = r + half
-        val hi = (size.height - r - half).coerceAtLeast(lo)
-        val center = caretCenterFromTopPx.coerceIn(lo, hi)
+        val hi = (run - r - half).coerceAtLeast(lo)
+        val center = caretCenterPx.coerceIn(lo, hi)
 
-        val left = if (caretOnStart) depth else 0f
-        val right = if (caretOnStart) size.width else size.width - depth
+        val left = if (edge == MinputCaretEdge.Start) depth else 0f
+        val right = if (edge == MinputCaretEdge.End) size.width - depth else size.width
+        val top = if (edge == MinputCaretEdge.Top) depth else 0f
+        val bottom = if (edge == MinputCaretEdge.Bottom) size.height - depth else size.height
 
         val path = Path().apply {
             addRoundRect(
                 androidx.compose.ui.geometry.RoundRect(
                     left = left,
-                    top = 0f,
+                    top = top,
                     right = right,
-                    bottom = size.height,
+                    bottom = bottom,
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r),
                 )
             )
             // Triangle, apex pointing at the anchor.
-            moveTo(if (caretOnStart) left else right, center - half)
-            lineTo(if (caretOnStart) left - depth else right + depth, center)
-            lineTo(if (caretOnStart) left else right, center + half)
+            when (edge) {
+                MinputCaretEdge.Start -> {
+                    moveTo(left, center - half); lineTo(left - depth, center); lineTo(left, center + half)
+                }
+                MinputCaretEdge.End -> {
+                    moveTo(right, center - half); lineTo(right + depth, center); lineTo(right, center + half)
+                }
+                MinputCaretEdge.Top -> {
+                    moveTo(center - half, top); lineTo(center, top - depth); lineTo(center + half, top)
+                }
+                MinputCaretEdge.Bottom -> {
+                    moveTo(center - half, bottom); lineTo(center, bottom + depth); lineTo(center + half, bottom)
+                }
+            }
             close()
         }
         return Outline.Generic(path)
@@ -586,10 +606,10 @@ private val MinputMenuMaxWidth = 280.dp
  *  menu type scale; the SLOT stays M3's width (so labels still align down the column) and only
  *  the glyph inside it is scaled back. Sizing the glyph is chrome — minput's job; changing the
  *  slot or the row metrics is M3's, and left alone. */
-private val MinputMenuIconSize = 16.dp
+internal val MinputMenuIconSize = 16.dp
 
 /** Row height. Below M3's 48dp touch-target container — deliberately; see [MinputMenuRow]. */
-private val MinputMenuItemHeight = 34.dp
+internal val MinputMenuItemHeight = 34.dp
 
 /** THE menu-row spacing value: row start → glyph, glyph → label, label → check, check → row
  *  end. One number for all four so the row reads as evenly set; changing it moves them
@@ -599,7 +619,7 @@ private val MinputMenuItemHeight = 34.dp
  *  say, because Material glyphs ink only ~85% of their viewport (the same optical mismatch
  *  behind the library's move to Lucide). The spacing is even; the icon is what's narrow. Don't
  *  "correct" it by shrinking this gap alone — that just makes the numbers uneven too. */
-private val MinputMenuItemPadding = 12.dp
+internal val MinputMenuItemPadding = 12.dp
 
 /**
  * Inset above the first row and below the last — the menu FRAME, as distinct from the row
@@ -617,8 +637,8 @@ val MinputMenuFramePadding = 5.dp
  *  [collapseMenuVerticalPadding] can give the space back; keep in step if M3 ever changes it. */
 private val M3MenuVerticalPadding = 8.dp
 
-private val MinputMenuCorner = 8.dp
+internal val MinputMenuCorner = 8.dp
 
 /** How far the caret protrudes from the menu body, and how wide its base is. */
-private val MinputMenuCaretDepth = 6.dp
-private val MinputMenuCaretWidth = 12.dp
+internal val MinputMenuCaretDepth = 6.dp
+internal val MinputMenuCaretWidth = 12.dp

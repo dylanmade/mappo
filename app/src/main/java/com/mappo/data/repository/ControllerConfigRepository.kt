@@ -1474,6 +1474,11 @@ class ControllerConfigRepository @Inject constructor(
      * every binding under it travel with it, and no id is regenerated for something that isn't a
      * copy. When the destination is occupied the two activators exchange places (a swap); when
      * it's empty the source simply lands there.
+     *
+     * [toBindingGroupId] names the DESTINATION's binding group, defaulting to the source's. The
+     * basic view moves commands between input groups (2026-09-16) — Face A onto D-pad Up is two
+     * different binding groups — and reparenting works identically across them, since the
+     * activator only points at its group input.
      */
     suspend fun moveInputCell(
         bindingGroupId: Long,
@@ -1481,12 +1486,13 @@ class ControllerConfigRepository @Inject constructor(
         fromType: ActivatorType,
         toKey: String,
         toType: ActivatorType,
+        toBindingGroupId: Long = bindingGroupId,
     ) {
-        if (fromKey == toKey && fromType == toType) return
+        if (toBindingGroupId == bindingGroupId && fromKey == toKey && fromType == toType) return
         val fromInputId = findGroupInputId(bindingGroupId, fromKey) ?: return
         val fromActivator = activatorDao.getByGroupInputs(listOf(fromInputId))
             .firstOrNull { it.type == fromType } ?: return
-        val toInputId = ensureGroupInputId(bindingGroupId, toKey)
+        val toInputId = ensureGroupInputId(toBindingGroupId, toKey)
         val toActivator = activatorDao.getByGroupInputs(listOf(toInputId))
             .firstOrNull { it.type == toType }
         activatorDao.update(fromActivator.copy(groupInputId = toInputId, type = toType))
@@ -1496,6 +1502,7 @@ class ControllerConfigRepository @Inject constructor(
             activatorDao.update(it.copy(groupInputId = fromInputId, type = fromType))
         }
         syncAuxButtonMode(bindingGroupId)
+        if (toBindingGroupId != bindingGroupId) syncAuxButtonMode(toBindingGroupId)
         configDirtyTick.value = configDirtyTick.value + 1
     }
 
@@ -1506,6 +1513,21 @@ class ControllerConfigRepository @Inject constructor(
         val args: String,
         val label: String?,
         val activatorSettingsJson: String,
+    )
+
+/**
+     * The basic view group menu's clipboard (2026-09-16): a whole input group's commands and/or
+     * its mode + settings. Either half may be absent — "Copy inputs" leaves [mode] and
+     * [settingsJson] null, "Copy settings" leaves [rows] null, "Copy both" fills all three.
+     *
+     * [rows] are POSITIONAL, one entry per row of the copied group in display order, so a paste
+     * maps row i onto the target's row i whatever its sub-input keys — face Y/X/B/A lands on
+     * D-pad Up/Left/Right/Down, which is also where those buttons sit.
+     */
+    data class InputGroupSnapshot(
+        val rows: List<Map<ActivatorType, InputCellSnapshot>>?,
+        val mode: BindingMode?,
+        val settingsJson: String?,
     )
 
     /** Read the cell at ([inputKey], [type]), or null when it's empty. */
@@ -1551,6 +1573,79 @@ class ControllerConfigRepository @Inject constructor(
             activatorDao.update(it.copy(settingsJson = snapshot.activatorSettingsJson))
         }
         syncAuxButtonMode(bindingGroupId)
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    // ── Whole-row / whole-group ops (the basic view's group menu, 2026-09-16) ────────────────
+
+    /** Every bound cell on one row, keyed by press type. Empty when the row has none. Same
+     *  snapshot shape (and same first-binding-only rule) as [readInputCell]. */
+    suspend fun readRowCells(bindingGroupId: Long, inputKey: String): Map<ActivatorType, InputCellSnapshot> {
+        val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return emptyMap()
+        return buildMap {
+            activatorDao.getByGroupInputs(listOf(groupInputId)).forEach { activator ->
+                val binding = bindingDao.getByActivators(listOf(activator.id)).firstOrNull()
+                    ?: return@forEach
+                if (binding.outputType == BindingOutputType.UNBOUND) return@forEach
+                put(
+                    activator.type,
+                    InputCellSnapshot(binding.outputType, binding.args, binding.label, activator.settingsJson),
+                )
+            }
+        }
+    }
+
+    /**
+     * Make one row hold EXACTLY [cells]: every activator currently on it is deleted, then each
+     * snapshot is written into its press type. The paste half of the group menu's "Copy inputs"
+     * — a replace, not a merge, so the pasted group reads the same as the copied one.
+     */
+    suspend fun replaceRowCells(
+        bindingGroupId: Long,
+        inputKey: String,
+        cells: Map<ActivatorType, InputCellSnapshot>,
+    ) {
+        findGroupInputId(bindingGroupId, inputKey)?.let { groupInputId ->
+            activatorDao.getByGroupInputs(listOf(groupInputId)).forEach { activator ->
+                bindingDao.deleteByActivator(activator.id)
+                activatorDao.deleteById(activator.id)
+            }
+        }
+        cells.forEach { (type, snapshot) -> writeInputCell(bindingGroupId, inputKey, type, snapshot) }
+        syncAuxButtonMode(bindingGroupId)
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    /**
+     * Return a set-owned binding group to exactly what a fresh layout seeds for its source: the
+     * seed's mode, empty settings, and the seed's sub-inputs each holding one unbound Press. Every
+     * command and setting in the group is discarded.
+     *
+     * No-op for a layer-owned group or a source with no seed (nothing to reset TO).
+     */
+    suspend fun resetBindingGroup(bindingGroupId: Long) {
+        val group = bindingGroupDao.getById(bindingGroupId) ?: return
+        val source = findInputSourceForSetBindingGroup(bindingGroupId) ?: return
+        val seed = DEFAULT_INPUT_SOURCE_SEEDS[source] ?: return
+        groupInputDao.getByGroups(listOf(bindingGroupId)).forEach { input ->
+            activatorDao.getByGroupInputs(listOf(input.id)).forEach { activator ->
+                bindingDao.deleteByActivator(activator.id)
+                activatorDao.deleteById(activator.id)
+            }
+            groupInputDao.deleteById(input.id)
+        }
+        bindingGroupDao.update(group.copy(mode = seed.mode, settingsJson = "{}"))
+        seed.inputKeys.forEachIndexed { index, inputKey ->
+            val groupInputId = groupInputDao.insert(
+                GroupInput(bindingGroupId = bindingGroupId, inputKey = inputKey, orderIndex = index)
+            )
+            val activatorId = activatorDao.insert(
+                Activator(groupInputId = groupInputId, type = ActivatorType.FULL_PRESS, settingsJson = "{}", orderIndex = 0)
+            )
+            bindingDao.insert(
+                Binding(activatorId = activatorId, outputType = BindingOutputType.UNBOUND, args = "", orderIndex = 0)
+            )
+        }
         configDirtyTick.value = configDirtyTick.value + 1
     }
 

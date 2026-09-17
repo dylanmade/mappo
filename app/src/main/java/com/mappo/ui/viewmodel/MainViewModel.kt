@@ -759,14 +759,88 @@ class MainViewModel @Inject constructor(
         fromType: com.mappo.data.model.steam.ActivatorType,
         toKey: String,
         toType: com.mappo.data.model.steam.ActivatorType,
+        // The destination's binding group — differs from [bindingGroupId] when the basic view
+        // moves a command into another input group.
+        toBindingGroupId: Long = bindingGroupId,
     ) {
         if (editedLayout() == null) return
         viewedControllerConfig.value?.let { current ->
-            _optimisticControllerConfig.value =
-                current.withInputCellMoved(bindingGroupId, fromKey, fromType, toKey, toType)
+            _optimisticControllerConfig.value = current.withInputCellMoved(
+                bindingGroupId, fromKey, fromType, toKey, toType, toBindingGroupId,
+            )
         }
         viewModelScope.launch {
-            controllerConfigRepository.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
+            controllerConfigRepository.moveInputCell(
+                bindingGroupId, fromKey, fromType, toKey, toType, toBindingGroupId,
+            )
+        }
+    }
+
+    // ── Basic-view group menu: copy / paste / reset a whole input group ──────────────────────
+
+    /** The group menu's clipboard — separate from [inputCellClipboard], and session-scoped for
+     *  the same reason. See [ControllerConfigRepository.InputGroupSnapshot]. */
+    private val _inputGroupClipboard =
+        MutableStateFlow<ControllerConfigRepository.InputGroupSnapshot?>(null)
+    val inputGroupClipboard: StateFlow<ControllerConfigRepository.InputGroupSnapshot?> =
+        _inputGroupClipboard.asStateFlow()
+
+    /**
+     * Copy an input group. [rows] are the group's rows in display order as
+     * (bindingGroupId, sub-input key); [settingsGroupId] is the binding group whose mode and
+     * settings the group menu edits. [inputs] / [settings] choose the halves — the menu's
+     * "Copy inputs" / "Copy settings" / "Copy both".
+     */
+    fun copyInputGroup(
+        rows: List<Pair<Long, String>>,
+        settingsGroupId: Long?,
+        inputs: Boolean,
+        settings: Boolean,
+    ) {
+        val settingsGroup = settingsGroupId?.takeIf { settings }?.let { id ->
+            viewedControllerConfig.value?.actionSets
+                ?.flatMap { it.preset }
+                ?.firstOrNull { it.group.group.id == id }
+                ?.group?.group
+        }
+        viewModelScope.launch {
+            val copiedRows = if (inputs) {
+                rows.map { (groupId, key) -> controllerConfigRepository.readRowCells(groupId, key) }
+            } else null
+            _inputGroupClipboard.value = ControllerConfigRepository.InputGroupSnapshot(
+                rows = copiedRows,
+                mode = settingsGroup?.mode,
+                settingsJson = settingsGroup?.settingsJson,
+            )
+        }
+    }
+
+    /**
+     * Paste [inputGroupClipboard] onto a group: its rows positionally onto [rows] (only when the
+     * counts match) and its settings JSON onto [settingsGroupId]. The MODE is deliberately not
+     * applied here — the screen routes it through its Shizuku-gated mode setter, the same path
+     * the mode picker takes, so pasting an analog mode can't skip the requirement dialog.
+     */
+    fun pasteInputGroup(rows: List<Pair<Long, String>>, settingsGroupId: Long?) {
+        if (editedLayout() == null) return
+        val clip = _inputGroupClipboard.value ?: return
+        viewModelScope.launch {
+            clip.rows?.takeIf { it.size == rows.size }?.forEachIndexed { index, cells ->
+                val (groupId, key) = rows[index]
+                controllerConfigRepository.replaceRowCells(groupId, key, cells)
+            }
+            if (settingsGroupId != null && clip.settingsJson != null) {
+                controllerConfigRepository.updateBindingGroupSettings(settingsGroupId, clip.settingsJson)
+            }
+        }
+    }
+
+    /** Reset each binding group to its fresh-layout seed. See
+     *  [ControllerConfigRepository.resetBindingGroup]. */
+    fun resetBindingGroups(bindingGroupIds: List<Long>) {
+        if (editedLayout() == null) return
+        viewModelScope.launch {
+            bindingGroupIds.forEach { controllerConfigRepository.resetBindingGroup(it) }
         }
     }
 

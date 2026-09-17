@@ -189,6 +189,21 @@ internal class RemapGroupEditorCallbacks(
     ) -> Unit,
     /** Whether anything has been copied this session — greys Paste rather than hiding it. */
     val clipboardOccupied: Boolean,
+    // ── Group-level ops (2026-09-16): carrying commands between groups, whole-group copy/reset ──
+    /** [onMoveCell] across binding groups — a command carried from one input group to another. */
+    val onMoveCellAcross: (
+        fromBindingGroupId: Long, fromKey: String, fromType: ActivatorType,
+        toBindingGroupId: Long, toKey: String, toType: ActivatorType,
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    /** The group menu's clipboard, or null when nothing has been copied. */
+    val groupClipboard: com.mappo.data.repository.ControllerConfigRepository.InputGroupSnapshot? = null,
+    /** Copy a group: its rows as (bindingGroupId, sub-input key) in display order, the binding
+     *  group whose mode + settings it carries, and which halves to take. */
+    val onCopyGroup: (rows: List<Pair<Long, String>>, settingsGroupId: Long?, inputs: Boolean, settings: Boolean) -> Unit =
+        { _, _, _, _ -> },
+    val onPasteGroup: (rows: List<Pair<Long, String>>, settingsGroupId: Long?) -> Unit = { _, _ -> },
+    /** Reset each binding group to its fresh-layout seed. */
+    val onResetGroups: (bindingGroupIds: List<Long>) -> Unit = {},
 )
 
 /**
@@ -228,9 +243,20 @@ internal fun ActivatorType.columnColors(): PressTypeColors {
     }
 }
 
-/** Which cell a table coordinate names. The move-mode key type, and the identity the tile
- *  menus act on. */
-internal data class CellKey(val inputKey: String, val type: ActivatorType)
+/**
+ * Which cell a table coordinate names. The move-mode key type, and the identity the tile menus
+ * act on.
+ *
+ * It carries its GROUP (2026-09-17) because the zoomed scene shows every group's table at once
+ * and one move state spans them all: a command lifted from the d-pad can be carried to the face
+ * buttons, so a cell's identity has to say which table it belongs to. Sub-input keys alone would
+ * be ambiguous anyway — "dpad_up" names a row in the d-pad and in both sticks.
+ */
+internal data class CellKey(
+    val group: RemapSimpleGroup,
+    val inputKey: String,
+    val type: ActivatorType,
+)
 
 @Composable
 internal fun RemapGroupEditor(
@@ -241,6 +267,22 @@ internal fun RemapGroupEditor(
     callbacks: RemapGroupEditorCallbacks,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    // Whether this editor is the one being USED. The zoomed scene (2026-09-17) holds every
+    // group's editor at once, and only the group the camera is on wears the interactive header:
+    // seven live mode pills, cogs, kebabs and Close buttons would be seven of everything for a
+    // screen reader, and the chrome of a card you are only seeing the edge of is noise. A
+    // resting card keeps its identity and its mode, as text, and its table stays focusable —
+    // that is how the d-pad walks into it and makes it the live one.
+    chrome: Boolean = true,
+    // ── Moves (2026-09-17) ──
+    // A host showing SEVERAL editors at once (the zoomed scene) owns the move: one state
+    // spanning every table, stepping that can cross from one to the next, a commit that knows
+    // both ends' binding groups, and focus handles it can reach any cell through. On its own,
+    // an editor keeps the single-table behaviour these defaults describe.
+    moveState: MoveModeState<CellKey> = rememberMoveModeState(),
+    stepTarget: (CellKey, Int, Int) -> CellKey? = ::stepCellWithinGroup,
+    onMoveCommitted: ((from: CellKey, to: CellKey) -> Unit)? = null,
+    focusHandle: ((CellKey) -> FocusRequester)? = null,
     // Landing spot for controller focus when the editor opens (and after a tap wipes focus):
     // the TOP-LEFT tile — the first input's Press cell — falling back to the always-present
     // Close button when the table can't take focus (layer view). Directional focus can't step
@@ -264,6 +306,19 @@ internal fun RemapGroupEditor(
     // "above" and re-enter at its first focusable, trapping focus. Top-row tiles route UP
     // explicitly, set DIRECTLY on each tile's own node — an ancestor-cascaded route proved to
     // win over per-child overrides, collapsing every route to one target.
+    // A focus handle per cell, so focus can FOLLOW a committed move to the destination.
+    // Leaving it on the origin (which now holds the swapped-in command, or nothing at all)
+    // read as the cursor snapping backwards.
+    val ownFocusHandles = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
+    val cellFocusHandle = focusHandle
+        ?: { key -> ownFocusHandles.getOrPut(key) { FocusRequester() } }
+    val commitMove = onMoveCommitted ?: { from: CellKey, to: CellKey ->
+        val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey }
+        val bindingGroupId = spec?.let { viewingSet?.presetFor(it.source)?.group?.group?.id }
+        if (bindingGroupId != null) {
+            callbacks.onMoveCell(bindingGroupId, from.inputKey, from.type, to.inputKey, to.type)
+        }
+    }
     val headerKebabFocus = remember { FocusRequester() }
     val headerModePillFocus = remember { FocusRequester() }
     val headerCloseFocus = remember { FocusRequester() }
@@ -301,7 +356,7 @@ internal fun RemapGroupEditor(
             Spacer(Modifier.width(8.dp))
             EditorFlowArrow()
             Spacer(Modifier.width(8.dp))
-            if (primaryGroup != null && validModes.isNotEmpty()) {
+            if (primaryGroup != null && validModes.isNotEmpty() && chrome) {
                 ModePillDropdown(
                     source = primarySource,
                     currentMode = primaryGroup.mode,
@@ -314,57 +369,60 @@ internal fun RemapGroupEditor(
                 )
             } else {
                 Text(
-                    text = "DEFAULT",
+                    // A resting card states its mode; only the live one lets you change it.
+                    text = (if (!chrome && primaryGroup != null) modeName else "DEFAULT").uppercase(),
                     style = minputOverlineTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.weight(1f))
-            MinputIconButton(
-                icon = Icons.Filled.Settings,
-                contentDescription = "Configure $modeName",
-                onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
-                enabled = headerCogFocusable,
-            )
-            Box {
-                RowKebab(
-                    onClick = { headerMore = true },
-                    contentDescription = "Group options",
-                    modifier = Modifier.focusRequester(headerKebabFocus),
+            if (chrome) {
+                MinputIconButton(
+                    icon = Icons.Filled.Settings,
+                    contentDescription = "Configure $modeName",
+                    onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
+                    enabled = headerCogFocusable,
                 )
-                DropdownMenu(expanded = headerMore, onDismissRequest = { headerMore = false }) {
-                    RichMenuItem(
-                        title = "Import $modeName",
-                        helper = "Bring in a mode and inputs from another layout.",
-                        icon = Icons.Filled.Download,
-                        // Future: layout import. Inert while the acquisition flow lands.
-                        onClick = { headerMore = false },
+                Box {
+                    RowKebab(
+                        onClick = { headerMore = true },
+                        contentDescription = "Group options",
+                        modifier = Modifier.focusRequester(headerKebabFocus),
                     )
-                    RichMenuItem(
-                        title = "Reset $modeName",
-                        helper = "Return this group to its defaults.",
-                        icon = Icons.Filled.RestartAlt,
-                        enabled = editable && primaryGroup != null,
-                        onClick = {
-                            headerMore = false
-                            primaryGroup?.let { callbacks.onResetGroup(it.id) }
-                        },
-                    )
+                    DropdownMenu(expanded = headerMore, onDismissRequest = { headerMore = false }) {
+                        RichMenuItem(
+                            title = "Import $modeName",
+                            helper = "Bring in a mode and inputs from another layout.",
+                            icon = Icons.Filled.Download,
+                            // Future: layout import. Inert while the acquisition flow lands.
+                            onClick = { headerMore = false },
+                        )
+                        RichMenuItem(
+                            title = "Reset $modeName",
+                            helper = "Return this group to its defaults.",
+                            icon = Icons.Filled.RestartAlt,
+                            enabled = editable && primaryGroup != null,
+                            onClick = {
+                                headerMore = false
+                                primaryGroup?.let { callbacks.onResetGroup(it.id) }
+                            },
+                        )
+                    }
                 }
+                // No spacer: cog·kebab·close sit adjacent at one rhythm.
+                MinputIconButton(
+                    icon = Icons.Filled.Close,
+                    contentDescription = "Close",
+                    onClick = onClose,
+                    modifier = Modifier
+                        .focusRequester(headerCloseFocus)
+                        .then(
+                            if (focusRequester != null && !editable) {
+                                Modifier.focusRequester(focusRequester)
+                            } else Modifier,
+                        ),
+                )
             }
-            // No spacer: cog·kebab·close sit adjacent at one rhythm.
-            MinputIconButton(
-                icon = Icons.Filled.Close,
-                contentDescription = "Close",
-                onClick = onClose,
-                modifier = Modifier
-                    .focusRequester(headerCloseFocus)
-                    .then(
-                        if (focusRequester != null && !editable) {
-                            Modifier.focusRequester(focusRequester)
-                        } else Modifier,
-                    ),
-            )
         }
         HorizontalDivider(Modifier.padding(horizontal = MinputPanelDividerInset))
 
@@ -375,8 +433,14 @@ internal fun RemapGroupEditor(
             config = config,
             callbacks = callbacks,
             editable = editable,
-            upTarget = tableUpTarget,
+            // A resting card has no header controls to route UP into, and an unattached
+            // requester would throw the moment focus searched that way.
+            upTarget = if (chrome) tableUpTarget else FocusRequester.Default,
             focusRequester = focusRequester.takeIf { editable },
+            moveState = moveState,
+            stepTarget = stepTarget,
+            onMoveCommitted = commitMove,
+            focusHandle = cellFocusHandle,
         )
     }
 }
@@ -400,10 +464,16 @@ private fun AdvancedTable(
     editable: Boolean,
     upTarget: FocusRequester,
     focusRequester: FocusRequester?,
+    // Moves are SCENE-wide (2026-09-17): the state, the stepping, the commit and the focus
+    // handles all belong to whoever hosts the tables, because a command can be carried out of
+    // this one. Standalone hosts get the single-table behaviour from the defaults.
+    moveState: MoveModeState<CellKey>,
+    stepTarget: (CellKey, Int, Int) -> CellKey?,
+    onMoveCommitted: (CellKey, CellKey) -> Unit,
+    focusHandle: (CellKey) -> FocusRequester,
 ) {
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
-    val moveState = rememberMoveModeState<CellKey>()
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     // The grid has gutters between rows (and between columns), which belong to no cell. Without
@@ -421,11 +491,6 @@ private fun AdvancedTable(
     // neighbors, so MoveModeState delegates that resolution here (see its KDoc).
     val rowKeys = group.rows.map { it.subInputKey }
 
-    // A focus handle per cell, so focus can FOLLOW a committed move to the destination.
-    // Leaving it on the origin (which now holds the swapped-in command, or nothing at all)
-    // read as the cursor snapping backwards.
-    val cellFocus = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
-    fun focusHandle(key: CellKey): FocusRequester = cellFocus.getOrPut(key) { FocusRequester() }
 
     // Does a cell actually hold a command? An EMPTY cell is behaviorally empty as far as a
     // move is concerned — it's a slot, not a tile — so it must not slide around during a swap
@@ -448,21 +513,20 @@ private fun AdvancedTable(
 
     fun stepMoveTarget(dRow: Int, dCol: Int) {
         val current = moveState.target ?: return
-        val (r, c) = cellAt(current) ?: return
-        val nr = (r + dRow).coerceIn(0, rowKeys.lastIndex)
-        val nc = (c + dCol).coerceIn(0, pressTypeColumns.lastIndex)
-        if (nr != r || nc != c) {
-            // A tick per cell crossed: with no finger on the screen the haptic is the only
-            // confirmation that the drop target actually moved.
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            val next = CellKey(rowKeys[nr], pressTypeColumns[nc])
-            moveState.moveTargetTo(next)
-            // Focus FOLLOWS the drop target. Focus is cell-anchored, so this keeps the ring on
-            // the cell being aimed at instead of stranding it on the one the tile was lifted
-            // from — and it means the tile the user then activates IS the destination, so the
-            // confirm needs no focus change of its own.
-            runCatching { cellFocus[next]?.requestFocus() }
-        }
+        // Whichever table holds the drop target does the stepping; the others keep out of it.
+        if (current.group != group) return
+        val next = stepTarget(current, dRow, dCol) ?: return
+        if (next == current) return
+        // A tick per cell crossed: with no finger on the screen the haptic is the only
+        // confirmation that the drop target actually moved.
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        moveState.moveTargetTo(next)
+        // Focus FOLLOWS the drop target. Focus is cell-anchored, so this keeps the ring on
+        // the cell being aimed at instead of stranding it on the one the tile was lifted
+        // from — and it means the tile the user then activates IS the destination, so the
+        // confirm needs no focus change of its own. The handle comes from the host, so a
+        // destination in ANOTHER group is reachable the same way.
+        runCatching { focusHandle(next).requestFocus() }
     }
 
     // Resolve the binding group that owns a row's source. Rows in a multi-source group
@@ -479,8 +543,10 @@ private fun AdvancedTable(
     // new contents. An earlier attempt held the preview across the DB roundtrip instead; that
     // only moved the problem, since the held displacement would then be applied on top of the
     // already-correct data.
-    val previewOrigin = moveState.origin
-    val previewTarget = moveState.target
+    // Scoped to this table: a command carried INTO another group displaces nothing here, and
+    // the vacated slot belongs to whichever table the command was lifted from.
+    val previewOrigin = moveState.origin?.takeIf { it.group == group }
+    val previewTarget = moveState.target?.takeIf { it.group == group }
 
     // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
     // because a held activate button auto-repeats while focus moves, so the release can arrive
@@ -490,10 +556,8 @@ private fun AdvancedTable(
 
     fun commitMove(pair: Pair<CellKey, CellKey>?) {
         val (from, to) = pair ?: return
-        val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey } ?: return
-        val groupId = bindingGroupIdFor(spec) ?: return
         liftHeld = false
-        callbacks.onMoveCell(groupId, from.inputKey, from.type, to.inputKey, to.type)
+        onMoveCommitted(from, to)
         // No focus handling here, deliberately. On the controller path focus already TRACKS the
         // drop target (see stepMoveTarget), so by the time a move commits it is on the
         // destination — nothing to move, and nothing that could lag a frame behind the data.
@@ -561,7 +625,8 @@ private fun AdvancedTable(
     // will happily walk it off the visible columns; there is no free hand to scroll with, so
     // the table follows the target instead.
     LaunchedEffect(moveState.target, moveState.active) {
-        val target = moveState.target.takeIf { moveState.active } ?: return@LaunchedEffect
+        val target = moveState.target.takeIf { moveState.active && it?.group == group }
+            ?: return@LaunchedEffect
         val (row, col) = cellAt(target) ?: return@LaunchedEffect
         val stepX = with(density) { (TileWidth + TileGap).toPx() }
         val stepY = with(density) { (TileHeight + TileRowGap).toPx() }
@@ -623,6 +688,9 @@ private fun AdvancedTable(
                 // moves don't take this path; the finger is already saying where to land.
                 .onKeyEvent { event ->
                     if (!moveState.active || moveState.pointerDriven) return@onKeyEvent false
+                    // The target may have been carried into another group's table, which then
+                    // owns the keys (focus followed it there).
+                    if (moveState.target?.group != group) return@onKeyEvent false
 
                     // Activate FIRST, and on the key's release — which is why this sits above
                     // the key-down filter below. (It didn't, once, and the filter ate every
@@ -669,7 +737,7 @@ private fun AdvancedTable(
                     // On the scrollable node, not the outer Box — test scroll-to-node and
                     // accessibility scroll actions both need the semantics to sit where the
                     // scroll modifier is.
-                    .testTag("group-editor-table")
+                    .testTag(editorTableTestTag(group))
                     .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
             ) {
                 // ── Frozen glyph column ("column zero") ───────────────────
@@ -711,7 +779,7 @@ private fun AdvancedTable(
                         group.rows.forEach { spec ->
                             Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
                                 pressTypeColumns.forEach { type ->
-                                    val key = CellKey(spec.subInputKey, type)
+                                    val key = CellKey(group, spec.subInputKey, type)
                                     // Move markers live HERE, in the background layer, not on
                                     // the cell: z-order between cells is per-Row, and the
                                     // lifted tile's row outranks every other, so a marker
@@ -778,7 +846,7 @@ private fun AdvancedTable(
                                 horizontalArrangement = Arrangement.spacedBy(TileGap),
                             ) {
                                 pressTypeColumns.forEach { type ->
-                                    val cellKey = CellKey(spec.subInputKey, type)
+                                    val cellKey = CellKey(group, spec.subInputKey, type)
                                     val activator = groupInput?.firstActivatorOfType(type)
                                     val binding = activator?.bindings?.firstOrNull()
                                     val output = activator?.primaryOutput ?: BindingOutput.Unbound
@@ -1059,7 +1127,6 @@ private fun CommandTile(
     // "which cell is under the finger" must not change as tiles animate around.
     Box(
         modifier = modifier
-            // Addressable per cell: "cell:<sub-input key>:<ACTIVATOR_TYPE>".
             .testTag(cellTestTag(cellKey))
             .width(TileWidth)
             .height(TileHeight)
@@ -1255,7 +1322,7 @@ private fun CommandTile(
  * label would be unsettable and activator settings — crucially the CHORD PARTNER, without
  * which a Chord cell can't function — would be unreachable.
  */
-private fun tileActions(
+internal fun tileActions(
     defined: Boolean,
     clipboardOccupied: Boolean,
     onEdit: () -> Unit,
@@ -1285,7 +1352,7 @@ private fun tileActions(
 /** Layer view's cut-down menu. Editing on a layer must go through the full-screen editor so
  *  the override materializes onto the layer rather than mutating the base set's row, and
  *  Clear-override only means anything where an override actually exists. */
-private fun layerTileActions(
+internal fun layerTileActions(
     overridden: Boolean,
     onEdit: () -> Unit,
     onClearOverride: () -> Unit,
@@ -1301,11 +1368,37 @@ private fun layerTileActions(
 )
 
 /** Stable test handle for a cell. */
-internal fun cellTestTag(key: CellKey): String = "cell:${key.inputKey}:${key.type.name}"
+/**
+ * Addressable per cell: "cell:<GROUP>:<sub-input key>:<ACTIVATOR_TYPE>".
+ *
+ * The GROUP is in the tag because the zoomed scene holds every group's table at once
+ * (2026-09-17) and sub-input keys repeat across groups — "dpad_up" belongs to the d-pad and to
+ * both sticks. Without it, three cells answer to one tag.
+ */
+internal fun cellTestTag(key: CellKey): String =
+    "cell:${key.group.name}:${key.inputKey}:${key.type.name}"
+
+/**
+ * The cell one grid step from [from], staying inside its own group: the single-table stepping
+ * every editor had before the zoomed scene, and what a standalone editor still does. A step off
+ * an edge goes nowhere. (The scene's own stepper crosses into the neighbouring group instead —
+ * see RemapZoomScene.)
+ */
+internal fun stepCellWithinGroup(from: CellKey, dRow: Int, dCol: Int): CellKey? {
+    val rows = from.group.rows
+    val row = rows.indexOfFirst { it.subInputKey == from.inputKey }.takeIf { it >= 0 } ?: return null
+    val column = pressTypeColumns.indexOf(from.type).takeIf { it >= 0 } ?: return null
+    val nextRow = (row + dRow).coerceIn(0, rows.lastIndex)
+    val nextColumn = (column + dCol).coerceIn(0, pressTypeColumns.lastIndex)
+    return CellKey(from.group, rows[nextRow].subInputKey, pressTypeColumns[nextColumn])
+}
+
+/** The scrolling table of [group]'s editor — one per group in the scene. */
+internal fun editorTableTestTag(group: RemapSimpleGroup): String = "group-editor-table:${group.name}"
 
 /** Keys that activate a focused tile. Mirrors what Compose's own `clickable` accepts, plus the
  *  gamepad A button so a controller's primary action works without a d-pad center. */
-private val TileActivateKeys = setOf(
+internal val TileActivateKeys = setOf(
     Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.ButtonA,
 )
 

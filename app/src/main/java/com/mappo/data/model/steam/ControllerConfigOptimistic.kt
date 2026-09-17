@@ -42,11 +42,87 @@ fun ControllerConfig.withInputCellMoved(
     fromType: ActivatorType,
     toKey: String,
     toType: ActivatorType,
+    toBindingGroupId: Long = bindingGroupId,
 ): ControllerConfig {
+    if (toBindingGroupId != bindingGroupId) {
+        return withInputCellMovedAcrossGroups(bindingGroupId, fromKey, fromType, toBindingGroupId, toKey, toType)
+    }
     if (fromKey == toKey && fromType == toType) return this
     return mapBindingGroup(bindingGroupId) { group ->
         group.movingCell(fromKey, fromType, toKey, toType)
     }
+}
+
+/**
+ * The cross-group half of [withInputCellMoved]: the moving activator leaves its row in one
+ * binding group and lands in another (materializing the destination row bare, as the
+ * repository does), and whatever it displaces goes back the other way.
+ */
+private fun ControllerConfig.withInputCellMovedAcrossGroups(
+    fromGroupId: Long,
+    fromKey: String,
+    fromType: ActivatorType,
+    toGroupId: Long,
+    toKey: String,
+    toType: ActivatorType,
+): ControllerConfig {
+    val fromGroup = findBindingGroup(fromGroupId) ?: return this
+    val toGroup = findBindingGroup(toGroupId) ?: return this
+    val moving = fromGroup.inputByKey(fromKey)?.firstActivatorOfType(fromType) ?: return this
+    val displaced = toGroup.inputByKey(toKey)?.firstActivatorOfType(toType)
+    val movedIn = moving.copy(activator = moving.activator.copy(type = toType))
+    val movedOut = displaced?.copy(activator = displaced.activator.copy(type = fromType))
+    return this
+        .mapBindingGroup(fromGroupId) { group ->
+            group.replacingOnRow(fromKey, removeId = moving.activator.id, add = movedOut)
+        }
+        .mapBindingGroup(toGroupId) { group ->
+            group.replacingOnRow(toKey, removeId = displaced?.activator?.id, add = movedIn)
+        }
+}
+
+/** On row [inputKey]: drop the activator [removeId] (if any) and add [add] (if any),
+ *  materializing the row bare when it doesn't exist yet and there's something to add. */
+private fun BindingGroupGraph.replacingOnRow(
+    inputKey: String,
+    removeId: Long?,
+    add: ActivatorGraph?,
+): BindingGroupGraph {
+    val existing = inputByKey(inputKey)
+    if (existing == null) {
+        if (add == null) return this
+        return copy(
+            inputs = inputs + GroupInputGraph(
+                input = GroupInput(
+                    bindingGroupId = group.id,
+                    inputKey = inputKey,
+                    orderIndex = (inputs.maxOfOrNull { it.input.orderIndex } ?: -1) + 1,
+                ),
+                activators = listOf(add),
+            ),
+        )
+    }
+    return copy(
+        inputs = inputs.map { inputGraph ->
+            if (inputGraph.input.inputKey != inputKey) return@map inputGraph
+            val kept = inputGraph.activators.filterNot { removeId != null && it.activator.id == removeId }
+            inputGraph.copy(activators = if (add != null) kept + add else kept)
+        },
+    )
+}
+
+/** The [BindingGroupGraph] with [bindingGroupId], searched everywhere [mapBindingGroup] maps. */
+private fun ControllerConfig.findBindingGroup(bindingGroupId: Long): BindingGroupGraph? {
+    actionSets.forEach { set ->
+        set.preset.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+        set.modeShifts.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+        set.layers.forEach { layer ->
+            layer.preset.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+            layer.bindingGroups.firstOrNull { it.group.id == bindingGroupId }?.let { return it }
+            layer.modeShifts.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+        }
+    }
+    return null
 }
 
 /** Apply [transform] to the [BindingGroupGraph] with [bindingGroupId], wherever it lives —

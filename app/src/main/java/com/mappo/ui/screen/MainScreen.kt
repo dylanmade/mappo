@@ -189,6 +189,7 @@ fun MainScreen(
     // Session clipboard for the advanced table's cell Copy/Paste — read here so the tile
     // menus can grey Paste rather than hiding it.
     val cellClipboard by viewModel.inputCellClipboard.collectAsStateWithLifecycle()
+    val groupClipboard by viewModel.inputGroupClipboard.collectAsStateWithLifecycle()
     val userTemplates = remember(templates) {
         templates.filterIsInstance<TemplateRef.User>().toImmutableList()
     }
@@ -705,6 +706,15 @@ fun MainScreen(
                         viewModel.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
                     },
                     cellClipboardOccupied = cellClipboard != null,
+                    onMoveInputCellAcross = { fromGroupId, fromKey, fromType, toGroupId, toKey, toType ->
+                        viewModel.moveInputCell(fromGroupId, fromKey, fromType, toKey, toType, toGroupId)
+                    },
+                    groupClipboard = groupClipboard,
+                    onCopyInputGroup = { rows, settingsGroupId, inputs, settings ->
+                        viewModel.copyInputGroup(rows, settingsGroupId, inputs, settings)
+                    },
+                    onPasteInputGroup = { rows, settingsGroupId -> viewModel.pasteInputGroup(rows, settingsGroupId) },
+                    onResetBindingGroups = { ids -> viewModel.resetBindingGroups(ids) },
                     modifier = Modifier.fillMaxSize()
                 )
             }
