@@ -4,67 +4,35 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.draw.paint
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.layoutId
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.mappo.R
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ActivatorType
@@ -77,33 +45,28 @@ import com.mappo.data.model.steam.displayLabel
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.ui.component.rightStickHorizontalScroll
 import com.mappo.ui.glyph.InputGlyphs
-import kotlin.math.roundToInt
-import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPod
-import com.mappo.ui.minput.MinputPodGap
-import com.mappo.ui.minput.MinputPodPlateCorner
-import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputBoxContainer
-import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
  * The simplified remap view: a controller diagram flanked by one tappable box per input group,
  * each row showing an input glyph + every command assigned to that input.
  *
- * **Activating a box ZOOMS IN** (Dylan, 2026-09-17). The plate pushes toward the box and
- * dissolves; the zoomed scene ([RemapZoomScene]) grows in from the same point, holding every
- * group's advanced table around a blown-up controller with a camera parked on the group that was
- * activated. Backing out zooms back to this view, with the cursor on whichever group the camera
- * ended on. It replaced a morph into a near-fullscreen modal editor, which hid the controller
- * and every other group — isolating to read, and a lot of closing and reopening to move a
- * command from one group to another. The morph's own machinery (the box bounds, the progress
- * animatable) still drives the zoom's two layers.
+ * **The view is one STAGE that zooms** (Dylan, 2026-09-17). This file owns the state — which
+ * group is open, how far along the zoom is, where controller focus sits — and the resting
+ * CONTENT of a group box; [RemapStage] owns the elements and the travel, and RemapZoomScene.kt
+ * owns the zoomed geometry. Activating a box does not open anything: every element simply moves
+ * and scales from its place in the basic grid to its place in the advanced layout, its contents
+ * crossfading from summary rows to the full table on the way. Backing out runs it in reverse,
+ * into whichever box the camera ended on.
  *
- * The UTILITY group moved into the CENTRE column the same day, under the controller image: that
- * is where Start and Select sit on the hardware, and it puts the box between the two stick
- * boxes — the seat the zoomed scene navigates to by crossing left or right from a stick.
+ * Two earlier attempts are worth not repeating. A near-fullscreen MODAL editor (before
+ * 2026-09-17) hid the controller and every other group — isolating to read, and a lot of
+ * closing and reopening to move a command between groups. Its replacement kept the basic plate
+ * and a separate zoomed scene as two layers and crossfaded them while both scaled: Dylan
+ * reviewed that one frame by frame and it was, exactly as it looked, two screens rather than a
+ * zoom.
  *
  * **Restructured 2026-09-11 to follow the advanced view's table** ([RemapGroupEditor]), in three
  * moves:
@@ -153,336 +116,115 @@ internal fun RemapSimpleView(
     focusSeatEnabled: Boolean = true,
 ) {
     // The group whose editor should be open (user intent — survives the command-picker
-    // round-trip) vs. the group currently on screen mid-animation.
+    // round-trip) vs. the group currently on stage, which outlives it through the collapse.
     var expandedGroup by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
     var visibleGroup by remember { mutableStateOf(expandedGroup) }
-    // Where the zoomed scene's camera has travelled to since it opened — the group the user is
-    // editing NOW, which is what closing hands focus back to. Distinct from [expandedGroup],
-    // which stays the group they zoomed in from.
+    // Where the camera has travelled since the zoom began — the group being edited NOW, which
+    // is what the zoom collapses back into and hands focus to. Distinct from [expandedGroup],
+    // which stays the group it was opened from.
     var cameraGroup by rememberSaveable { mutableStateOf(expandedGroup) }
+    // 0 = the basic grid, 1 = zoomed onto [cameraGroup]. The whole travel is one number: the
+    // stage interpolates every element's rect between its two geometries by it.
     val progress = remember { Animatable(if (expandedGroup != null) 1f else 0f) }
-    val boxBounds = remember { mutableStateMapOf<RemapSimpleGroup, Rect>() }
-    var rootCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var rootSize by remember { mutableStateOf(IntSize.Zero) }
-    // Focus target for the expanded editor — without it, the tapped box's disappearance sends
-    // focus hunting to the first focusable on screen (the top-left back button). Attached to
-    // the editor's Close button (NOT the overlay container: a focused container that spatially
-    // contains every child is a directional-search dead end — no child is "in a direction"
-    // from it, so controller focus could never step inside).
+    // False for the duration of a travel, so the stage can skip per-frame-expensive chrome.
+    var settled by remember { mutableStateOf(true) }
+    // Focus target inside the opened group's table — without it, a tap that opens a group
+    // leaves the cursor on the box behind it.
     val editorFocus = remember { FocusRequester() }
-    // Which group box should reclaim controller focus once the editor collapses back into it.
-    // Starts non-null on a fresh entry (no editor restoring): seating focus on the top-left
-    // group box makes the screen controller-ready immediately — the Select/Start panel
-    // summons are preview key handlers that only fire while focus sits in this subtree, and
-    // an unseated screen's first d-pad press used to default-hunt into the frame chrome.
+    // Which group box should reclaim controller focus once the zoom collapses back into it.
+    // Starts non-null on a fresh entry: seating focus on the top-left group box makes the
+    // screen controller-ready immediately — the Select/Start panel summons are preview key
+    // handlers that only fire while focus sits in this subtree, and an unseated screen's first
+    // d-pad press used to default-hunt into the frame chrome.
     var returnFocusGroup by remember {
         mutableStateOf(if (expandedGroup == null) RemapSimpleGroup.LEFT_SHOULDER else null)
     }
     val inputModeManager = LocalInputModeManager.current
 
-    // Basic-view flavor of the tap-focus-recovery below: a tap anywhere clears Compose focus
-    // (touch-mode entry); with no editor open, re-seat the controller cursor on the top-left
-    // group box (Left Trigger) so the next d-pad press navigates from a known home. Deferred
-    // + touch-gated for the same reasons as the editor's recovery.
+    // Focus recovery. Any TAP flips the window into touch mode, which CLEARS Compose focus —
+    // after that, d-pad navigation was dead until something was reopened. When this subtree
+    // loses all focus, re-seat the cursor: on the top-left box while zoomed out, on the open
+    // table while zoomed in. DEFERRED through state + LaunchedEffect, because focus-loss also
+    // fires while a composition is being disposed and a synchronous requestFocus mid-detach
+    // corrupts the node lifecycle ("Must run runDetachLifecycle()..."); an effect simply never
+    // runs on a disposing composition.
     var viewHadFocus by remember { mutableStateOf(false) }
-    var baseRefocusTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(baseRefocusTick) {
-        if (baseRefocusTick > 0 && inputModeManager.inputMode == InputMode.Touch &&
-            expandedGroup == null && visibleGroup == null
-        ) {
-            returnFocusGroup = RemapSimpleGroup.LEFT_SHOULDER
+    var refocusTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(refocusTick) {
+        // Touch mode only: a tap is the thing that clears focus wholesale. In key mode a
+        // subtree loss means focus legitimately moved elsewhere (up to the set/layer tabs, say)
+        // — recovering would yank it straight back.
+        if (refocusTick == 0 || inputModeManager.inputMode != InputMode.Touch) return@LaunchedEffect
+        if (expandedGroup == null) {
+            if (visibleGroup == null) returnFocusGroup = RemapSimpleGroup.LEFT_SHOULDER
+        } else {
+            runCatching { editorFocus.requestFocus() }
         }
     }
 
-    // Drives expand / collapse / switch-to-another-group. Switching collapses the current
-    // editor back to its home box before expanding the next one.
+    // Drives zoom in / zoom out / travel to another group. Switching groups collapses back to
+    // the grid first, then zooms into the next one.
     LaunchedEffect(expandedGroup) {
         val target = expandedGroup
         if (target == visibleGroup) {
             if (target != null && progress.value < 1f) {
+                settled = false
                 progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
+                settled = true
             }
             return@LaunchedEffect
         }
         if (visibleGroup != null) {
+            // Collapse into the box of wherever the CAMERA ended up, not the one it came in
+            // through: after travelling to another group, that group's box is the one the
+            // elements are actually over.
             val closing = cameraGroup ?: visibleGroup
+            settled = false
             progress.animateTo(0f, tween(CollapseMillis, easing = FastOutSlowInEasing))
+            settled = true
             visibleGroup = null
-            // Backing out (not switching groups): hand controller focus back to the home box —
-            // the box of wherever the CAMERA ended up, so zooming out of a group you panned to
-            // leaves the cursor on that group rather than the one you came in through.
+            cameraGroup = null
+            // Backing out (not switching groups): hand controller focus back to that box.
             if (target == null) returnFocusGroup = closing
         }
         if (target != null) {
             visibleGroup = target
             cameraGroup = target
+            settled = false
             progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
+            settled = true
         }
     }
 
     BackHandler(enabled = expandedGroup != null) { expandedGroup = null }
 
-    // Move controller focus into the editor as it opens (see editorFocus above) — it lands on
-    // the first command row's input button (Close when that isn't focusable), and the d-pad
-    // walks the rows and header controls from there.
-    // focusSeatEnabled is a key (not just a guard) so a seat deferred while a drawer held
-    // focus fires when the drawers close — expandedGroup is saveable state, so a drawer-scroll
-    // remount can land here with the editor already open.
+    // Move controller focus into the table as the zoom starts — it lands on the first input's
+    // Press cell, and the d-pad walks the grid and the header from there.
+    // focusSeatEnabled is a key (not just a guard) so a seat deferred while a drawer held focus
+    // fires when the drawers close — expandedGroup is saveable state, so a drawer-scroll
+    // remount can land here with a group already open.
     LaunchedEffect(visibleGroup, focusSeatEnabled) {
         if (visibleGroup != null && focusSeatEnabled) runCatching { editorFocus.requestFocus() }
     }
 
-    Box(
-        modifier = modifier
-            .onGloballyPositioned { rootCoords = it; rootSize = it.size }
-            .onFocusChanged { state ->
-                if (state.hasFocus) {
-                    viewHadFocus = true
-                } else if (viewHadFocus && expandedGroup == null) {
-                    baseRefocusTick++
-                }
-            },
-    ) {
-        // Where the zoom pivots: the centre of the box that was activated, as a fraction of the
-        // view. The plate and the scene scale about the SAME point, so one dollies into the
-        // other instead of the two sliding past each other.
-        //
-        // Captured ONCE, when a group is activated, rather than read from [boxBounds] during
-        // composition. Two reasons: the plate's own zoom transform moves those bounds every
-        // frame (so a live read would wobble the pivot mid-flight), and reading a map that the
-        // boxes write from their position callbacks is a recomposition loop — write, recompose,
-        // re-place, write.
-        var pivot by remember { mutableStateOf(TransformOrigin.Center) }
-        LaunchedEffect(expandedGroup) {
-            val opening = expandedGroup ?: return@LaunchedEffect
-            val bounds = boxBounds[opening] ?: return@LaunchedEffect
-            if (rootSize.width == 0 || rootSize.height == 0) return@LaunchedEffect
-            pivot = TransformOrigin(
-                (bounds.center.x / rootSize.width).coerceIn(0f, 1f),
-                (bounds.center.y / rootSize.height).coerceIn(0f, 1f),
-            )
-        }
-
-        // The band rides ONE plate (2026-08-30): every group box plus the controller image
-        // between them sits on a single rectangular [MinputPod], so the input map reads as one
-        // object floating over the view's lowest plane rather than eight boxes scattered on it.
-        // The plate is centered in whatever height the view has — the flexed Gyro/Overlay strip
-        // that used to claim the space below it retired the same day (see the file KDoc).
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                // Zooming in: the plate pushes toward the activated box and dissolves, leaving
-                // the scene growing in from the same spot. Read in the DRAW phase — the whole
-                // transition runs without recomposing either layer.
-                .graphicsLayer {
-                    val p = progress.value
-                    if (p > 0f) {
-                        alpha = 1f - p
-                        val scale = 1f + (PlateZoomScale - 1f) * p
-                        scaleX = scale
-                        scaleY = scale
-                        transformOrigin = pivot
-                    }
-                }
-                // The plate's own inset from the screen edges. Horizontally it matches the top
-                // bar's, so the plate's rim lines up with the identity pod's above it;
-                // vertically it is the pod-to-pod gap, which is the whole distance to the
-                // flush-bottomed top bar (that bar gives no vertical air by design).
-                .padding(horizontal = MinputBarEdgePadding, vertical = MinputPodGap)
-                // While the editor overlay is up, directional focus must not wander into
-                // the plate underneath it — cancel any attempt to enter this subtree.
-                .then(
-                    if (visibleGroup != null) {
-                        Modifier
-                            .focusProperties { onEnter = { cancelFocusChange() } }
-                            .focusGroup()
-                    } else Modifier,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-                // The input map, now in TWO sections on the plate (2026-09-11): the flanking
-                // columns with the controller between them, and the centre group beneath them
-                // on its own full-width row. The centre group moved out of the middle column
-                // because its rows now carry every press type's assignment inline and mirror
-                // around a centre line — it needs far more width than a third of the plate.
-                MinputPod(
-                    // A plate, not a capsule: the pill default would round this to a lozenge.
-                    corner = MinputPodPlateCorner,
-                    // FILLS the content section rather than hugging the band (2026-08-30,
-                    // Dylan): this plate is the middle region, not chrome floating in it.
-                    // That retires the IntrinsicSize.Min the band used to measure itself by
-                    // — the sections take their height from the plate now.
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    val box: @Composable (RemapSimpleGroup, Modifier) -> Unit = { group, boxModifier ->
-                        GroupBox(
-                            group = group,
-                            viewingSet = viewingSet,
-                            viewingLayer = viewingLayer,
-                            config = config,
-                            placeholder = group == visibleGroup,
-                            placeholderSize = boxBounds[group]?.size,
-                            onPositioned = { coords ->
-                                rootCoords?.let { root ->
-                                    // Guarded: an unconditional write notifies readers even when
-                                    // the value is unchanged, and anything reading this map in
-                                    // composition then recomposes → re-places → writes again.
-                                    val bounds = root.localBoundingBoxOf(coords)
-                                    if (boxBounds[group] != bounds) boxBounds[group] = bounds
-                                }
-                            },
-                            onOpenGroup = { expandedGroup = it },
-                            requestFocus = focusSeatEnabled && group == returnFocusGroup,
-                            onFocusHandled = { returnFocusGroup = null },
-                            modifier = boxModifier,
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        // ── One band: the two side columns and the centre column between
-                        // them (the controller image, with the utility group beneath it).
-                        //
-                        // BoxWithConstraints because the centre column is sized from the
-                        // band's HEIGHT — see [ControllerColumnHeightRatio].
-                        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                            // Clamped so a narrow band can't starve the flanking columns
-                            // outright — the ratio is tuned against a landscape band.
-                            val controllerWidth =
-                                (maxHeight * ControllerColumnHeightRatio).coerceAtMost(maxWidth / 2)
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                // Wide gutter keeps the side group boxes off the controller image.
-                                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                            ) {
-                                // Left column, counterclockwise start: shoulder → d-pad → stick.
-                                // Its rows are MIRRORED (glyph at the box's inner edge, assignments
-                                // running outward) so the flanks read as each other's reflection —
-                                // see [anchorFor]. The +N badge gutters the columns used to reserve
-                                // are gone with the badges themselves.
-                                Column(
-                                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                                    horizontalAlignment = Alignment.End,
-                                ) {
-                                    box(RemapSimpleGroup.LEFT_SHOULDER, Modifier)
-                                    box(RemapSimpleGroup.DPAD, Modifier)
-                                    box(RemapSimpleGroup.LEFT_STICK, Modifier)
-                                }
-                                // Centre column: the controller image, with the UTILITY group
-                                // beneath it (Dylan, 2026-09-17 — it used to be a full-width
-                                // row under the whole band). Start/Select belong to the middle
-                                // of the controller, and seating the box there puts it between
-                                // the two stick boxes, which is also how the zoomed editor
-                                // navigates to it: right from the left stick, left from the
-                                // right one. The Map CTA that shared this column was removed
-                                // 2026-09-11 (Dylan, "for now").
-                                //
-                                // FIXED width, not a weight (Dylan, 2026-09-12): widening the
-                                // screen must not grow the controller. Anything that later joins
-                                // this column inherits that, by his instruction.
-                                Column(
-                                    modifier = Modifier.width(controllerWidth).fillMaxHeight(),
-                                    verticalArrangement = Arrangement.spacedBy(SectionGap),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                ) {
-                                    // sizeToIntrinsics=false: the image contributes no intrinsic
-                                    // height, so it never drives the band's measurement — it
-                                    // takes whatever the boxes around it leave.
-                                    Box(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .weight(1f)
-                                            .padding(vertical = 8.dp)
-                                            .paint(
-                                                painter = painterResource(R.drawable.controller_placeholder),
-                                                sizeToIntrinsics = false,
-                                                contentScale = ContentScale.Fit,
-                                            ),
-                                    )
-                                    box(RemapSimpleGroup.UTILITY, Modifier)
-                                }
-                                // Right column: shoulder → face buttons → stick. Glyph at the
-                                // box's inner (start) edge, assignments running outward.
-                                Column(
-                                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                                    horizontalAlignment = Alignment.Start,
-                                ) {
-                                    box(RemapSimpleGroup.RIGHT_SHOULDER, Modifier)
-                                    box(RemapSimpleGroup.FACE, Modifier)
-                                    box(RemapSimpleGroup.RIGHT_STICK, Modifier)
-                                }
-                        }
-                        }
-                    }
-                }
-        }
-
-        // ── The zoomed editor scene ───────────────────────────────────────
-        // Activating a group ZOOMS IN (Dylan, 2026-09-17) instead of morphing the box into a
-        // modal that covered the screen. The scene ([RemapZoomScene]) holds EVERY group's
-        // table around a blown-up controller and moves a camera over it, so the group being
-        // edited keeps the controller — and its neighbours — in view.
-        val vg = visibleGroup
-        if (vg != null && rootSize != IntSize.Zero) {
-            // Focus recovery: any TAP flips the window into touch mode, which CLEARS Compose
-            // focus — after that, d-pad navigation inside the editor was dead until it was
-            // reopened. When the editor subtree loses all focus while still open, re-request
-            // the editor's default target so the controller always has a live cursor. The
-            // request is DEFERRED through state + LaunchedEffect — focus-loss also fires while
-            // the composition is being disposed, and a synchronous requestFocus mid-detach
-            // corrupts the node lifecycle ("Must run runDetachLifecycle()..."); an effect
-            // simply never runs on a disposing composition. (Guarded on expandedGroup so a
-            // closing editor doesn't fight the return-focus-to-box handoff.)
-            var editorHadFocus by remember(vg) { mutableStateOf(false) }
-            var refocusTick by remember(vg) { mutableIntStateOf(0) }
-            LaunchedEffect(refocusTick) {
-                // Touch mode only: a tap is the thing that CLEARS focus wholesale. In key
-                // mode a subtree loss means focus legitimately moved elsewhere (e.g. up to
-                // the set/layer tabs) — recovering would yank it straight back.
-                if (refocusTick > 0 && inputModeManager.inputMode == InputMode.Touch) {
-                    runCatching { editorFocus.requestFocus() }
-                }
-            }
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .onFocusChanged { state ->
-                        if (state.hasFocus) {
-                            editorHadFocus = true
-                        } else if (editorHadFocus && expandedGroup == vg) {
-                            refocusTick++
-                        }
-                    },
-            ) {
-                RemapZoomScene(
-                    group = cameraGroup ?: vg,
-                    onGroupChange = { cameraGroup = it },
-                    viewingSet = viewingSet,
-                    viewingLayer = viewingLayer,
-                    config = config,
-                    callbacks = editorCallbacks,
-                    onClose = { expandedGroup = null },
-                    entryGroup = vg,
-                    entryFocus = editorFocus,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        // The other half of the dolly: the scene grows in from the activated
-                        // box's position as the plate pushes past the camera and fades.
-                        .graphicsLayer {
-                            val p = progress.value
-                            alpha = p
-                            val scale = SceneEnterScale + (1f - SceneEnterScale) * p
-                            scaleX = scale
-                            scaleY = scale
-                            transformOrigin = pivot
-                        },
-                )
-            }
-        }
-    }
+    RemapStage(
+        focus = cameraGroup ?: visibleGroup,
+        progress = { progress.value },
+        settled = settled,
+        viewingSet = viewingSet,
+        viewingLayer = viewingLayer,
+        config = config,
+        callbacks = editorCallbacks,
+        onOpenGroup = { expandedGroup = it },
+        onLookAt = { cameraGroup = it },
+        onClose = { expandedGroup = null },
+        focusSeatGroup = returnFocusGroup.takeIf { focusSeatEnabled },
+        onFocusSeated = { returnFocusGroup = null },
+        entryFocus = editorFocus,
+        modifier = modifier.onFocusChanged { state ->
+            if (state.hasFocus) viewHadFocus = true else if (viewHadFocus) refocusTick++
+        },
+    )
 }
 
 /** One display row in a group box: which sub-input to summarize. */
@@ -507,12 +249,14 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
             SimpleRowSpec(InputSource.DPAD, "dpad_down"),
         ),
     ),
+    // A stick's EDITOR shows only its click (Dylan, 2026-09-17). The four cardinal rows the
+    // table used to carry were the Dpad-on-stick mode's sub-inputs, offered whatever mode the
+    // stick was actually in — and "the stick moves" isn't a command a user assigns here at all:
+    // it's what the stick's MODE dropdown decides. The rows stay in the schema (and in a VDF
+    // import) — the table just doesn't offer them while what to do about stick movement is
+    // still open. The basic view's box is unchanged; see [summaryRows].
     LEFT_STICK(
         listOf(
-            SimpleRowSpec(InputSource.LEFT_JOYSTICK, "dpad_up"),
-            SimpleRowSpec(InputSource.LEFT_JOYSTICK, "dpad_left"),
-            SimpleRowSpec(InputSource.LEFT_JOYSTICK, "dpad_right"),
-            SimpleRowSpec(InputSource.LEFT_JOYSTICK, "dpad_down"),
             SimpleRowSpec(InputSource.LEFT_JOYSTICK, "click"),
         ),
     ),
@@ -522,12 +266,9 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
             SimpleRowSpec(InputSource.SWITCH_SELECT, "click"),
         ),
     ),
+    // Click only — see [LEFT_STICK].
     RIGHT_STICK(
         listOf(
-            SimpleRowSpec(InputSource.RIGHT_JOYSTICK, "dpad_up"),
-            SimpleRowSpec(InputSource.RIGHT_JOYSTICK, "dpad_left"),
-            SimpleRowSpec(InputSource.RIGHT_JOYSTICK, "dpad_right"),
-            SimpleRowSpec(InputSource.RIGHT_JOYSTICK, "dpad_down"),
             SimpleRowSpec(InputSource.RIGHT_JOYSTICK, "click"),
         ),
     ),
@@ -549,9 +290,10 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
 
     /**
      * The rows this group's basic-view box summarizes — the editor's [rows], except that a
-     * stick's four cardinal directions collapse into ONE movement row (Dylan, 2026-09-16): the
-     * box reads "L-Stick Move" + "L-Stick Click" rather than five rows, four of which say the
-     * stick moves. The directions stay individually bindable in the editor.
+     * stick also shows a movement row: the box reads "L-Stick Move" + "L-Stick Click". Movement
+     * is the stick's MODE, not an assignable command, so it appears here and nowhere in the
+     * editor (Dylan, 2026-09-17 — the basic view keeps saying what the stick does; where that
+     * finally gets edited is still being decided).
      *
      * The movement row is keyed [StickMoveKey], a UI-only sub-input no binding group ever
      * holds, so it always shows its RESTING label ([rowRestingLabel]): the stick's own name at
@@ -647,8 +389,11 @@ internal fun defaultRowLabel(spec: SimpleRowSpec): String = when (spec.source) {
     InputSource.RIGHT_TRIGGER -> "Right Trigger"
     InputSource.LEFT_BUMPER -> "Left Bumper"
     InputSource.RIGHT_BUMPER -> "Right Bumper"
-    InputSource.SWITCH_START -> "Start Button"
-    InputSource.SWITCH_SELECT -> "Select Button"
+    // No "Button" suffix on these two (Dylan, 2026-09-17): every other default here names a
+    // control whose word needs the noun ("Left Trigger", "A Button"), but Start and Select are
+    // the names printed on the hardware.
+    InputSource.SWITCH_START -> "Start"
+    InputSource.SWITCH_SELECT -> "Select"
     InputSource.DPAD -> when (spec.subInputKey) {
         "dpad_up" -> "D-Pad Up"
         "dpad_left" -> "D-Pad Left"
@@ -756,7 +501,7 @@ private fun assignmentCells(
  * way.
  */
 @Composable
-private fun GroupRows(
+internal fun GroupRows(
     group: RemapSimpleGroup,
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
@@ -991,87 +736,6 @@ private data class GlyphSlot(val row: Int)
 private data class CellSlot(val row: Int, val column: Int)
 private data class DividerSlot(val row: Int, val column: Int)
 
-/**
- * One tappable group box (the accent-tinted petal-card treatment). While the group is
- * expanded into the editor, [placeholder] renders a same-size invisible stand-in instead — the
- * spot the editor animates back to.
- */
-@Composable
-private fun GroupBox(
-    group: RemapSimpleGroup,
-    viewingSet: ActionSetGraph?,
-    viewingLayer: ActionLayerGraph?,
-    config: ControllerConfig?,
-    placeholder: Boolean,
-    placeholderSize: Size?,
-    onPositioned: (LayoutCoordinates) -> Unit,
-    onOpenGroup: (RemapSimpleGroup) -> Unit,
-    // One-shot: reclaim controller focus (the editor just collapsed back into this box).
-    requestFocus: Boolean = false,
-    onFocusHandled: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(GroupCorner)
-    if (placeholder && placeholderSize != null) {
-        // Invisible same-size stand-in, sized to the box's last measured bounds: holds the
-        // home position (and the animate-back rect) while the group lives in the editor. The
-        // old dashed outline moved to ui/component/DashedPlaceholderBox — the expanded editor
-        // covers the whole band now, so drawing the dashes bought nothing.
-        val density = LocalDensity.current
-        Box(
-            modifier = modifier
-                .onGloballyPositioned(onPositioned)
-                .size(
-                    width = with(density) { placeholderSize.width.toDp() },
-                    height = with(density) { placeholderSize.height.toDp() },
-                ),
-        )
-        return
-    }
-    // Shared box treatment (same identity as the home flower's petal cards) — also the basis
-    // the pill controls now copy, via the minputBoxContainer/remapBoxOutline helpers.
-    val container = minputBoxContainer()
-    val focusRequester = remember { FocusRequester() }
-    if (requestFocus) {
-        // LaunchedEffect (not an inline call): the box may be freshly recomposed from its
-        // placeholder branch, and the focus target only exists after this composition lands.
-        LaunchedEffect(Unit) {
-            runCatching { focusRequester.requestFocus() }
-            onFocusHandled()
-        }
-    }
-    val interaction = remember { MutableInteractionSource() }
-    // The box is one focus target (it opens the editor), so "this box has focus" is exactly
-    // "the stick should scroll this box's rows".
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        // WRAPS its rows (Dylan, 2026-09-16) — a group with no alternate press types makes a
-        // narrow box instead of a column-wide one with dead space. The rows scroll once they
-        // outgrow the column.
-        modifier = modifier
-            // Bounds capture must sit OUTSIDE the lift layer: localBoundingBoxOf maps
-            // through graphicsLayer transforms, so capturing inside it would bake the
-            // focus offset (historically the 1.05× focus grow) into the placeholder/
-            // morph-origin rect — the stand-in came out displaced/oversized and the
-            // neighboring boxes jumped during the morph.
-            .onGloballyPositioned(onPositioned)
-            .minputInteractiveMotion(interaction)
-            .clip(shape)
-            .background(container)
-            .border(minputBevelBorder(container, GroupCorner), shape)
-            .focusRequester(focusRequester)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(
-                interactionSource = interaction,
-                indication = LocalIndication.current,
-            ) { onOpenGroup(group) }
-            .testTag("simple-group:${group.name}")
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-    ) {
-        GroupRows(group, viewingSet, viewingLayer, config, stickScrollEnabled = focused)
-    }
-}
-
 /** Height of one glyph + assignment row inside a group box. */
 private val SummaryRowHeight = 17.dp
 
@@ -1093,12 +757,10 @@ private val AssignmentDividerWidth = 1.dp
 /** Height of that divider — a little short of the row, so it separates without caging. */
 private val AssignmentDividerHeight = 11.dp
 
-/** Gutter at the centre group's centre line, keeping its two halves' glyphs off each other. */
-private val CentreSplitGap = 10.dp
-
-/** Gap between the controller image and the utility group box beneath it, in the centre
- *  column. */
-private val SectionGap = 10.dp
+/** Gutter at the centre group's centre line, keeping its two halves' glyphs off each other.
+ *  Tightened from 10dp on 2026-09-17 (Dylan): the utility box's two glyphs sat too far apart
+ *  for a pair that reads as one cluster. */
+private val CentreSplitGap = 4.dp
 
 /** Floor on a table's assignment run, in characters — the width of the fixed column it
  *  replaced (2026-09-16), so a box keeps that minimum. */
@@ -1106,21 +768,6 @@ private const val AssignmentMinChars = 14
 
 /** How far each overflow chevron sits out past the scroller, into the box's 8dp padding. */
 private val OverflowChevronOutset = 6.dp
-
-/**
- * The controller column's width, as a fraction of the flanking band's HEIGHT.
- *
- * **It is sized from the height on purpose.** The band's height is the one dimension that does
- * NOT change between the 1:1 screen and the expanded one (or with the layouts drawer open), so
- * taking the width from it pins the controller at the size it has in 1:1 — Dylan's ask — on any
- * device, and hands every extra pixel of a wider screen to the flanking columns and the centre
- * group instead. A hardcoded dp would have done the "doesn't scale" half and got the size wrong
- * on anything but one device.
- *
- * 0.385 reproduced the 1.1-of-3.1 weight share it replaced; Dylan widened it by hand to 0.40
- * on 2026-09-16. The image is width-bound at this ratio, so it scales with it. **This is the knob for the controller's size now that nothing else drives it.**
- */
-private const val ControllerColumnHeightRatio = 0.40f
 
 // The group editor's morph values — canonical in the library (MinputDefaults.kt); these
 // are the remap package's aliases. The layout/options panels no longer morph (they're
@@ -1132,10 +779,3 @@ internal const val CollapseMillis = com.mappo.ui.minput.MinputMorphCollapseMilli
 /** Inset between the expanded editor (or full-screen panel) and its host's edges. */
 internal val EditorMargin = 10.dp
 
-/** How far the plate pushes past the camera as the zoomed scene takes over. Enough to read as
- *  travel toward the activated box; more than this and the boxes blur across the screen. */
-private const val PlateZoomScale = 1.18f
-
-/** Where the scene starts on the way in — below 1, so it grows into place rather than
- *  appearing. The ratio between this and [PlateZoomScale] is the depth of the dolly. */
-private const val SceneEnterScale = 0.86f

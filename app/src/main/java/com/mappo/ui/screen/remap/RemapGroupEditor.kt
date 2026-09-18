@@ -10,7 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.Label
@@ -122,9 +120,8 @@ import com.mappo.ui.minput.MinputMenuPlacement
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
+import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPanelDividerInset
-import com.mappo.ui.minput.MinputScrollbar
-import com.mappo.ui.minput.MinputScrollbarThickness
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextEditDialog
@@ -153,8 +150,16 @@ import kotlinx.coroutines.delay
  * surface it.
  *
  * Anatomy: sticky header (group identity · flow arrow · mode pill · cog/kebab/close) over an
- * inset divider, then the table — a frozen glyph column pinned at the start, and a horizontally
- * scrolling body carrying the press-type header row and every cell.
+ * inset divider, then the table — a frozen glyph column and a horizontally scrolling body
+ * carrying the press-type header row and every cell.
+ *
+ * Two changes on 2026-09-17, both making a card match the basic-view box it grows out of:
+ * overflow is cued by [MinputOverflowScroll]'s edge fades + chevrons rather than scrollbars,
+ * and a LEFT-flank group's table is MIRRORED — glyph column at the card's right edge, press
+ * columns running outward to the left (see [RemapSimpleGroup.editorMirrored]). The header bar
+ * above it is not mirrored. A column's INDEX still counts outward from the glyph either way,
+ * so everything keyed on it (scroll offsets, d-pad stepping) is untouched by mirroring; only
+ * the rendered order and the sign of a column step flip.
  *
  * Base-set view edits inline; layer view resolves override→base, renders read-only, and routes
  * cell taps to the full-screen editor (which materializes the override).
@@ -249,14 +254,22 @@ internal fun ActivatorType.columnColors(): PressTypeColors {
  *
  * It carries its GROUP (2026-09-17) because the zoomed scene shows every group's table at once
  * and one move state spans them all: a command lifted from the d-pad can be carried to the face
- * buttons, so a cell's identity has to say which table it belongs to. Sub-input keys alone would
- * be ambiguous anyway — "dpad_up" names a row in the d-pad and in both sticks.
+ * buttons, so a cell's identity has to say which table it belongs to.
+ *
+ * And it names its row by the WHOLE [SimpleRowSpec], not by the sub-input key: a key is unique
+ * only within one binding group, and a group's table can span two. The utility group is the
+ * case that proved it — Start and Select are both a "click", so keying by the string alone gave
+ * the two rows ONE identity, and with it one test tag, one focus handle and a d-pad step that
+ * could never reach the second row.
  */
 internal data class CellKey(
     val group: RemapSimpleGroup,
-    val inputKey: String,
+    val row: SimpleRowSpec,
     val type: ActivatorType,
-)
+) {
+    val inputKey: String get() = row.subInputKey
+    val source: InputSource get() = row.source
+}
 
 @Composable
 internal fun RemapGroupEditor(
@@ -313,8 +326,7 @@ internal fun RemapGroupEditor(
     val cellFocusHandle = focusHandle
         ?: { key -> ownFocusHandles.getOrPut(key) { FocusRequester() } }
     val commitMove = onMoveCommitted ?: { from: CellKey, to: CellKey ->
-        val spec = group.rows.firstOrNull { it.subInputKey == from.inputKey }
-        val bindingGroupId = spec?.let { viewingSet?.presetFor(it.source)?.group?.group?.id }
+        val bindingGroupId = viewingSet?.presetFor(from.source)?.group?.group?.id
         if (bindingGroupId != null) {
             callbacks.onMoveCell(bindingGroupId, from.inputKey, from.type, to.inputKey, to.type)
         }
@@ -472,6 +484,16 @@ private fun AdvancedTable(
     onMoveCommitted: (CellKey, CellKey) -> Unit,
     focusHandle: (CellKey) -> FocusRequester,
 ) {
+    // The flanking groups on the LEFT of the controller read as the right flank's reflection
+    // (Dylan, 2026-09-17), exactly as their basic-view boxes do: input glyph pinned to the
+    // card's right edge, the press columns running outward to the left from it. Only the
+    // ORDER and the side change — the header bar above stays as it is.
+    val mirrored = group.editorMirrored()
+    val columns = remember(mirrored) { if (mirrored) pressTypeColumns.reversed() else pressTypeColumns }
+    // Which way a column step moves a tile on screen. Column INDEX always counts outward from
+    // the glyph, so everything keyed on the index (scroll offsets, stepping) is unchanged by
+    // mirroring; only what the user SEES flips.
+    val columnDirection = if (mirrored) -1 else 1
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
     val haptic = LocalHapticFeedback.current
@@ -487,26 +509,20 @@ private fun AdvancedTable(
     // so the editor dialog is summoned directly rather than by a MinputTextField pill.
     var labelTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
 
-    // Row order for the controller move path's directional stepping — the table knows its own
-    // neighbors, so MoveModeState delegates that resolution here (see its KDoc).
-    val rowKeys = group.rows.map { it.subInputKey }
-
-
     // Does a cell actually hold a command? An EMPTY cell is behaviorally empty as far as a
     // move is concerned — it's a slot, not a tile — so it must not slide around during a swap
     // preview. (It did: the "+" glyphs shuffled with everything else, which read as though
     // blank space were being dragged about.)
     fun isDefined(key: CellKey): Boolean {
-        val spec = group.rows.firstOrNull { it.subInputKey == key.inputKey } ?: return false
-        val groupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(key.inputKey)
-            ?: viewingSet?.presetFor(spec.source)?.group?.inputByKey(key.inputKey)
+        val groupInput = viewingLayer?.presetFor(key.source)?.group?.inputByKey(key.inputKey)
+            ?: viewingSet?.presetFor(key.source)?.group?.inputByKey(key.inputKey)
         val activator = groupInput?.firstActivatorOfType(key.type) ?: return false
         return activator.bindings.firstOrNull() != null &&
             activator.primaryOutput != BindingOutput.Unbound
     }
 
     fun cellAt(key: CellKey): Pair<Int, Int>? {
-        val r = rowKeys.indexOf(key.inputKey).takeIf { it >= 0 } ?: return null
+        val r = group.rows.indexOf(key.row).takeIf { it >= 0 } ?: return null
         val c = pressTypeColumns.indexOf(key.type).takeIf { it >= 0 } ?: return null
         return r to c
     }
@@ -603,7 +619,9 @@ private fun AdvancedTable(
         val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
         val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
         val (row, col) = cellAt(key) ?: return DpOffset.Zero
-        val stepX = TileWidth + TileGap
+        // Mirrored tables lay their columns out right-to-left, so a step toward a higher
+        // column index moves a tile the other way on screen.
+        val stepX = (TileWidth + TileGap) * columnDirection
         val stepY = TileHeight + TileRowGap
         return when (key) {
             // The lifted tile rides to the target. On the POINTER path it follows the finger
@@ -663,14 +681,39 @@ private fun AdvancedTable(
             withFrameNanos { }
             val viewport = hViewport ?: continue
             val x = moveState.pointerWindow.x
+            // Scroll VALUE runs from the glyph outward either way (the mirrored scroller is
+            // reversed), so the edge that increases it is the outward one — right normally,
+            // left when the table is mirrored.
             val delta = when {
-                x > viewport.right - zone -> step
-                x < viewport.left + zone -> -step
+                x > viewport.right - zone -> step * columnDirection
+                x < viewport.left + zone -> -step * columnDirection
                 else -> 0f
             }
             if (delta != 0f) {
                 hScroll.scrollBy(delta)
                 moveState.refreshTargetAtPointer()
+            }
+        }
+    }
+
+    // The frozen glyph column ("column zero"). A lambda because a MIRRORED table places it on
+    // the other side of the body — see [mirrored].
+    val glyphColumn: @Composable () -> Unit = {
+        Column {
+            Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
+            Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                group.rows.forEach { spec ->
+                    Box(
+                        modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        InputGlyphs.SubInputGlyph(
+                            source = spec.source,
+                            subInputKey = spec.subInputKey,
+                            size = TableGlyphSize,
+                        )
+                    }
+                }
             }
         }
     }
@@ -730,40 +773,35 @@ private fun AdvancedTable(
                     }
                 },
         ) {
+            MinputOverflowScroll(
+                state = vScroll,
+                orientation = Orientation.Vertical,
+                // On the scrollable node, not the container — test scroll-to-node and
+                // accessibility scroll actions both need the semantics to sit where the
+                // scroll modifier is.
+                scrollModifier = Modifier.testTag(editorTableTestTag(group)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(vScroll)
-                    // On the scrollable node, not the outer Box — test scroll-to-node and
-                    // accessibility scroll actions both need the semantics to sit where the
-                    // scroll modifier is.
-                    .testTag(editorTableTestTag(group))
                     .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
             ) {
-                // ── Frozen glyph column ("column zero") ───────────────────
-                Column {
-                    Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
-                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                    group.rows.forEach { spec ->
-                        Box(
-                            modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            InputGlyphs.SubInputGlyph(
-                                source = spec.source,
-                                subInputKey = spec.subInputKey,
-                                size = TableGlyphSize,
-                            )
-                        }
-                    }
-                    }
+                if (!mirrored) {
+                    glyphColumn()
+                    Spacer(Modifier.width(TileGap))
                 }
-                Spacer(Modifier.width(TileGap))
 
                 // ── Scrolling body: header row + cells ────────────────────
-                Box(
+                MinputOverflowScroll(
+                    state = hScroll,
+                    orientation = Orientation.Horizontal,
+                    // A mirrored table reads outward from a glyph pinned to its right edge, so
+                    // its resting position is the scroller's far end — same bargain the basic
+                    // view's mirrored rows strike.
+                    reverseScrolling = mirrored,
                     modifier = Modifier
-                        .horizontalScroll(hScroll)
+                        .weight(1f, fill = false)
                         .onGloballyPositioned { hViewport = it.boundsInWindow() },
                 ) {
                     // LAYER 0 — the empty-slot "+" glyphs, drawn beneath EVERY tile.
@@ -778,8 +816,8 @@ private fun AdvancedTable(
                         Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                         group.rows.forEach { spec ->
                             Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                                pressTypeColumns.forEach { type ->
-                                    val key = CellKey(group, spec.subInputKey, type)
+                                columns.forEach { type ->
+                                    val key = CellKey(group, spec, type)
                                     // Move markers live HERE, in the background layer, not on
                                     // the cell: z-order between cells is per-Row, and the
                                     // lifted tile's row outranks every other, so a marker
@@ -820,7 +858,7 @@ private fun AdvancedTable(
                     // LAYER 1 — header + the tiles themselves.
                     Column {
                         Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                            pressTypeColumns.forEach { type -> PressColumnHeader(type) }
+                            columns.forEach { type -> PressColumnHeader(type) }
                         }
                         // Fixed lead-in, independent of [TileRowGap]: spacing the rows apart
                         // must not also push the header row away from them.
@@ -837,16 +875,16 @@ private fun AdvancedTable(
 
                             Row(
                                 modifier = Modifier.zIndex(
-                                    when (spec.subInputKey) {
-                                        previewOrigin?.inputKey -> 10f
-                                        previewTarget?.inputKey -> 5f
+                                    when (spec) {
+                                        previewOrigin?.row -> 10f
+                                        previewTarget?.row -> 5f
                                         else -> 0f
                                     },
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(TileGap),
                             ) {
-                                pressTypeColumns.forEach { type ->
-                                    val cellKey = CellKey(group, spec.subInputKey, type)
+                                columns.forEach { type ->
+                                    val cellKey = CellKey(group, spec, type)
                                     val activator = groupInput?.firstActivatorOfType(type)
                                     val binding = activator?.bindings?.firstOrNull()
                                     val output = activator?.primaryOutput ?: BindingOutput.Unbound
@@ -927,25 +965,14 @@ private fun AdvancedTable(
                         }
                     }
                 }
+                if (mirrored) {
+                    Spacer(Modifier.width(TileGap))
+                    glyphColumn()
+                }
             }
-
-            // Vertical indicator, pinned to the end edge. Only draws when the rows actually
-            // overflow — which happens only when the screen is too short for the group.
-            MinputScrollbar(
-                state = vScroll,
-                orientation = Orientation.Vertical,
-                modifier = Modifier.align(Alignment.CenterEnd),
-            )
+            }
         }
-
-        // Horizontal indicator along the bottom: the table scrolls sideways through six press
-        // columns, and with no bar there was nothing on screen saying so.
-        MinputScrollbar(
-            state = hScroll,
-            orientation = Orientation.Horizontal,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
-        Spacer(Modifier.height(TableScrollbarGap))
+        Spacer(Modifier.height(TableBottomGap))
 
         labelTarget?.let { (bindingId, current) ->
             MinputTextEditDialog(
@@ -1376,7 +1403,7 @@ internal fun layerTileActions(
  * both sticks. Without it, three cells answer to one tag.
  */
 internal fun cellTestTag(key: CellKey): String =
-    "cell:${key.group.name}:${key.inputKey}:${key.type.name}"
+    "cell:${key.group.name}:${key.source.name}:${key.inputKey}:${key.type.name}"
 
 /**
  * The cell one grid step from [from], staying inside its own group: the single-table stepping
@@ -1386,11 +1413,11 @@ internal fun cellTestTag(key: CellKey): String =
  */
 internal fun stepCellWithinGroup(from: CellKey, dRow: Int, dCol: Int): CellKey? {
     val rows = from.group.rows
-    val row = rows.indexOfFirst { it.subInputKey == from.inputKey }.takeIf { it >= 0 } ?: return null
+    val row = rows.indexOf(from.row).takeIf { it >= 0 } ?: return null
     val column = pressTypeColumns.indexOf(from.type).takeIf { it >= 0 } ?: return null
     val nextRow = (row + dRow).coerceIn(0, rows.lastIndex)
     val nextColumn = (column + dCol).coerceIn(0, pressTypeColumns.lastIndex)
-    return CellKey(from.group, rows[nextRow].subInputKey, pressTypeColumns[nextColumn])
+    return CellKey(from.group, rows[nextRow], pressTypeColumns[nextColumn])
 }
 
 /** The scrolling table of [group]'s editor — one per group in the scene. */
@@ -1413,6 +1440,20 @@ internal fun RemapSimpleGroup.headerLabel(): String = when (this) {
     RemapSimpleGroup.RIGHT_SHOULDER -> "Right Trigger"
     RemapSimpleGroup.RIGHT_STICK -> "Right Joystick"
     RemapSimpleGroup.UTILITY -> "Utility Buttons"
+}
+
+/**
+ * Does this group's table read right-to-left — glyph column on the card's RIGHT, press columns
+ * running outward to the left?
+ *
+ * The groups on the LEFT of the controller do (Dylan, 2026-09-17), so that a card and the basic
+ * view box it grew out of have the same shape, and so the two flanks read as each other's
+ * reflection around the controller between them — the same rule [RemapSimpleGroup.anchorFor]
+ * applies to the basic view's rows. The centre group stays normal: it has no flank to mirror.
+ */
+internal fun RemapSimpleGroup.editorMirrored(): Boolean = when (this) {
+    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK -> true
+    else -> false
 }
 
 /** Non-interactive input→output flow marker: a filled Lucide play triangle. */
@@ -1601,8 +1642,10 @@ private val EdgeScrollStep = 6.dp
 /** Vertical breathing room inside the table, above the header row and below the last row. */
 private val TableVerticalPadding = 6.dp
 
-/** Gap under the horizontal scroll indicator, so it isn't flush with the panel's edge. */
-private val TableScrollbarGap = 4.dp
+/** Air under the table, so the last row isn't flush with the card's edge. (It used to be the
+ *  gap under the horizontal scroll indicator; the indicators became [MinputOverflowScroll]'s
+ *  edge fades + chevrons on 2026-09-17, which cost no layout space at all.) */
+private val TableBottomGap = 4.dp
 
 /**
  * The height the advanced editor wants for [group] — header + divider + the table's own rows.
@@ -1617,8 +1660,7 @@ internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
     val table = TableVerticalPadding * 2 +
         ColumnHeaderHeight + HeaderToRowsGap +
         TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
-    return EditorHeaderHeight + EditorDividerHeight + table +
-        MinputScrollbarThickness + TableScrollbarGap
+    return EditorHeaderHeight + EditorDividerHeight + table + TableBottomGap
 }
 
 /** The inset divider under the header is a hairline; counted so the height math is exact. */

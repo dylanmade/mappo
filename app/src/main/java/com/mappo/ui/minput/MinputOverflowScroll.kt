@@ -70,6 +70,11 @@ fun MinputOverflowScroll(
     reverseScrolling: Boolean = false,
     chevronOutset: Dp = 0.dp,
     chevronTint: Color = MaterialTheme.colorScheme.onSurface,
+    // Modifiers for the SCROLLING node itself, as opposed to [modifier], which frames the
+    // container and its cues. Test tags and anything else that has to sit where the scroll
+    // modifier is belong here: scroll-to-node and the accessibility scroll actions both read
+    // the semantics of the node that owns the scroll, and the container isn't it.
+    scrollModifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     // "Leading" = left / top, "trailing" = right / bottom, whichever way the scroller runs.
@@ -102,7 +107,8 @@ fun MinputOverflowScroll(
                     } else {
                         Modifier.verticalScroll(state, reverseScrolling = reverseScrolling)
                     },
-                ),
+                )
+                .then(scrollModifier),
         ) {
             content()
         }

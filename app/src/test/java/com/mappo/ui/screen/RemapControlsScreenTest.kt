@@ -87,7 +87,9 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("A Button", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("D-Pad Up", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("L-Stick Click", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("Start Button", useUnmergedTree = true).assertExists()
+        // "Start", not "Start Button" (Dylan, 2026-09-17): it is the name printed on the
+        // hardware, and the noun added nothing.
+        composeRule.onNodeWithText("Start", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -644,6 +646,97 @@ class RemapControlsScreenTest {
         assert(dpad.right < viewport.width * 0.8f) { "dpad card should leave room for the controller: $dpad" }
     }
 
+    /**
+     * The left flank's tables are MIRRORED (Dylan, 2026-09-17): glyph column at the card's right
+     * edge, press columns running outward to the left, so a card and the basic-view box it grew
+     * out of have the same shape. Asserted on the CELLS rather than the glyphs — the column
+     * order is the thing that flips, and it's what the move-preview arithmetic keys off.
+     */
+    @Test
+    fun zoomScene_mirrorsTheLeftFlanksColumns() {
+        setScreenLocal(seedShapedConfig())
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        val press = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:FULL_PRESS", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val long = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:LONG_PRESS", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(long.left < press.left) { "Long should sit LEFT of Press on a mirrored table: $press / $long" }
+
+        composeRule.onNodeWithContentDescription("Close").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        val facePress = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:FULL_PRESS", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val faceLong = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:LONG_PRESS", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(faceLong.left > facePress.left) { "the right flank keeps its normal order: $facePress / $faceLong" }
+    }
+
+    /**
+     * The basic view is a 3 × 3 grid (Dylan, 2026-09-17), and the point of rebuilding it that way
+     * was this: the utility box belongs in the stick BAND, between the two stick boxes, not at
+     * the bottom of the plate below them — which is where three independently-laid-out columns
+     * had left it.
+     */
+    @Test
+    fun simpleView_seatsTheUtilityBoxBetweenTheStickBoxes() {
+        setScreenLocal(seedShapedConfig())
+        fun boundsOf(group: String) =
+            composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode().boundsInRoot
+
+        val utility = boundsOf("UTILITY")
+        val leftStick = boundsOf("LEFT_STICK")
+        val rightStick = boundsOf("RIGHT_STICK")
+
+        assert(utility.left > leftStick.right) { "utility should sit right of the left stick: $utility" }
+        assert(utility.right < rightStick.left) { "utility should sit left of the right stick: $utility" }
+        // Level with them: its centre inside the band the two stick boxes span.
+        val bandTop = minOf(leftStick.top, rightStick.top)
+        val bandBottom = maxOf(leftStick.bottom, rightStick.bottom)
+        assert(utility.center.y in bandTop..bandBottom) {
+            "utility should be level with the sticks, not below them: $utility vs $bandTop..$bandBottom"
+        }
+    }
+
+    /**
+     * Every box ANCHORS TOWARD THE CONTROLLER (Dylan, 2026-09-17). The first grid handed all its
+     * spare height to the middle band, which pinned the shoulder row to the top of the screen
+     * and the stick row to the bottom — "flung to the far edges". The bands are packed and the
+     * whole matrix is centred now, so the cluster reads as one object around the controller.
+     */
+    @Test
+    fun simpleView_clustersTheBandsAroundTheController() {
+        setScreenLocal(seedShapedConfig())
+        val viewport = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        fun boundsOf(group: String) =
+            composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode().boundsInRoot
+
+        val shoulder = boundsOf("LEFT_SHOULDER")
+        val dpad = boundsOf("DPAD")
+        val stick = boundsOf("LEFT_STICK")
+
+        // Stacked in order, and each band's neighbour is a gutter away rather than a screen away.
+        assert(shoulder.bottom <= dpad.top) { "bands out of order: $shoulder / $dpad" }
+        assert(dpad.bottom <= stick.top) { "bands out of order: $dpad / $stick" }
+        assert(dpad.top - shoulder.bottom < viewport.height * 0.2f) {
+            "the shoulder band is stranded above the d-pad: $shoulder / $dpad"
+        }
+        assert(stick.top - dpad.bottom < viewport.height * 0.2f) {
+            "the stick band is stranded below the d-pad: $dpad / $stick"
+        }
+        // And the cluster sits in the middle of the plate: the air above it matches the air below.
+        val above = shoulder.top - viewport.top
+        val below = viewport.bottom - stick.bottom
+        assert(kotlin.math.abs(above - below) < viewport.height * 0.1f) {
+            "the matrix should be centred: ${'$'}above above, ${'$'}below below"
+        }
+    }
+
     @Test
     fun overlayMode_overriddenRow_showsLayerBindingAndOverflowMenu() {
         composeRule.setContent {
@@ -674,8 +767,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:button_a:FULL_PRESS").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS").assertIsDisplayed()
     }
 
     @Test
@@ -705,8 +798,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:button_a:FULL_PRESS").performClick()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS").performClick()
         // Driven through semantics rather than performClick: menu rows live in a Popup, and
         // popup bounds come back NEGATED under Robolectric (a menu anchored at x=56 reports
         // x=-56), so a coordinate-based click can miss depending on where the menu sits.
@@ -960,8 +1053,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:button_a:LONG_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:button_a:LONG_PRESS").performClick()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:LONG_PRESS"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:LONG_PRESS").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
         assert(ensured == Triple(1L, "button_a", ActivatorType.LONG_PRESS)) {

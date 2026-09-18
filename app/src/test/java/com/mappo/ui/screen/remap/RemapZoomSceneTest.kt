@@ -15,7 +15,7 @@ import org.junit.Test
 class RemapZoomSceneTest {
 
     private fun cell(group: RemapSimpleGroup, row: Int, column: Int) =
-        CellKey(group, group.rows[row].subInputKey, pressTypeColumns[column])
+        CellKey(group, group.rows[row], pressTypeColumns[column])
 
     @Test
     fun steppingInsideAGroup_staysInIt() {
@@ -81,12 +81,22 @@ class RemapZoomSceneTest {
 
     @Test
     fun aRowWithFewerRows_clampsWhenCrossedInto() {
-        // The left stick has five rows, the shoulder two: stepping left out of the stick's
-        // bottom row must land on a row the shoulder actually has.
-        val from = cell(RemapSimpleGroup.RIGHT_STICK, row = 4, column = 0)
-        val next = stepCellAcrossGroups(from, dRow = 0, dCol = -1)
-        assert(next?.group == RemapSimpleGroup.UTILITY) { "got $next" }
-        assert(next!!.inputKey in RemapSimpleGroup.UTILITY.rows.map { it.subInputKey }) { "got $next" }
+        // Utility has two rows (Start, Select), a stick one (its click): stepping right out of
+        // utility's BOTTOM row must land on a row the stick actually has.
+        val last = RemapSimpleGroup.UTILITY.rows.lastIndex
+        val from = cell(RemapSimpleGroup.UTILITY, row = last, column = pressTypeColumns.lastIndex)
+        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1)
+        assert(next?.group == RemapSimpleGroup.RIGHT_STICK) { "got $next" }
+        assert(next!!.inputKey in RemapSimpleGroup.RIGHT_STICK.rows.map { it.subInputKey }) { "got $next" }
+    }
+
+    @Test
+    fun aStickEditorOffersOnlyItsClick() {
+        // Stick MOVEMENT is the source mode's business, not a command you assign (Dylan,
+        // 2026-09-17) — the four cardinal rows left the editor with it.
+        listOf(RemapSimpleGroup.LEFT_STICK, RemapSimpleGroup.RIGHT_STICK).forEach { stick ->
+            assert(stick.rows.map { it.subInputKey } == listOf("click")) { "$stick: ${stick.rows}" }
+        }
     }
 
     @Test
@@ -109,11 +119,25 @@ class RemapZoomSceneTest {
 
     @Test
     fun aCellKnowsItsGroup_soRepeatedSubInputKeysStayDistinct() {
-        // "dpad_up" names a row in the d-pad AND in both sticks; the group is what tells the
-        // three apart, in move state and in test tags alike.
-        val onDpad = CellKey(RemapSimpleGroup.DPAD, "dpad_up", ActivatorType.FULL_PRESS)
-        val onStick = CellKey(RemapSimpleGroup.LEFT_STICK, "dpad_up", ActivatorType.FULL_PRESS)
-        assert(onDpad != onStick)
-        assert(cellTestTag(onDpad) != cellTestTag(onStick))
+        // "click" names a row in the utility group AND in both sticks; the group is what tells
+        // them apart, in move state and in test tags alike.
+        val onUtility = cell(RemapSimpleGroup.UTILITY, row = 0, column = 0)
+        val onStick = cell(RemapSimpleGroup.LEFT_STICK, row = 0, column = 0)
+        assert(onUtility.inputKey == onStick.inputKey) { "the keys should be the colliding pair" }
+        assert(onUtility != onStick)
+        assert(cellTestTag(onUtility) != cellTestTag(onStick))
+    }
+
+    @Test
+    fun twoRowsOfOneGroupSharingASubInputKeyStayDistinct() {
+        // Start and Select are both a "click" — different SOURCES, one group, one table. Their
+        // cells were the same object until the row spec became the identity (2026-09-17).
+        val start = cell(RemapSimpleGroup.UTILITY, row = 0, column = 0)
+        val select = cell(RemapSimpleGroup.UTILITY, row = 1, column = 0)
+        assert(start.inputKey == select.inputKey) { "the keys should be the colliding pair" }
+        assert(start != select) { "got $start and $select" }
+        assert(cellTestTag(start) != cellTestTag(select))
+        // And the d-pad can actually walk between them.
+        assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0) == select)
     }
 }

@@ -6,7 +6,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,9 +70,16 @@ class MoveModeState<K : Any> {
 
     val active: Boolean get() = origin != null
 
-    /** Window-space bounds per cell, kept current by [Modifier.moveModeCell]. Only the pointer
-     *  path reads these. */
-    private val bounds = mutableStateMapOf<K, Rect>()
+    /**
+     * Window-space bounds per cell, kept current by [Modifier.moveModeCell]. Only the pointer
+     * path reads these, and only during a gesture.
+     *
+     * A PLAIN map, not snapshot state (2026-09-17): nothing reads it during composition, so the
+     * snapshot machinery bought nothing and cost per write — and every cell rewrites its entry
+     * whenever anything re-places it. The remap zoom scene made that matter: its camera is a
+     * layout-phase offset, so a pan re-places every cell of every table on every frame.
+     */
+    private val bounds = LinkedHashMap<K, Rect>()
 
     /**
      * How far outside a cell the pointer may stray and still resolve to it, in pixels.
