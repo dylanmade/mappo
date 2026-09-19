@@ -1,6 +1,8 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.ActivatorType
+import kotlin.math.abs
 import org.junit.Test
 
 /**
@@ -139,5 +141,36 @@ class RemapZoomSceneTest {
         assert(cellTestTag(start) != cellTestTag(select))
         // And the d-pad can actually walk between them.
         assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0) == select)
+    }
+
+    /**
+     * The zoomed controller sits where the basic grid puts it: level with the middle band, above
+     * the sticks, below the shoulders.
+     *
+     * Dylan, 2026-09-18 — it used to be centred over the top TWO bands together, most of a band
+     * higher than the basic view has it, so zooming into the button pad carried the face buttons
+     * off the top of the screen. The camera parks on the card, so wherever the image is relative
+     * to that card is what the user sees.
+     */
+    @Test
+    fun theZoomedControllerStaysLevelWithTheGroupsItSitsBetween() {
+        val scene = sceneGeometry(viewportW = 800.dp, viewportH = 480.dp, controllerAspect = 0.62f)
+        fun centreY(rect: SceneRect) = (rect.y + rect.height / 2).value
+        val controller = centreY(scene.controller)
+        val dpad = centreY(scene.cards.getValue(RemapSimpleGroup.DPAD))
+        val face = centreY(scene.cards.getValue(RemapSimpleGroup.FACE))
+        assert(abs(dpad - controller) < 1f) { "d-pad at $dpad, controller at $controller" }
+        assert(abs(face - controller) < 1f) { "face at $face, controller at $controller" }
+
+        val shoulder = centreY(scene.cards.getValue(RemapSimpleGroup.RIGHT_SHOULDER))
+        val stick = centreY(scene.cards.getValue(RemapSimpleGroup.RIGHT_STICK))
+        assert(shoulder < controller) { "shoulders should sit above the controller, got $shoulder" }
+        assert(stick > controller) { "sticks should sit below the controller, got $stick" }
+
+        // And the whole scene still contains it — the camera can't travel past the scene's edge,
+        // so anything hanging off the bottom would simply be unreachable.
+        assert(scene.controller.y.value >= 0f) { "controller starts at ${scene.controller.y}" }
+        val bottom = (scene.controller.y + scene.controller.height).value
+        assert(bottom <= scene.height.value) { "controller ends at $bottom, scene is ${scene.height}" }
     }
 }

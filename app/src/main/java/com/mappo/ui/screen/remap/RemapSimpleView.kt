@@ -762,9 +762,11 @@ private val AssignmentDividerHeight = 11.dp
  *  for a pair that reads as one cluster. */
 private val CentreSplitGap = 4.dp
 
-/** Floor on a table's assignment run, in characters — the width of the fixed column it
- *  replaced (2026-09-16), so a box keeps that minimum. */
-private const val AssignmentMinChars = 14
+/** Floor on a table's assignment run, in characters, so a sparse box doesn't shrink to a
+ *  sliver. Started as the width of the fixed column it replaced (14 chars, 2026-09-16);
+ *  narrowed to 10 on 2026-09-18 (Dylan: the boxes' minimum width was too wide). Command names
+ *  longer than this still get their full width — this is a floor, not a cap. */
+private const val AssignmentMinChars = 10
 
 /** How far each overflow chevron sits out past the scroller, into the box's 8dp padding. */
 private val OverflowChevronOutset = 6.dp

@@ -116,6 +116,7 @@ import com.mappo.ui.theme.LocalMappoExtraColors
 import com.mappo.ui.theme.PressTypeColors
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputActionMenu
+import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputMenuPlacement
 import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
@@ -124,6 +125,8 @@ import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPanelDividerInset
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputScrollbar
+import com.mappo.ui.minput.MinputScrollbarThickness
 import com.mappo.ui.minput.MinputTextEditDialog
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputIndication
@@ -368,21 +371,19 @@ internal fun RemapGroupEditor(
             Spacer(Modifier.width(8.dp))
             EditorFlowArrow()
             Spacer(Modifier.width(8.dp))
-            if (primaryGroup != null && validModes.isNotEmpty() && chrome) {
-                ModePillDropdown(
+            if (primaryGroup != null && validModes.isNotEmpty()) {
+                ModeDropdownLabel(
                     source = primarySource,
                     currentMode = primaryGroup.mode,
                     validModes = validModes,
-                    enabled = editable && validModes.size > 1,
+                    // A resting card states its mode; only the live one lets you change it.
+                    enabled = chrome && editable && validModes.size > 1,
                     onPick = { mode -> callbacks.onSetBindingGroupMode(primaryGroup.id, mode) },
-                    overline = true,
-                    elevated = true,
                     modifier = Modifier.focusRequester(headerModePillFocus),
                 )
             } else {
                 Text(
-                    // A resting card states its mode; only the live one lets you change it.
-                    text = (if (!chrome && primaryGroup != null) modeName else "DEFAULT").uppercase(),
+                    text = "$ModeLabelPrefix DEFAULT",
                     style = minputOverlineTextStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -700,7 +701,20 @@ private fun AdvancedTable(
     // the other side of the body — see [mirrored].
     val glyphColumn: @Composable () -> Unit = {
         Column {
-            Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
+            // "Input" heads the glyphs the way each press type heads its column — the header row
+            // now names every column of the table, its frozen one included (Dylan, 2026-09-18).
+            Box(
+                modifier = Modifier.width(GlyphColumnWidth).height(ColumnHeaderHeight),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "Input".uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.height(HeaderToRowsGap))
             Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                 group.rows.forEach { spec ->
                     Box(
@@ -971,7 +985,26 @@ private fun AdvancedTable(
                 }
             }
             }
+            // Scrollbars ALONGSIDE the fades and chevrons (Dylan, 2026-09-18) rather than
+            // instead of them: a card is a dense grid inside a viewport that usually can't show
+            // all of it, and the bar is the part that says HOW MUCH more and WHERE — which a
+            // fade at the rim can't. Indicators only; see MinputScrollbar.
+            MinputScrollbar(
+                state = vScroll,
+                orientation = Orientation.Vertical,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(vertical = TableVerticalPadding),
+            )
         }
+        MinputScrollbar(
+            state = hScroll,
+            orientation = Orientation.Horizontal,
+            // Value 0 is the RIGHT end on a mirrored table, so its thumb starts there too.
+            reverse = mirrored,
+            // Under the body, inset to the table's own margin. It sits outside the vertical
+            // scroller so it stays put at the card's floor instead of scrolling away with the
+            // rows it describes.
+            modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = TableScrollbarGap),
+        )
         Spacer(Modifier.height(TableBottomGap))
 
         labelTarget?.let { (bindingId, current) ->
@@ -986,27 +1019,24 @@ private fun AdvancedTable(
     }
 }
 
-/** Column header: the press type's concept glyph over/before its overline name, both wearing
- *  the column accent so the header reads as the head of its colored stack. */
+/**
+ * Column header: the press type's full name in the overline treatment, wearing the column accent
+ * so the header reads as the head of its colored stack.
+ *
+ * The concept glyph that used to lead it went on 2026-09-18 (Dylan), along with the abbreviated
+ * names — six icons across a row read as a toolbar, and the words now say the whole thing
+ * ([columnLabel]).
+ */
 @Composable
 private fun PressColumnHeader(type: ActivatorType) {
-    val accent = type.columnColors().header
-    Row(
+    Box(
         modifier = Modifier.width(TileWidth).height(ColumnHeaderHeight),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            type.pressIcon(),
-            contentDescription = null,
-            modifier = Modifier.size(ColumnHeaderIconSize),
-            tint = accent,
-        )
-        Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
-            text = type.shortLabel().uppercase(),
+            text = type.columnLabel().uppercase(),
             style = minputOverlineTextStyle(),
-            color = accent,
+            color = type.columnColors().header,
             maxLines = 1,
         )
     }
@@ -1456,6 +1486,78 @@ internal fun RemapSimpleGroup.editorMirrored(): Boolean = when (this) {
     else -> false
 }
 
+/**
+ * The header's mode indicator — "MODE: <input mode>", with a filled downward arrow when it can
+ * be changed.
+ *
+ * It replaced the mode PILL on 2026-09-18 (Dylan). The pill made a second button of what is
+ * really the group's own caption, sitting beside the group identity it describes; this is the
+ * indicator itself, made to open the menu. A card that can't be edited from here — a resting one
+ * in the zoomed scene, a layer view, a source with only one valid mode — keeps the caption and
+ * drops the arrow, so the affordance is never claimed where there is nothing to pick.
+ */
+@Composable
+private fun ModeDropdownLabel(
+    source: InputSource,
+    currentMode: BindingMode,
+    validModes: List<BindingMode>,
+    enabled: Boolean,
+    onPick: (BindingMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = modifier
+                .clip(RoundedCornerShape(ModeLabelCorner))
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(
+                            interactionSource = interaction,
+                            indication = minputIndication(),
+                            onClickLabel = "Change input mode",
+                        ) { open = true }
+                    } else Modifier,
+                )
+                .padding(horizontal = ModeLabelPadding, vertical = ModeLabelVerticalPadding),
+        ) {
+            Text(
+                text = "$ModeLabelPrefix ${currentMode.displayNameFor(source).uppercase()}",
+                style = minputOverlineTextStyle(),
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (enabled) {
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Icon(
+                    // The header's own flow marker, turned a quarter turn: one filled triangle
+                    // serves as both glyphs, so the dropdown cue belongs to the same family as
+                    // everything else in the bar.
+                    painterResource(R.drawable.lucide_play_filled),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(ModeDropdownArrowSize)
+                        .graphicsLayer { rotationZ = 90f },
+                    tint = color,
+                )
+            }
+        }
+        MinputDropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            current = currentMode,
+            options = validModes,
+            optionLabel = { it.displayNameFor(source) },
+            onPick = onPick,
+            optionIcon = { InputGlyphs.modePainter(it) },
+        )
+    }
+}
+
 /** Non-interactive input→output flow marker: a filled Lucide play triangle. */
 @Composable
 private fun EditorFlowArrow(modifier: Modifier = Modifier) {
@@ -1481,18 +1583,21 @@ internal val pressTypeOrder = listOf(
 )
 
 /**
- * Short label for a press type — the table's column names. NB: START_PRESS reads "Down" and
- * RELEASE_PRESS reads "Up" (Mappo wording — fires on the down / up edge). VDF import/export
- * must map Steam's "Start Press" ↔ "Down" and "Release Press" ↔ "Up".
+ * The table's column names. User-specified wording (Dylan, 2026-09-18), replacing the one-word
+ * abbreviations the columns carried while they also had an icon apiece.
+ *
+ * NB: START_PRESS reads "Down Press" and RELEASE_PRESS "Up Release" — Mappo wording, for the
+ * activators that fire on the down / up edge. VDF import/export must map Steam's "Start Press" ↔
+ * "Down Press" and "Release Press" ↔ "Up Release".
  */
-internal fun ActivatorType.shortLabel(): String = when (this) {
-    ActivatorType.FULL_PRESS -> "Press"
-    ActivatorType.LONG_PRESS -> "Long"
-    ActivatorType.DOUBLE_PRESS -> "Double"
-    ActivatorType.START_PRESS -> "Down"
-    ActivatorType.RELEASE_PRESS -> "Up"
-    ActivatorType.CHORDED_PRESS -> "Chord"
-    ActivatorType.SOFT_PRESS -> "Soft"
+internal fun ActivatorType.columnLabel(): String = when (this) {
+    ActivatorType.FULL_PRESS -> "Regular Press"
+    ActivatorType.LONG_PRESS -> "Long Press"
+    ActivatorType.DOUBLE_PRESS -> "Double Press"
+    ActivatorType.START_PRESS -> "Down Press"
+    ActivatorType.RELEASE_PRESS -> "Up Release"
+    ActivatorType.CHORDED_PRESS -> "Chord Press"
+    ActivatorType.SOFT_PRESS -> "Soft Press"
 }
 
 internal fun ActivatorType.helperText(): String = when (this) {
@@ -1575,6 +1680,19 @@ private val EditorHeaderHeight = MinputPanelHeaderHeight
 /** Edge of the filled-play flow arrow in the header. */
 private val EditorFlowArrowSize = 10.dp
 
+/** What the header's mode caption is prefixed with. Uppercase at the source: the caption is set
+ *  in the overline treatment, and the mode's own name is uppercased beside it. */
+private const val ModeLabelPrefix = "MODE:"
+
+/** The mode caption's dropdown arrow — the flow arrow's triangle, a quarter turn down. */
+private val ModeDropdownArrowSize = 8.dp
+
+/** Hit area around the mode caption: enough for the press ripple to read as a button's without
+ *  the caption drifting from the identity it follows. */
+private val ModeLabelPadding = 6.dp
+private val ModeLabelVerticalPadding = 3.dp
+private val ModeLabelCorner = 6.dp
+
 // ── Table metrics ────────────────────────────────────────────────────────────────────────────
 
 /** GOVERNING VARIABLE for column width. Every cell, and the header above it, is exactly this
@@ -1604,7 +1722,6 @@ private val HeaderToRowsGap = 4.dp
 
 /** The press-type header row's height. */
 private val ColumnHeaderHeight = 20.dp
-private val ColumnHeaderIconSize = 12.dp
 
 /** Input glyphs render LARGER here than in the old rows — with the press-type word gone from
  *  the cell, the glyph is the row's only identity, so it carries the weight of one. */
@@ -1617,7 +1734,10 @@ private val GlyphColumnPadding = 11.dp
  *  column too narrow for what it holds. */
 private val GlyphColumnWidth = TableGlyphSize + GlyphColumnPadding * 2
 
-private val TileCorner = 10.dp
+/** FULLY rounded (Dylan, 2026-09-18): half the tile's height, so a cell is a capsule. An
+ *  absolute radius rather than a percentage, per the minput rule — a percentage turns anything
+ *  taller than it is wide into a lozenge. */
+private val TileCorner = TileHeight / 2
 private val TileContentPadding = 8.dp
 private val TileOutputGlyphSize = 14.dp
 
@@ -1642,10 +1762,12 @@ private val EdgeScrollStep = 6.dp
 /** Vertical breathing room inside the table, above the header row and below the last row. */
 private val TableVerticalPadding = 6.dp
 
-/** Air under the table, so the last row isn't flush with the card's edge. (It used to be the
- *  gap under the horizontal scroll indicator; the indicators became [MinputOverflowScroll]'s
- *  edge fades + chevrons on 2026-09-17, which cost no layout space at all.) */
+/** Air under the table, so the last row isn't flush with the card's edge. */
 private val TableBottomGap = 4.dp
+
+/** Gap between the table's last row and the horizontal scrollbar beneath it. The bar came back
+ *  on 2026-09-18 (Dylan), joining the fade + chevron cues rather than replacing them. */
+private val TableScrollbarGap = 3.dp
 
 /**
  * The height the advanced editor wants for [group] — header + divider + the table's own rows.
@@ -1660,7 +1782,8 @@ internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
     val table = TableVerticalPadding * 2 +
         ColumnHeaderHeight + HeaderToRowsGap +
         TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
-    return EditorHeaderHeight + EditorDividerHeight + table + TableBottomGap
+    return EditorHeaderHeight + EditorDividerHeight + table +
+        TableScrollbarGap + MinputScrollbarThickness + TableBottomGap
 }
 
 /** The inset divider under the header is a hairline; counted so the height math is exact. */

@@ -286,25 +286,29 @@ internal fun RemapStage(
             val sideW = ((gridW - centreW - columnGap * 2) / 2).coerceAtLeast(0)
 
             val restBasic = arrayOfNulls<androidx.compose.ui.layout.Placeable>(count)
-            fun measureBasic(group: RemapSimpleGroup, maxWidth: Int) {
+            fun measureBasic(group: RemapSimpleGroup, minWidth: Int, maxWidth: Int) {
                 val index = groups.indexOf(group)
                 restBasic[index] = basicM[index].measure(
-                    Constraints(maxWidth = maxWidth.coerceAtLeast(0), maxHeight = gridH),
+                    Constraints(
+                        minWidth = minWidth.coerceIn(0, maxWidth.coerceAtLeast(0)),
+                        maxWidth = maxWidth.coerceAtLeast(0),
+                        maxHeight = gridH,
+                    ),
                 )
             }
+            // A FLANK box wraps its content: the column has the whole side of the plate to
+            // spend, and a box that fits its assignments is the point of the grid.
             val flanks = GridBands.flatMap { listOf(it.left, it.right) }
-            flanks.forEach { measureBasic(it, sideW) }
+            flanks.forEach { measureBasic(it, 0, sideW) }
             fun restOf(group: RemapSimpleGroup) = restBasic[groups.indexOf(group)]!!
-            // The utility box may spend the whole gap the two stick boxes leave between them —
-            // two mirrored halves of assignments need more room than the controller's width.
-            measureBasic(
-                RemapSimpleGroup.UTILITY,
-                maxOf(
-                    centreW,
-                    gridW - restOf(RemapSimpleGroup.LEFT_STICK).width -
-                        restOf(RemapSimpleGroup.RIGHT_STICK).width - columnGap * 2,
-                ),
-            )
+            // A CENTRE-COLUMN box does NOT (Dylan, 2026-09-18). It is boxed in by the two flanks
+            // and by the controller above it, so growing to fit its content spills it across
+            // the columns either side — which is exactly what the utility box did, being two
+            // mirrored halves that each claimed a full assignment run. It is pinned to the
+            // centre column's width instead, and its rows scroll inside it, cueing the overflow
+            // with the same fades + chevrons every other box uses. The compromise the middle
+            // column costs.
+            measureBasic(RemapSimpleGroup.UTILITY, centreW, centreW)
 
             val controllerRestH = (centreW * aspect).roundToInt()
             val bandHeights = GridBands.mapIndexed { index, band ->

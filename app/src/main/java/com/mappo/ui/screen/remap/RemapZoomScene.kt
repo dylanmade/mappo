@@ -141,12 +141,26 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
 
     val left = listOf(RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK)
     val right = listOf(RemapSimpleGroup.RIGHT_SHOULDER, RemapSimpleGroup.FACE, RemapSimpleGroup.RIGHT_STICK)
-    // Band 2 also holds the utility card in the centre column, and since the sticks became
-    // one-row tables (2026-09-17) that card is the tallest thing in the band — leave it out of
-    // the measurement and it overhangs the bottom of the scene, past where the camera can go.
+    val controllerH = columnW * controllerAspect
+    // A band is as tall as the tallest thing IN it, counting the centre column: the image in
+    // band 1, the utility card in band 2. Both matter.
+    //
+    // The image, because the rest grid sizes its middle band the same way (see RemapStage), and
+    // the two geometries must agree about where the controller sits relative to the cards
+    // (Dylan, 2026-09-18) — it used to be centred over bands 0 AND 1 together, which put it
+    // most of a band above where the basic view has it, and zooming into the face buttons
+    // carried them off the top of the screen.
+    //
+    // The utility card, because the sticks became one-row tables (2026-09-17) and it is now the
+    // tallest thing in band 2 — left out, it overhangs the bottom of the scene, past where the
+    // camera can go.
     val bandHeights = left.indices.map { band ->
         val flanks = maxOf(cardHeight(left[band]), cardHeight(right[band]))
-        if (band == 2) maxOf(flanks, cardHeight(RemapSimpleGroup.UTILITY)) else flanks
+        when (band) {
+            1 -> maxOf(flanks, controllerH)
+            2 -> maxOf(flanks, cardHeight(RemapSimpleGroup.UTILITY))
+            else -> flanks
+        }
     }
     val bandTops = mutableListOf<Dp>()
     var y = SceneMargin
@@ -189,14 +203,16 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
         )
     }
 
-    // The image sits in the centre column, above the utility card, at its OWN proportions —
-    // the same ones the rest grid gives it, so the picture scales uniformly across the zoom
-    // instead of re-fitting into a differently-shaped cell (see RemapStage).
-    val controllerH = columnW * controllerAspect
-    val controllerSpan = (bandTops[2] - BandGap).coerceAtLeast(0.dp)
+    // The image sits in the centre column, CENTRED ON THE MIDDLE BAND — the d-pad and the face
+    // buttons, the groups it is between — and at its OWN proportions, the same ones the rest
+    // grid gives it. Both halves of that matter: the proportions let the picture scale
+    // uniformly across the zoom instead of re-fitting into a differently-shaped cell, and the
+    // band keeps it in the same place relative to each group as the basic view has it, which
+    // is what stops the zoom from sliding the controller out from under the group you opened
+    // (see RemapStage).
     val controller = SceneRect(
         x = columnW,
-        y = ((controllerSpan - controllerH) / 2).coerceAtLeast(0.dp),
+        y = bandTops[1] + ((bandHeights[1] - controllerH) / 2).coerceAtLeast(0.dp),
         width = columnW,
         height = controllerH,
     )
