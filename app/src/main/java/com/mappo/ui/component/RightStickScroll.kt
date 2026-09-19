@@ -3,6 +3,7 @@ package com.mappo.ui.component
 import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,12 +56,26 @@ fun rightStickFrom(event: MotionEvent): Offset? {
 }
 
 /**
- * Scroll [state] from the right stick's horizontal deflection while [enabled].
+ * Is the right stick allowed to scroll THIS subtree — i.e. does it hold controller focus?
  *
- * A stand-in control, at Dylan's request (2026-09-11), for the basic view's horizontally
- * overflowing input rows: the stick scrolls whichever container holds controller focus, until
- * the view gets real scroll affordances. Deliberately NOT a general "stick scrolls the focused
- * scroller" behavior — a call site opts in.
+ * The gate can't be worked out where the scrolling happens: a scroller usually sits INSIDE the
+ * focusable that represents it (the remap basic view's group box is one focus target holding
+ * two scrollers), so the scroller can never see the focus that governs it. The focusable
+ * publishes it instead, and [com.mappo.ui.minput.MinputOverflowScroll] reads it.
+ *
+ * Default FALSE: the stick scrolls the thing the user is on, and several scrollers answering at
+ * once is exactly the behaviour to avoid.
+ */
+val LocalStickScroll: androidx.compose.runtime.ProvidableCompositionLocal<Boolean> =
+    androidx.compose.runtime.compositionLocalOf { false }
+
+/**
+ * Scroll [state] from the right stick's deflection along [orientation] while [enabled].
+ *
+ * A stand-in control, at Dylan's request (2026-09-11), for containers that overflow: the stick
+ * scrolls whichever one holds controller focus, until the view gets real scroll affordances.
+ * It is NOT tied to a visible scrollbar — the cue and the control are independent, and the
+ * stick kept working when the bars became fade + chevron cues (2026-09-19).
  *
  * Ramped from the deadzone edge so a light push creeps and a full push travels, and driven off
  * the frame clock because analog scrolling IS continuous motion — unlike Mappo's input
@@ -72,32 +87,36 @@ fun rightStickFrom(event: MotionEvent): Offset? {
  * LEFT of its anchor — so the stick always reveals content in the direction it's pushed.
  */
 @Composable
-fun rightStickHorizontalScroll(state: ScrollState, enabled: Boolean, invert: Boolean = false) {
+fun rightStickScroll(
+    state: ScrollState,
+    orientation: Orientation,
+    enabled: Boolean,
+    invert: Boolean = false,
+) {
     val stick = LocalRightStick.current
-    val engaged by remember(stick) {
-        derivedStateOf { abs(stick.value.x) > RightStickDeadzone }
+    fun axis(offset: Offset) = if (orientation == Orientation.Horizontal) offset.x else offset.y
+    val engaged by remember(stick, orientation) {
+        derivedStateOf { abs(axis(stick.value)) > RightStickDeadzone }
     }
     val speedPx = with(LocalDensity.current) { RightStickScrollSpeed.toPx() }
-    LaunchedEffect(state, enabled, engaged, invert, speedPx) {
+    LaunchedEffect(state, orientation, enabled, engaged, invert, speedPx) {
         if (!enabled || !engaged) return@LaunchedEffect
         var previous = withFrameNanos { it }
         while (isActive) {
             val now = withFrameNanos { it }
             val seconds = (now - previous) / 1_000_000_000f
             previous = now
-            val x = stick.value.x
+            val value = axis(stick.value)
             // Re-read rather than trusting `engaged`: the effect is keyed on the threshold
             // crossing, and recomposition lands a frame later than the stick returning to rest.
-            if (abs(x) <= RightStickDeadzone) break
-            val ramp = (abs(x) - RightStickDeadzone) / (1f - RightStickDeadzone)
-            val direction = if (invert) -sign(x) else sign(x)
+            if (abs(value) <= RightStickDeadzone) break
+            val ramp = (abs(value) - RightStickDeadzone) / (1f - RightStickDeadzone)
+            val direction = if (invert) -sign(value) else sign(value)
             state.scrollBy(direction * ramp * speedPx * seconds)
         }
     }
 }
 
-/** Below this deflection the stick is at rest — wide enough to swallow a worn stick's drift,
- *  since engaging it scrolls content out from under the user. */
 private const val RightStickDeadzone = 0.25f
 
 /** Travel at full deflection, per second. */

@@ -102,6 +102,11 @@ data class ActivatorGraph(
         get() = bindings.firstOrNull()
             ?.let { BindingOutput.fromEntity(it.outputType, it.args) }
             ?: BindingOutput.Unbound
+
+    /** Every output this activator fires, in order — one today, a `cycle_binding` list when
+     *  Phase 3 lands. What a cell is CALLED is the whole list, not just the first. */
+    val outputs: List<BindingOutput>
+        get() = bindings.map { BindingOutput.fromEntity(it.outputType, it.args) }
 }
 
 /**

@@ -178,6 +178,14 @@ fun RemapControlsScreen(
     onAddInputRow: (groupInputId: Long, type: ActivatorType) -> Unit = { _, _ -> },
     onSetInputRowPressType: (bindingId: Long, type: ActivatorType) -> Unit = { _, _ -> },
     onSetInputRowLabel: (bindingId: Long, label: String) -> Unit = { _, _ -> },
+    /** The label editor's commit: the user label plus how the command prints (device glyph,
+     *  device initials). One callback because it is one dialog and one write. */
+    onSetInputRowDisplay: (
+        bindingId: Long,
+        label: String,
+        showDeviceIcon: Boolean,
+        showDeviceInitials: Boolean,
+    ) -> Unit = { _, _, _, _ -> },
     onDeleteInputRow: (bindingId: Long) -> Unit = {},
     // ── Advanced-table cell ops (the group editor's table; see its cell-ops block) ──
     // [onEnsureInputCell] is the one async shape here: creating the row may have to hit the
@@ -412,7 +420,7 @@ fun RemapControlsScreen(
         onClearOverride = { inputSource, groupInputKey ->
             viewingLayer?.layer?.id?.let { onClearLayerOverride(it, inputSource, groupInputKey) }
         },
-        onSetLabel = onSetInputRowLabel,
+        onSetLabel = onSetInputRowDisplay,
         onConfigure = onOpenActivatorSettings,
         // "New" on an empty cell and "Edit" on a defined one are the same flow: make sure the
         // cell exists, then open the command picker against its binding. The ensure step is a

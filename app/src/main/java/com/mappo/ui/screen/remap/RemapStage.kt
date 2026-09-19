@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -47,6 +49,7 @@ import com.mappo.R
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
+import com.mappo.ui.component.LocalStickScroll
 import com.mappo.ui.component.rememberMoveModeState
 import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputPod
@@ -539,8 +542,19 @@ private fun StageBasicContent(
             )
             .testTag("simple-group:${group.name}")
             .padding(horizontal = 8.dp, vertical = 6.dp),
+        // A CENTRE-COLUMN box is wider than its rows (it is sized by the column, not by its
+        // content), and a Box hands its children a zero minimum — so without this its cluster
+        // sat against the left edge of a box it is supposed to be centred in (Dylan,
+        // 2026-09-19). A flank box IS its content's size, so centring costs it nothing.
+        contentAlignment = Alignment.Center,
     ) {
-        GroupRows(group, viewingSet, viewingLayer, config, stickScrollEnabled = focused)
+        // The box is one focus target, so "this box has focus" is exactly "the right stick
+        // should scroll this box's rows" — which the scrollers inside can't see for themselves,
+        // sitting as they do INSIDE the focusable. Published, not passed: every scroller in the
+        // subtree reads it, however deeply the rows get rearranged.
+        CompositionLocalProvider(LocalStickScroll provides focused) {
+            GroupRows(group, viewingSet, viewingLayer, config)
+        }
     }
 }
 
@@ -581,21 +595,23 @@ private fun StageAdvancedContent(
             .then(if (focused) Modifier.testTag("group-editor") else Modifier),
     ) {
         Box(Modifier.fillMaxSize().testTag(zoomCardTestTag(group))) {
-            RemapGroupEditor(
-                group = group,
-                viewingSet = viewingSet,
-                viewingLayer = viewingLayer,
-                config = config,
-                callbacks = callbacks,
-                onClose = onClose,
-                modifier = Modifier.fillMaxSize(),
-                chrome = focused,
-                moveState = moveState,
-                stepTarget = ::stepCellAcrossGroups,
-                onMoveCommitted = onMoveCommitted,
-                focusHandle = focusHandle,
-                focusRequester = focusRequester,
-            )
+            CompositionLocalProvider(LocalStickScroll provides focused) {
+                RemapGroupEditor(
+                    group = group,
+                    viewingSet = viewingSet,
+                    viewingLayer = viewingLayer,
+                    config = config,
+                    callbacks = callbacks,
+                    onClose = onClose,
+                    modifier = Modifier.fillMaxSize(),
+                    chrome = focused,
+                    moveState = moveState,
+                    stepTarget = ::stepCellAcrossGroups,
+                    onMoveCommitted = onMoveCommitted,
+                    focusHandle = focusHandle,
+                    focusRequester = focusRequester,
+                )
+            }
         }
     }
 }

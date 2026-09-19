@@ -7,6 +7,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.hasContentDescription
@@ -25,6 +26,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
@@ -90,6 +92,65 @@ class RemapControlsScreenTest {
         // "Start", not "Start Button" (Dylan, 2026-09-17): it is the name printed on the
         // hardware, and the noun added nothing.
         composeRule.onNodeWithText("Start", useUnmergedTree = true).assertExists()
+    }
+
+    /**
+     * A group box is a controller focus stop — which is also the gate on the right stick
+     * scrolling its rows (`LocalStickScroll`, published from the box's own focus state). If the
+     * box stops taking focus, the stick silently stops working, so this pins the gate rather
+     * than the scrolling (Robolectric measures text at ~zero width, so nothing here overflows
+     * to scroll in the first place).
+     */
+    @Test
+    fun simpleView_groupBoxesTakeControllerFocus() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = sampleConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("simple-group:FACE").requestFocus()
+        composeRule.onNodeWithTag("simple-group:FACE").assertIsFocused()
+    }
+
+    /**
+     * The centre column's box is sized by the COLUMN, not by its content, so its rows have to
+     * be centred in it — a Box hands its children a zero minimum width, and without an explicit
+     * centre the cluster sat against the box's left edge (Dylan, 2026-09-19).
+     */
+    @Test
+    fun simpleView_centresTheUtilityBoxesRowsInItsColumn() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = sampleConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        val box = composeRule.onNodeWithTag("simple-group:UTILITY").fetchSemanticsNode().boundsInRoot
+        val start = composeRule.onNodeWithText("Start", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val select = composeRule.onNodeWithText("Select", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        // The two halves meet at the box's centre line, so their own span centres on it.
+        val clusterCentre = (minOf(start.left, select.left) + maxOf(start.right, select.right)) / 2f
+        val drift = kotlin.math.abs(clusterCentre - box.center.x)
+        assert(drift < box.width / 8f) {
+            "utility rows drift ${'$'}drift from the box centre (box=${'$'}box, start=${'$'}start, select=${'$'}select)"
+        }
     }
 
     @Test

@@ -698,6 +698,19 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { controllerConfigRepository.setInputRowLabel(bindingId, label) }
     }
 
+    /** The label editor's whole commit: the label and how the command prints. */
+    fun setInputRowDisplay(
+        bindingId: Long,
+        label: String,
+        showDeviceIcon: Boolean,
+        showDeviceInitials: Boolean,
+    ) {
+        if (editedLayout() == null) return
+        viewModelScope.launch {
+            controllerConfigRepository.setInputRowDisplay(bindingId, label, showDeviceIcon, showDeviceInitials)
+        }
+    }
+
     /** Delete an input row. UI disables this when it's the group input's last remaining row. */
     fun deleteInputRow(bindingId: Long) {
         if (editedLayout() == null) return

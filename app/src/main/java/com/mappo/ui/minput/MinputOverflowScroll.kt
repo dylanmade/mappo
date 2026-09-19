@@ -33,6 +33,8 @@ import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Lucide
+import com.mappo.ui.component.LocalStickScroll
+import com.mappo.ui.component.rightStickScroll
 
 /**
  * A scroll container that signals overflow with edge fades and chevrons instead of a scrollbar.
@@ -55,6 +57,9 @@ import com.composables.icons.lucide.Lucide
  * [reverseScrolling] as on the foundation modifiers: value 0 shows the FAR end. The cues follow
  * what's actually on screen either way — an edge fades when there is content past THAT edge.
  *
+ * The right stick scrolls it while the enclosing focusable marks its subtree as the one in
+ * hand ([LocalStickScroll]); see [scrollStick].
+ *
  * [chevronOutset] pushes each chevron outward past the container's edge, into whatever padding
  * surrounds it, so the glyph can sit nearer the visible rim of an enclosing card than the
  * scroller's own bounds allow. The chevron is decorative — no semantics, no touch target; the
@@ -70,6 +75,11 @@ fun MinputOverflowScroll(
     reverseScrolling: Boolean = false,
     chevronOutset: Dp = 0.dp,
     chevronTint: Color = MaterialTheme.colorScheme.onSurface,
+    // Whether the right stick scrolls this container while its subtree holds controller focus
+    // ([LocalStickScroll]). On by default: a scroller that overflows should answer the stick,
+    // and the cue it shows — bar, fade, chevron, none — has nothing to do with it (Dylan,
+    // 2026-09-19). Pass false for a container the stick must never move.
+    scrollStick: Boolean = true,
     // Modifiers for the SCROLLING node itself, as opposed to [modifier], which frames the
     // container and its cues. Test tags and anything else that has to sit where the scroll
     // modifier is belong here: scroll-to-node and the accessibility scroll actions both read
@@ -97,6 +107,14 @@ fun MinputOverflowScroll(
         label = "minput-overflow-trailing",
     )
     val horizontal = orientation == Orientation.Horizontal
+    // The right stick is a prototyping stand-in for real scroll controls (see rightStickScroll);
+    // the focusable that OWNS this container says whether the stick belongs to it.
+    rightStickScroll(
+        state = state,
+        orientation = orientation,
+        enabled = scrollStick && LocalStickScroll.current,
+        invert = reverseScrolling,
+    )
     Box(modifier) {
         Box(
             Modifier

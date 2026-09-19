@@ -148,6 +148,29 @@ fun BindingOutput.isGamepadOutput(): Boolean = when (this) {
  */
 fun BindingOutput.requiresShizuku(): Boolean = isGamepadOutput()
 
+/**
+ * The device INITIALS [displayLabel] prefixes this output's name with ("KB", "GP", "MS"), or
+ * null for an output that names no device — Unbound, and the verbs that drive Mappo itself
+ * (their "Action:" / "Switch to:" prefixes are part of the phrase, not a device).
+ *
+ * The UI can hide the initials per command (`Binding.showDeviceInitials`), which is what needs
+ * to know where the prefix ends. See [displayName].
+ */
+fun BindingOutput.devicePrefix(): String? = when (this) {
+    is BindingOutput.KeyPress -> OutputNames.KEYBOARD_PREFIX
+    is BindingOutput.XInputButton, is BindingOutput.XInputStick -> OutputNames.GAMEPAD_PREFIX
+    is BindingOutput.MouseButton, is BindingOutput.MouseWheel -> OutputNames.MOUSE_PREFIX
+    else -> null
+}
+
+/** [displayLabel] WITHOUT the device initials — "Escape" rather than "KB: Escape". The name a
+ *  command answers to on its own, and so the placeholder a label editor offers. */
+fun BindingOutput.displayName(config: ControllerConfig? = null): String {
+    val full = displayLabel(config)
+    val prefix = devicePrefix() ?: return full
+    return full.removePrefix("$prefix: ")
+}
+
 /** One-line display label for a binding output, suitable for trailing row text. Device output
  *  names come from [OutputNames]. */
 fun BindingOutput.displayLabel(): String = when (this) {

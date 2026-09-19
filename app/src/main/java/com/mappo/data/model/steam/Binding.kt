@@ -38,4 +38,12 @@ data class Binding(
     val label: String? = null,
     val iconRef: String? = null,
     val orderIndex: Int = 0,
+    // ── How this command PRINTS (Dylan, 2026-09-19) ──
+    // Per command, not per view: the same binding reads the same way in the advanced table and
+    // in the basic view's summary rows. Both default to what every command showed before the
+    // toggles existed, so an untouched layout looks exactly as it did.
+    /** Show the output device's glyph (keyboard, gamepad, mouse) beside the command. */
+    val showDeviceIcon: Boolean = true,
+    /** Show the device INITIALS the output's name is prefixed with ("KB: ", "GP: "). */
+    val showDeviceInitials: Boolean = true,
 )

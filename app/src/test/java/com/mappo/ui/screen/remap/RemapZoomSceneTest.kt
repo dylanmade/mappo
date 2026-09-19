@@ -2,6 +2,7 @@ package com.mappo.ui.screen.remap
 
 import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.ActivatorType
+import com.mappo.data.model.steam.BindingOutput
 import kotlin.math.abs
 import org.junit.Test
 
@@ -141,6 +142,36 @@ class RemapZoomSceneTest {
         assert(cellTestTag(start) != cellTestTag(select))
         // And the d-pad can actually walk between them.
         assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0) == select)
+    }
+
+    @Test
+    fun aTileLabelThatRepeatsTheCommandsOwnNameIsNotASecondLine() {
+        // The label editor's placeholder IS the command's name, so typing it back means "no
+        // label" (Dylan, 2026-09-19) — spacing and case included.
+        assert(tileLabelFor(null, "Escape") == null)
+        assert(tileLabelFor("", "Escape") == null)
+        assert(tileLabelFor("  ", "Escape") == null)
+        assert(tileLabelFor("Escape", "Escape") == null)
+        assert(tileLabelFor(" escape ", "Escape") == null)
+        assert(tileLabelFor("Menu", "Escape") == "Menu")
+    }
+
+    @Test
+    fun aCellNamesItselfAfterEveryOutputItFires() {
+        val escape = BindingOutput.KeyPress("ESCAPE")
+        val a = BindingOutput.XInputButton("BUTTON_A")
+        // Initials are the device prefix the name carries; a cycling command joins with a plus.
+        assert(commandsText(listOf(escape), null, initials = false) == "ESCAPE") {
+            commandsText(listOf(escape), null, initials = false)
+        }
+        assert(commandsText(listOf(escape), null, initials = true) == "KB: ESCAPE") {
+            commandsText(listOf(escape), null, initials = true)
+        }
+        assert(commandsText(listOf(escape, a), null, initials = false) == "ESCAPE + A") {
+            commandsText(listOf(escape, a), null, initials = false)
+        }
+        // An unbound slot contributes no name at all.
+        assert(commandsText(listOf(BindingOutput.Unbound), null, initials = true) == "")
     }
 
     /**

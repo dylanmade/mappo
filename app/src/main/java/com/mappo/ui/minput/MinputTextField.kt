@@ -333,9 +333,11 @@ fun MinputTextEditDialog(
  * The library's INTERNAL inline text well: the pill-scale flat input treatment carrying a
  * live [BasicTextField]. Not a public primitive — inline fields capture d-pad focus and
  * break gamepad navigation, so app surfaces use the tap-to-edit [MinputTextField]. This
- * exists for minput-internal editing contexts where inline typing is the point and the
- * keyboard can't cover the field: the edit dialog above, the field's inline-edit state,
- * [MinputSlider]'s value field.
+ * exists for editing contexts where inline typing is the point and the keyboard can't cover
+ * the field: the edit dialog above, the field's inline-edit state, [MinputSlider]'s value
+ * field — and a DOMAIN dialog hosted in [MinputDialog] whose layout the generic editor can't
+ * express (the remap command-label editor, 2026-09-19). Module-internal, never a public
+ * primitive: an app surface hosting one of these at rest stalls gamepad navigation.
  *
  * @param leadingIcon optional glyph at the well's start, mirroring the display pill's.
  * @param onClear when non-null, shows the clear (×) glyph, which invokes it.

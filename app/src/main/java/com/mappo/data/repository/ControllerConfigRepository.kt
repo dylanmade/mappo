@@ -1373,6 +1373,37 @@ class ControllerConfigRepository @Inject constructor(
     }
 
     /**
+     * Set everything the label editor owns in ONE write: the user label plus how the command
+     * prints ([Binding.showDeviceIcon] / [Binding.showDeviceInitials]).
+     *
+     * One call rather than three because they are edited together in one dialog — three writes
+     * would be three config reloads, and the table would repaint mid-save.
+     */
+    suspend fun setInputRowDisplay(
+        bindingId: Long,
+        label: String,
+        showDeviceIcon: Boolean,
+        showDeviceInitials: Boolean,
+    ) {
+        val binding = bindingDao.getById(bindingId) ?: return
+        val normalized = label.trim().ifEmpty { null }
+        if (binding.label == normalized &&
+            binding.showDeviceIcon == showDeviceIcon &&
+            binding.showDeviceInitials == showDeviceInitials
+        ) {
+            return
+        }
+        bindingDao.update(
+            binding.copy(
+                label = normalized,
+                showDeviceIcon = showDeviceIcon,
+                showDeviceInitials = showDeviceInitials,
+            ),
+        )
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    /**
      * Delete an input row (Binding); its Activator is removed too if now empty. Callers disable this
      * when it's the group input's last remaining row.
      */

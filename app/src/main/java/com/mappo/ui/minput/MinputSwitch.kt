@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,6 +22,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.X
 
 /**
  * Mappo's miniature switch — restyles [androidx.compose.material3.Switch] at bar scale.
@@ -29,6 +33,10 @@ import androidx.compose.ui.unit.Dp
  * squeezing it to a text-line height leaves a stubby track. This track runs proportionally
  * wider ([MinputSwitchWidth] × [MinputSwitchHeight], height matched to the mini text line
  * so an overline + switch stack measures like the bar's text stacks).
+ *
+ * [stateIcons] puts Material's own on-handle marks in the thumb — a tick when on, a cross when
+ * off (Dylan, 2026-09-19). They need a thumb big enough to carry them: pair them with the tall
+ * scale ([MinputSwitchTallHeight] / [MinputSwitchTallWidth]), not the 12dp bar scale.
  *
  * Behavior/semantics come from foundation's `toggleable` (Switch role, halo-free like the
  * rest of the library); the conventional state motion is reproduced — the thumb slides and
@@ -44,6 +52,7 @@ fun MinputSwitch(
     enabled: Boolean = true,
     width: Dp = MinputSwitchWidth,
     height: Dp = MinputSwitchHeight,
+    stateIcons: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
@@ -95,6 +104,18 @@ fun MinputSwitch(
                 .size(thumbSize)
                 .clip(CircleShape)
                 .background(thumbColor),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            if (stateIcons) {
+                // Drawn ON the thumb, so the mark travels with it and always reads against the
+                // thumb's own fill rather than the track's.
+                Icon(
+                    imageVector = if (checked) Lucide.Check else Lucide.X,
+                    contentDescription = null,
+                    tint = if (checked) colors.primary else colors.surfaceContainerHighest,
+                    modifier = Modifier.size(thumbSize - MinputSwitchIconInset * 2),
+                )
+            }
+        }
     }
 }

@@ -42,8 +42,8 @@ import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayLabel
+import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
-import com.mappo.ui.component.rightStickHorizontalScroll
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPod
@@ -353,7 +353,11 @@ internal fun rowAssignments(
         val binding = activator.bindings.firstOrNull() ?: return@mapNotNull null
         val output = activator.primaryOutput
         if (output == BindingOutput.Unbound) return@mapNotNull null
-        RowAssignment(type, binding.label?.takeIf { it.isNotBlank() } ?: output.displayLabel(config))
+        // The command's own name, with the device initials only if the command keeps them
+        // ([Binding.showDeviceInitials], set in the label editor) — one command reads the same
+        // way here and in the advanced table.
+        val name = if (binding.showDeviceInitials) output.displayLabel(config) else output.displayName(config)
+        RowAssignment(type, binding.label?.takeIf { it.isNotBlank() } ?: name)
     }
 }
 
@@ -506,24 +510,26 @@ internal fun GroupRows(
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
-    // Whether this box currently owns controller focus, and so whether the right stick should
-    // drive its scrollers. See [ScrollingAssignmentTable].
-    stickScrollEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val summaryRows = group.summaryRows
     val endRows = summaryRows.filter { group.anchorFor(it) == RowAnchor.END }
     val startRows = summaryRows.filter { group.anchorFor(it) == RowAnchor.START }
+    val split = endRows.isNotEmpty() && startRows.isNotEmpty()
     val table: @Composable (List<SimpleRowSpec>, RowAnchor, Modifier) -> Unit = { specs, anchor, m ->
         ScrollingAssignmentTable(
             specs = specs,
             rows = specs.map { assignmentCells(viewingSet, viewingLayer, config, it) },
             anchor = anchor,
-            stickScrollEnabled = stickScrollEnabled,
+            // A SPLIT group is a centre-column one, and its box is sized by the column rather
+            // than by its content (see RemapStage), so the character floor has nothing to
+            // protect and everything to break: two halves each claiming a full assignment run
+            // outgrew the column and cued an overflow the text didn't have (Dylan, 2026-09-19).
+            floored = !split,
             modifier = m,
         )
     }
-    if (endRows.isEmpty() || startRows.isEmpty()) {
+    if (!split) {
         table(summaryRows, group.anchorFor(summaryRows.first()), modifier)
     } else {
         CentreSplit(
@@ -596,19 +602,18 @@ private fun ScrollingAssignmentTable(
     specs: List<SimpleRowSpec>,
     rows: List<List<AssignmentCell>>,
     anchor: RowAnchor,
-    stickScrollEnabled: Boolean,
+    floored: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val scroll = rememberScrollState()
     val reversed = anchor == RowAnchor.END
-    rightStickHorizontalScroll(scroll, enabled = stickScrollEnabled, invert = reversed)
     MinputOverflowScroll(
         state = scroll,
         reverseScrolling = reversed,
         chevronOutset = OverflowChevronOutset,
         modifier = modifier,
     ) {
-        AssignmentTable(specs = specs, rows = rows, anchor = anchor)
+        AssignmentTable(specs = specs, rows = rows, anchor = anchor, floored = floored)
     }
 }
 
@@ -634,18 +639,24 @@ private fun AssignmentTable(
     specs: List<SimpleRowSpec>,
     rows: List<List<AssignmentCell>>,
     anchor: RowAnchor,
+    /** Whether the assignment run keeps its [AssignmentMinChars] floor. See [GroupRows]. */
+    floored: Boolean,
     modifier: Modifier = Modifier,
 ) {
     // "N characters" measured off digits: they're tabular in every face Mappo ships, so the
     // floor is stable rather than depending on which letters a command happens to use.
     val measurer = rememberTextMeasurer()
     val cellStyle = minputMiniTextStyle()
-    val assignmentFloor = remember(measurer, cellStyle) {
-        measurer.measure(
-            text = "0".repeat(AssignmentMinChars),
-            style = cellStyle,
-            softWrap = false,
-        ).size.width
+    val assignmentFloor = remember(measurer, cellStyle, floored) {
+        if (!floored) {
+            0
+        } else {
+            measurer.measure(
+                text = "0".repeat(AssignmentMinChars),
+                style = cellStyle,
+                softWrap = false,
+            ).size.width
+        }
     }
     val dividerColor = MaterialTheme.colorScheme.outlineVariant
     Layout(

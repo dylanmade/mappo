@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
@@ -102,6 +103,7 @@ import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.displayLabel
+import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.InputSource
 import com.mappo.service.input.modes.SourceModeCatalog
@@ -127,7 +129,6 @@ import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputScrollbarThickness
-import com.mappo.ui.minput.MinputTextEditDialog
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -173,7 +174,14 @@ internal class RemapGroupEditorCallbacks(
     val onEditCommand: (bindingId: Long, current: BindingOutput, title: String) -> Unit,
     val onOpenInputEditor: (inputSource: InputSource, groupInputKey: String, label: String) -> Unit,
     val onClearOverride: (inputSource: InputSource, groupInputKey: String) -> Unit,
-    val onSetLabel: (bindingId: Long, label: String) -> Unit,
+    /** The label editor's whole commit: the user label (blank clears it) and how the command
+     *  prints — its device glyph and the device initials on its name. */
+    val onSetLabel: (
+        bindingId: Long,
+        label: String,
+        showDeviceIcon: Boolean,
+        showDeviceInitials: Boolean,
+    ) -> Unit,
     val onResetGroup: (bindingGroupId: Long) -> Unit,
     val onConfigure: (activatorId: Long, title: String) -> Unit,
     // ── Cell ops (see ControllerConfigRepository's advanced-table block) ──
@@ -354,40 +362,21 @@ internal fun RemapGroupEditor(
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Non-interactive group identity: hardware glyph + overline label. The Kenney
-            // prompt is single-color, so it tints down to the overline treatment safely.
-            Icon(
-                InputGlyphs.sourcePainter(primarySource),
-                contentDescription = null,
-                modifier = Modifier.size(MinputPillIconSize),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Group identity + mode, as ONE control (Dylan, 2026-09-19): the card's caption
+            // used to read "BUTTON PAD > MODE: BUTTON PAD", naming the group twice with a flow
+            // arrow between, and then kept the hardware glyph outside the button it belongs to.
+            // The glyph is the group's identity AND the button's leading icon; the caption says
+            // the rest.
+            ModeDropdownLabel(
+                source = primarySource,
+                currentMode = primaryGroup?.mode.takeIf { validModes.isNotEmpty() },
+                validModes = validModes,
+                identity = group.headerLabel(),
+                // A resting card states its mode; only the live one lets you change it.
+                enabled = chrome && editable && primaryGroup != null && validModes.size > 1,
+                onPick = { mode -> primaryGroup?.let { callbacks.onSetBindingGroupMode(it.id, mode) } },
+                modifier = Modifier.focusRequester(headerModePillFocus),
             )
-            Spacer(Modifier.width(MinputGlyphLabelGap))
-            Text(
-                text = group.headerLabel().uppercase(),
-                style = minputOverlineTextStyle(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            EditorFlowArrow()
-            Spacer(Modifier.width(8.dp))
-            if (primaryGroup != null && validModes.isNotEmpty()) {
-                ModeDropdownLabel(
-                    source = primarySource,
-                    currentMode = primaryGroup.mode,
-                    validModes = validModes,
-                    // A resting card states its mode; only the live one lets you change it.
-                    enabled = chrome && editable && validModes.size > 1,
-                    onPick = { mode -> callbacks.onSetBindingGroupMode(primaryGroup.id, mode) },
-                    modifier = Modifier.focusRequester(headerModePillFocus),
-                )
-            } else {
-                Text(
-                    text = "$ModeLabelPrefix DEFAULT",
-                    style = minputOverlineTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             Spacer(Modifier.weight(1f))
             if (chrome) {
                 MinputIconButton(
@@ -458,6 +447,16 @@ internal fun RemapGroupEditor(
     }
 }
 
+/** What the label editor is editing: the command's label, the name it falls back to, and how
+ *  it prints. */
+private data class LabelEdit(
+    val bindingId: Long,
+    val label: String,
+    val outputs: List<BindingOutput>,
+    val showDeviceIcon: Boolean,
+    val showDeviceInitials: Boolean,
+)
+
 /**
  * The table proper.
  *
@@ -505,10 +504,10 @@ private fun AdvancedTable(
     // gutter so any point inside one resolves to whichever cell it's nearest, and generously
     // enough to keep working if the gaps grow.
     moveState.hitTolerancePx = with(density) { maxOf(TileRowGap, TileGap).toPx() }
-    // Which command's label the "Label" verb is editing: bindingId to its current text. The
-    // table has no resting label FIELD any more (the cell renders the label as overline text),
-    // so the editor dialog is summoned directly rather than by a MinputTextField pill.
-    var labelTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
+    // What the "Label" verb is editing. The table has no resting label FIELD any more (the cell
+    // renders the label as overline text), so the editor dialog is summoned directly rather
+    // than by a MinputTextField pill.
+    var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
 
     // Does a cell actually hold a command? An EMPTY cell is behaviorally empty as far as a
     // move is concerned — it's a slot, not a tile — so it must not slide around during a swap
@@ -904,12 +903,22 @@ private fun AdvancedTable(
                                     val output = activator?.primaryOutput ?: BindingOutput.Unbound
                                     val defined = binding != null && output != BindingOutput.Unbound
                                     val title = "$subLabel · ${type.activatorDisplayLabel()}"
+                                    // The command's own name, and the label ONLY when the user
+                                    // has typed something else (Dylan, 2026-09-19): the label
+                                    // editor's AUTO state IS that name, so a label repeating it
+                                    // means "auto", not a second line saying what the first
+                                    // already says.
+                                    val outputs = activator?.outputs.orEmpty()
+                                    val showInitials = binding?.showDeviceInitials != false
+                                    val outputName = commandsText(outputs, config, initials = false)
+                                    val customLabel = tileLabelFor(binding?.label, outputName)
 
                                     CommandTile(
                                         colors = type.columnColors(),
                                         output = output.takeIf { defined },
-                                        label = binding?.label?.takeIf { it.isNotBlank() },
-                                        config = config,
+                                        label = customLabel,
+                                        outputText = commandsText(outputs, config, showInitials),
+                                        showDeviceIcon = binding?.showDeviceIcon != false,
                                         enabled = editable && groupId != null,
                                         cellKey = cellKey,
                                         moveState = moveState,
@@ -941,7 +950,17 @@ private fun AdvancedTable(
                                                             callbacks.onAssignCell(groupId, spec.subInputKey, type, output, title)
                                                         }
                                                     },
-                                                    onLabel = { binding?.let { labelTarget = it.id to it.label.orEmpty() } },
+                                                    onLabel = {
+                                                        binding?.let {
+                                                            labelTarget = LabelEdit(
+                                                                bindingId = it.id,
+                                                                label = it.label.orEmpty(),
+                                                                outputs = outputs,
+                                                                showDeviceIcon = it.showDeviceIcon,
+                                                                showDeviceInitials = it.showDeviceInitials,
+                                                            )
+                                                        }
+                                                    },
                                                     onSettings = { activator?.let { callbacks.onConfigure(it.activator.id, title) } },
                                                     onCopy = {
                                                         if (groupId != null) callbacks.onCopyCell(groupId, spec.subInputKey, type)
@@ -1007,12 +1026,16 @@ private fun AdvancedTable(
         )
         Spacer(Modifier.height(TableBottomGap))
 
-        labelTarget?.let { (bindingId, current) ->
-            MinputTextEditDialog(
-                title = "Command label",
-                initial = current,
-                placeholder = "Label",
-                onCommit = { callbacks.onSetLabel(bindingId, it) },
+        labelTarget?.let { target ->
+            CommandLabelDialog(
+                label = target.label,
+                outputs = target.outputs,
+                config = config,
+                showDeviceIcon = target.showDeviceIcon,
+                showDeviceInitials = target.showDeviceInitials,
+                onCommit = { text, icons, initials ->
+                    callbacks.onSetLabel(target.bindingId, text, icons, initials)
+                },
                 onClose = { labelTarget = null },
             )
         }
@@ -1036,7 +1059,14 @@ private fun PressColumnHeader(type: ActivatorType) {
         Text(
             text = type.columnLabel().uppercase(),
             style = minputOverlineTextStyle(),
-            color = type.columnColors().header,
+            // The neutral column takes the THEME token rather than the palette's approximation
+            // of it, so "REGULAR PRESS" matches the "INPUT" caption and the header's MODE
+            // caption exactly (Dylan, 2026-09-19). Every other column wears its own accent.
+            color = if (type == ActivatorType.FULL_PRESS) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                type.columnColors().header
+            },
             maxLines = 1,
         )
     }
@@ -1062,7 +1092,10 @@ private fun CommandTile(
     colors: PressTypeColors,
     output: BindingOutput?,
     label: String?,
-    config: ControllerConfig?,
+    /** The command's name as it should print — device initials already applied. */
+    outputText: String,
+    /** Whether the output device's glyph leads that name. Per command, from its Binding. */
+    showDeviceIcon: Boolean,
     enabled: Boolean,
     cellKey: CellKey,
     moveState: MoveModeState<CellKey>,
@@ -1303,35 +1336,43 @@ private fun CommandTile(
         // painted by the table's background slot layer, a whole layer below every tile, so a
         // tile sliding past during a move can never end up underneath one.
         if (output != null) {
-            Row(
+            // The device glyph belongs to the COMMAND line, not to the tile (Dylan,
+            // 2026-09-19): spanning both rows it read as an icon for the label as well, and
+            // left the label hanging off the start of the thing it names. The label now sits
+            // centred OVER its command.
+            Column(
                 modifier = Modifier.padding(horizontal = TileContentPadding),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                InputGlyphs.outputPainter(output)?.let { painter ->
-                    Icon(
-                        painter,
-                        contentDescription = null,
-                        modifier = Modifier.size(TileOutputGlyphSize),
-                        tint = LocalContentColor.current,
+                if (label != null) {
+                    Text(
+                        text = label.uppercase(),
+                        style = minputOverlineTextStyle(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.width(MinputGlyphLabelGap))
                 }
-                Column(horizontalAlignment = Alignment.Start) {
-                    if (label != null) {
-                        Text(
-                            text = label.uppercase(),
-                            style = minputOverlineTextStyle(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    if (showDeviceIcon) {
+                        InputGlyphs.outputPainter(output)?.let { painter ->
+                            Icon(
+                                painter,
+                                contentDescription = null,
+                                modifier = Modifier.size(TileOutputGlyphSize),
+                                tint = LocalContentColor.current,
+                            )
+                            Spacer(Modifier.width(MinputGlyphLabelGap))
+                        }
                     }
                     Text(
-                        text = output.displayLabel(config),
+                        text = outputText,
                         style = minputMiniTextStyle(),
                         color = MaterialTheme.colorScheme.onSurface,
-                        // ALWAYS one line, label or no label. A wrapped output pushed the
+                        // ALWAYS one line, label or no label. A wrapped command pushed the
                         // glyph off-centre and made a labelled tile and an unlabelled one
                         // read as different components; ellipsis is the honest overflow.
                         maxLines = 1,
@@ -1450,6 +1491,36 @@ internal fun stepCellWithinGroup(from: CellKey, dRow: Int, dCol: Int): CellKey? 
     return CellKey(from.group, rows[nextRow], pressTypeColumns[nextColumn])
 }
 
+/**
+ * What a cell's command is CALLED: each of its outputs' names, joined with a plus.
+ *
+ * A cell holds one command today, so this is almost always one name; a `cycle_binding`
+ * activator (Phase 3) fires several in turn, and "A + B" is how that reads (Dylan, 2026-09-19).
+ * [initials] keeps the device prefix the output's own name carries ("KB: Escape" / "Escape") —
+ * per command, from its Binding.
+ */
+internal fun commandsText(
+    outputs: List<BindingOutput>,
+    config: ControllerConfig?,
+    initials: Boolean,
+): String = outputs
+    .filter { it != BindingOutput.Unbound }
+    .joinToString(CommandJoin) { if (initials) it.displayLabel(config) else it.displayName(config) }
+
+/** What separates the names of a cycling command's outputs. */
+internal const val CommandJoin = " + "
+
+/**
+ * A tile's SECONDARY label: the user's own, or null when there is nothing to add.
+ *
+ * Null covers both "no label" and "a label that just repeats the command's own name" (Dylan,
+ * 2026-09-19) — the label editor offers that name as its placeholder, so typing it back
+ * verbatim means the command is called what it was always called, not that it wants a second
+ * line saying so.
+ */
+internal fun tileLabelFor(label: String?, outputName: String): String? =
+    label?.trim()?.takeIf { it.isNotEmpty() && !it.equals(outputName.trim(), ignoreCase = true) }
+
 /** The scrolling table of [group]'s editor — one per group in the scene. */
 internal fun editorTableTestTag(group: RemapSimpleGroup): String = "group-editor-table:${group.name}"
 
@@ -1499,8 +1570,12 @@ internal fun RemapSimpleGroup.editorMirrored(): Boolean = when (this) {
 @Composable
 private fun ModeDropdownLabel(
     source: InputSource,
-    currentMode: BindingMode,
+    // Null when the group has no binding group yet, or its source has no modes at all: the
+    // caption then states the device default and opens nothing.
+    currentMode: BindingMode?,
     validModes: List<BindingMode>,
+    /** The group's own name, for a screen reader — the glyph is all that states it on screen. */
+    identity: String,
     enabled: Boolean,
     onPick: (BindingMode) -> Unit,
     modifier: Modifier = Modifier,
@@ -1508,6 +1583,7 @@ private fun ModeDropdownLabel(
     var open by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val color = MaterialTheme.colorScheme.onSurfaceVariant
+    val label = currentMode?.displayNameFor(source) ?: ModeLabelDefault
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1524,49 +1600,47 @@ private fun ModeDropdownLabel(
                 )
                 .padding(horizontal = ModeLabelPadding, vertical = ModeLabelVerticalPadding),
         ) {
+            // The Kenney prompt is single-color, so it tints down to the overline treatment
+            // safely.
+            Icon(
+                InputGlyphs.sourcePainter(source),
+                contentDescription = identity,
+                modifier = Modifier.size(MinputPillIconSize),
+                tint = color,
+            )
+            Spacer(Modifier.width(MinputGlyphLabelGap))
             Text(
-                text = "$ModeLabelPrefix ${currentMode.displayNameFor(source).uppercase()}",
+                text = "$ModeLabelPrefix ${label.uppercase()}",
                 style = minputOverlineTextStyle(),
                 color = color,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (enabled) {
-                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Spacer(Modifier.width(ModeArrowGap))
                 Icon(
-                    // The header's own flow marker, turned a quarter turn: one filled triangle
-                    // serves as both glyphs, so the dropdown cue belongs to the same family as
-                    // everything else in the bar.
-                    painterResource(R.drawable.lucide_play_filled),
+                    // The STANDARD Material dropdown arrow. A dropdown wears the platform's own
+                    // indicator, never a shape borrowed from elsewhere and rotated into place
+                    // (Dylan, 2026-09-19).
+                    Icons.Filled.ArrowDropDown,
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(ModeDropdownArrowSize)
-                        .graphicsLayer { rotationZ = 90f },
+                    modifier = Modifier.size(ModeDropdownArrowSize),
                     tint = color,
                 )
             }
         }
-        MinputDropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            current = currentMode,
-            options = validModes,
-            optionLabel = { it.displayNameFor(source) },
-            onPick = onPick,
-            optionIcon = { InputGlyphs.modePainter(it) },
-        )
+        if (currentMode != null) {
+            MinputDropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                current = currentMode,
+                options = validModes,
+                optionLabel = { it.displayNameFor(source) },
+                onPick = onPick,
+                optionIcon = { InputGlyphs.modePainter(it) },
+            )
+        }
     }
-}
-
-/** Non-interactive input→output flow marker: a filled Lucide play triangle. */
-@Composable
-private fun EditorFlowArrow(modifier: Modifier = Modifier) {
-    Icon(
-        painterResource(R.drawable.lucide_play_filled),
-        contentDescription = null,
-        modifier = modifier.size(EditorFlowArrowSize),
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 // ── Shared press-type vocabulary (moved from the retired detail-pane editor) ─────────────────
@@ -1677,15 +1751,20 @@ internal fun RichMenuItem(
 // Header height is the family standard shared with the panel surfaces.
 private val EditorHeaderHeight = MinputPanelHeaderHeight
 
-/** Edge of the filled-play flow arrow in the header. */
-private val EditorFlowArrowSize = 10.dp
-
 /** What the header's mode caption is prefixed with. Uppercase at the source: the caption is set
  *  in the overline treatment, and the mode's own name is uppercased beside it. */
 private const val ModeLabelPrefix = "MODE:"
 
-/** The mode caption's dropdown arrow — the flow arrow's triangle, a quarter turn down. */
-private val ModeDropdownArrowSize = 8.dp
+/** The mode caption's dropdown arrow. Material's own glyph inks well inside its box, so it
+ *  takes the pill family's icon scale rather than the caption's cap height. */
+private val ModeDropdownArrowSize = MinputPillIconSize
+
+/** What the caption says when the group has no mode of its own. */
+private const val ModeLabelDefault = "Default"
+
+/** Air between the caption and its arrow. Material's glyph carries its own generous padding, so
+ *  a normal label gap reads as a gulf (Dylan, 2026-09-19). */
+private val ModeArrowGap = 1.dp
 
 /** Hit area around the mode caption: enough for the press ripple to read as a button's without
  *  the caption drifting from the identity it follows. */

@@ -363,6 +363,14 @@ val MinputSwitchHeight = 12.dp
  *  [MinputSwitchHeight] minus twice this). */
 val MinputSwitchThumbInset = 2.dp
 
+/** One step up from the bar scale, for a switch that carries on-handle icons: a 12dp track
+ *  leaves an 8dp thumb, and no glyph reads at 8dp. */
+val MinputSwitchTallHeight = 18.dp
+val MinputSwitchTallWidth = 32.dp
+
+/** How far the on-handle mark sits inside the thumb. */
+val MinputSwitchIconInset = 2.dp
+
 /** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows). */
 val MinputIconButtonSize = 24.dp
 

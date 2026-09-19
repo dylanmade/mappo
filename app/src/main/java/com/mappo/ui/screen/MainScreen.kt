@@ -689,6 +689,9 @@ fun MainScreen(
                     onAddInputRow = { groupInputId, type -> viewModel.addInputRow(groupInputId, type) },
                     onSetInputRowPressType = { bindingId, type -> viewModel.setInputRowPressType(bindingId, type) },
                     onSetInputRowLabel = { bindingId, label -> viewModel.setInputRowLabel(bindingId, label) },
+                    onSetInputRowDisplay = { bindingId, label, icon, initials ->
+                        viewModel.setInputRowDisplay(bindingId, label, icon, initials)
+                    },
                     onDeleteInputRow = { bindingId -> viewModel.deleteInputRow(bindingId) },
                     onEnsureInputCell = { bindingGroupId, inputKey, type, onReady ->
                         viewModel.ensureInputCell(bindingGroupId, inputKey, type, onReady)
