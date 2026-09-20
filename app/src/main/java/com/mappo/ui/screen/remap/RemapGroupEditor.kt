@@ -102,8 +102,6 @@ import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
-import com.mappo.data.model.steam.displayLabel
-import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.InputSource
 import com.mappo.service.input.modes.SourceModeCatalog
@@ -903,22 +901,22 @@ private fun AdvancedTable(
                                     val output = activator?.primaryOutput ?: BindingOutput.Unbound
                                     val defined = binding != null && output != BindingOutput.Unbound
                                     val title = "$subLabel · ${type.activatorDisplayLabel()}"
-                                    // The command's own name, and the label ONLY when the user
-                                    // has typed something else (Dylan, 2026-09-19): the label
-                                    // editor's AUTO state IS that name, so a label repeating it
-                                    // means "auto", not a second line saying what the first
-                                    // already says.
+                                    // How this command prints — the SAME resolution the basic
+                                    // view's rows use ([commandDisplay]), so one binding reads
+                                    // the same way in both. The label appears only when the user
+                                    // typed something other than the command's own name (Dylan,
+                                    // 2026-09-19): the editor's AUTO state IS that name, so a
+                                    // label repeating it means "auto", not a second line saying
+                                    // what the first already says.
                                     val outputs = activator?.outputs.orEmpty()
-                                    val showInitials = binding?.showDeviceInitials != false
-                                    val outputName = commandsText(outputs, config, initials = false)
-                                    val customLabel = tileLabelFor(binding?.label, outputName)
+                                    val display = commandDisplay(binding, outputs, config)
 
                                     CommandTile(
                                         colors = type.columnColors(),
                                         output = output.takeIf { defined },
-                                        label = customLabel,
-                                        outputText = commandsText(outputs, config, showInitials),
-                                        showDeviceIcon = binding?.showDeviceIcon != false,
+                                        label = display.label,
+                                        outputText = display.text,
+                                        showDeviceIcon = display.glyph != null,
                                         enabled = editable && groupId != null,
                                         cellKey = cellKey,
                                         moveState = moveState,
@@ -1490,36 +1488,6 @@ internal fun stepCellWithinGroup(from: CellKey, dRow: Int, dCol: Int): CellKey? 
     val nextColumn = (column + dCol).coerceIn(0, pressTypeColumns.lastIndex)
     return CellKey(from.group, rows[nextRow], pressTypeColumns[nextColumn])
 }
-
-/**
- * What a cell's command is CALLED: each of its outputs' names, joined with a plus.
- *
- * A cell holds one command today, so this is almost always one name; a `cycle_binding`
- * activator (Phase 3) fires several in turn, and "A + B" is how that reads (Dylan, 2026-09-19).
- * [initials] keeps the device prefix the output's own name carries ("KB: Escape" / "Escape") —
- * per command, from its Binding.
- */
-internal fun commandsText(
-    outputs: List<BindingOutput>,
-    config: ControllerConfig?,
-    initials: Boolean,
-): String = outputs
-    .filter { it != BindingOutput.Unbound }
-    .joinToString(CommandJoin) { if (initials) it.displayLabel(config) else it.displayName(config) }
-
-/** What separates the names of a cycling command's outputs. */
-internal const val CommandJoin = " + "
-
-/**
- * A tile's SECONDARY label: the user's own, or null when there is nothing to add.
- *
- * Null covers both "no label" and "a label that just repeats the command's own name" (Dylan,
- * 2026-09-19) — the label editor offers that name as its placeholder, so typing it back
- * verbatim means the command is called what it was always called, not that it wants a second
- * line saying so.
- */
-internal fun tileLabelFor(label: String?, outputName: String): String? =
-    label?.trim()?.takeIf { it.isNotEmpty() && !it.equals(outputName.trim(), ignoreCase = true) }
 
 /** The scrolling table of [group]'s editor — one per group in the scene. */
 internal fun editorTableTestTag(group: RemapSimpleGroup): String = "group-editor-table:${group.name}"

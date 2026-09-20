@@ -8,8 +8,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -41,10 +46,9 @@ import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.InputSource
-import com.mappo.data.model.steam.displayLabel
-import com.mappo.data.model.steam.displayName
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.ui.glyph.InputGlyphs
+import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -324,11 +328,21 @@ internal const val StickMoveKey = "move"
  * visible empty slots — assignments close up rank, so a Press + Down input reads as two
  * adjacent cells, not two cells with three gaps between them.
  */
-internal data class RowAssignment(val type: ActivatorType, val text: String)
+internal data class RowAssignment(
+    val type: ActivatorType,
+    val text: String,
+    /** The output whose device glyph leads the text, or null when this command hides it. */
+    val glyph: BindingOutput?,
+)
 
 /**
  * Resolve one row's assignments, in the advanced table's column order ([pressTypeColumns]).
  * Layer view resolves override→base per sub-input (ghost semantics), same as the table.
+ *
+ * **A row reads exactly as the advanced tile does** — same device glyph, same initials, same
+ * label — because both resolve through [commandDisplay] (Dylan, 2026-09-20). The basic view is
+ * the table's compacted twin, so the only difference is that a row has ONE line for what the
+ * tile spreads over two: the user's label when it has one, else the command's own name.
  *
  * **Text precedence: the command's user label when it has one, else the output's own display
  * name.** That's Dylan's spec, and the fix for a long-standing mismatch: until 2026-09-11 this
@@ -351,13 +365,9 @@ internal fun rowAssignments(
     return pressTypeColumns.mapNotNull { type ->
         val activator = groupInput.firstActivatorOfType(type) ?: return@mapNotNull null
         val binding = activator.bindings.firstOrNull() ?: return@mapNotNull null
-        val output = activator.primaryOutput
-        if (output == BindingOutput.Unbound) return@mapNotNull null
-        // The command's own name, with the device initials only if the command keeps them
-        // ([Binding.showDeviceInitials], set in the label editor) — one command reads the same
-        // way here and in the advanced table.
-        val name = if (binding.showDeviceInitials) output.displayLabel(config) else output.displayName(config)
-        RowAssignment(type, binding.label?.takeIf { it.isNotBlank() } ?: name)
+        if (activator.primaryOutput == BindingOutput.Unbound) return@mapNotNull null
+        val display = commandDisplay(binding, activator.outputs, config)
+        RowAssignment(type, display.line, display.lineGlyph)
     }
 }
 
@@ -451,7 +461,15 @@ internal fun RemapSimpleGroup.anchorFor(spec: SimpleRowSpec): RowAnchor = when (
 
 /** One resolved cell of a group box's assignment table: its text, the color that says which
  *  press type it came from, and whether it's a resting label rather than a real assignment. */
-private data class AssignmentCell(val text: String, val color: Color, val italic: Boolean = false)
+private data class AssignmentCell(
+    val text: String,
+    val color: Color,
+    val italic: Boolean = false,
+    /** The command's device glyph, leading its text exactly as it does in the advanced tile.
+     *  Null on a resting label (no command there to own a device) and on a command the user
+     *  has NAMED — see [CommandDisplay.lineGlyph]. */
+    val glyph: BindingOutput? = null,
+)
 
 /**
  * Resolve a row to its display cells — the assignments when it has any, otherwise the single
@@ -491,6 +509,7 @@ private fun assignmentCells(
             } else {
                 assignment.type.columnColors().header
             },
+            glyph = assignment.glyph,
         )
     }
 }
@@ -667,14 +686,32 @@ private fun AssignmentTable(
                     InputGlyphs.SubInputGlyph(spec.source, spec.subInputKey, size = SummaryGlyphSize)
                 }
                 rows[rowIndex].forEachIndexed { columnIndex, cell ->
-                    Text(
-                        text = cell.text,
-                        style = if (cell.italic) cellStyle.copy(fontStyle = FontStyle.Italic) else cellStyle,
-                        color = cell.color,
-                        maxLines = 1,
-                        softWrap = false,
+                    Row(
                         modifier = Modifier.layoutId(CellSlot(rowIndex, columnIndex)),
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // The device glyph LEADS the name here exactly as it does on the
+                        // advanced tile's output line, in the cell's own color so the pair
+                        // reads as one object rather than a glyph beside some text.
+                        cell.glyph?.let { output ->
+                            InputGlyphs.outputPainter(output)?.let { painter ->
+                                Icon(
+                                    painter,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(AssignmentOutputGlyphSize),
+                                    tint = cell.color,
+                                )
+                                Spacer(Modifier.width(MinputGlyphLabelGap))
+                            }
+                        }
+                        Text(
+                            text = cell.text,
+                            style = if (cell.italic) cellStyle.copy(fontStyle = FontStyle.Italic) else cellStyle,
+                            color = cell.color,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
                     if (columnIndex > 0) {
                         Box(Modifier.layoutId(DividerSlot(rowIndex, columnIndex)).background(dividerColor))
                     }
@@ -755,6 +792,10 @@ private val SummaryRowSpacing = 4.dp
 
 /** The input glyph that anchors every row. */
 private val SummaryGlyphSize = 14.dp
+
+/** The DEVICE glyph leading one command's text — the advanced tile's scale
+ *  (TileOutputGlyphSize), since the two views print the same command. */
+private val AssignmentOutputGlyphSize = 14.dp
 
 /** Gap between the glyph and its first assignment column. */
 private val AssignmentGlyphGap = 5.dp

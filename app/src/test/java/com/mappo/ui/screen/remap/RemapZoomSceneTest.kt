@@ -2,7 +2,9 @@ package com.mappo.ui.screen.remap
 
 import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.ActivatorType
+import com.mappo.data.model.steam.Binding
 import com.mappo.data.model.steam.BindingOutput
+import com.mappo.data.model.steam.BindingOutputType
 import kotlin.math.abs
 import org.junit.Test
 
@@ -172,6 +174,48 @@ class RemapZoomSceneTest {
         }
         // An unbound slot contributes no name at all.
         assert(commandsText(listOf(BindingOutput.Unbound), null, initials = true) == "")
+    }
+
+    /**
+     * One command, one reading — the basic row and the advanced tile resolve through the same
+     * [commandDisplay] (Dylan, 2026-09-20). The basic view showed no device glyph at all and
+     * resolved its own text, so the two views disagreed about the same binding.
+     */
+    @Test
+    fun aCommandReadsTheSameWayInBothViews() {
+        val outputs = listOf(BindingOutput.KeyPress("ESCAPE"))
+        fun binding(label: String? = null, icon: Boolean = true, initials: Boolean = true) =
+            Binding(
+                activatorId = 1L,
+                outputType = BindingOutputType.KEY_PRESS,
+                args = "ESCAPE",
+                label = label,
+                showDeviceIcon = icon,
+                showDeviceInitials = initials,
+            )
+
+        val plain = commandDisplay(binding(), outputs, null)
+        assert(plain.glyph == outputs.single()) { "the glyph is the command's own output" }
+        assert(plain.lineGlyph == outputs.single()) { "an unnamed command's row glyphs it" }
+        assert(plain.text == "KB: ESCAPE") { plain.text }
+        assert(plain.label == null) { "no user label: ${plain.label}" }
+        // The basic view has ONE line for the tile's two: the label when there is one.
+        assert(plain.line == "KB: ESCAPE") { plain.line }
+
+        val labelled = commandDisplay(binding(label = "Menu"), outputs, null)
+        assert(labelled.label == "Menu") { "${labelled.label}" }
+        assert(labelled.text == "KB: ESCAPE") { labelled.text }
+        assert(labelled.line == "Menu") { labelled.line }
+        // A NAMED command's row goes bare (Dylan, 2026-09-20): the label replaces the output's
+        // name, so the device info qualifying that name has nothing left to qualify. The tile
+        // still glyphs its own output line, which the label sits above.
+        assert(labelled.lineGlyph == null) { "${labelled.lineGlyph}" }
+        assert(labelled.glyph == outputs.single()) { "the tile's output line keeps it" }
+
+        // Both switches are per COMMAND, and they reach the basic row as well as the tile.
+        val bare = commandDisplay(binding(icon = false, initials = false), outputs, null)
+        assert(bare.glyph == null) { "icons off: ${bare.glyph}" }
+        assert(bare.line == "ESCAPE") { bare.line }
     }
 
     /**
