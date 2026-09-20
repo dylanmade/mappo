@@ -220,12 +220,16 @@ data class MappoExtraColors(
  * ║  PRESS-TYPE COLORS — the advanced table's column coloration. EDIT THESE FREELY.      ║
  * ╚══════════════════════════════════════════════════════════════════════════════════════╝
  *
- * Three INDEPENDENT roles per press type, so each can be tuned without disturbing the others:
+ * Four INDEPENDENT roles per press type, so each can be tuned without disturbing the others:
  *
- *  - [header] — the column header's icon + overline text. Used as an opaque color.
+ *  - [header] — overline text naming the press type (the type picker, the old column headers).
+ *               Used as an opaque color.
  *  - [tile]   — composited OVER the cell's normal surface, so **the alpha byte is the tint
  *               strength**: `0x38` ≈ 22%. Raise it for a louder column, drop it toward `0x00`
  *               to make a column read as untinted.
+ *  - [icon]   — the press-type glyph leading a tile (2026-09-20). Its OWN value rather than
+ *               the header's: the glyph sits ON the tile's tint, where the header color was
+ *               tuned against the card. **Alpha byte applies.**
  *  - [plus]   — the empty cell's "+" glyph. **Alpha byte again** — `0x4D` ≈ 30%.
  *
  * Every value is a literal ARGB, applied as-is at the call site with no derived alpha or
@@ -240,6 +244,7 @@ data class MappoExtraColors(
 data class PressTypeColors(
     val header: Color,
     val tile: Color,
+    val icon: Color,
     val plus: Color,
 )
 
@@ -259,36 +264,42 @@ data class PressTypePalette(
             press = PressTypeColors(
                 header = Color(0xFFBFC6D4),
                 tile = Color(0x00000000),
+                icon = Color(0xCCBFC6D4),
                 plus = Color(0x4DBFC6D4),
             ),
             // Cyan 300
             long = PressTypeColors(
                 header = Color(0xFF4DD0E1),
                 tile = Color(0x384DD0E1),
+                icon = Color(0xE64DD0E1),
                 plus = Color(0x4D4DD0E1),
             ),
             // Magenta / pink 300
             double = PressTypeColors(
                 header = Color(0xFFF06292),
                 tile = Color(0x38F06292),
+                icon = Color(0xE6F06292),
                 plus = Color(0x4DF06292),
             ),
             // Yellow / amber 300
             chord = PressTypeColors(
                 header = Color(0xFFFFD54F),
                 tile = Color(0x38FFD54F),
+                icon = Color(0xE6FFD54F),
                 plus = Color(0x4DFFD54F),
             ),
             // Red 400
             down = PressTypeColors(
                 header = Color(0xFFEF5350),
                 tile = Color(0x38EF5350),
+                icon = Color(0xE6EF5350),
                 plus = Color(0x4DEF5350),
             ),
             // Green 300
             up = PressTypeColors(
                 header = Color(0xFF81C784),
                 tile = Color(0x3881C784),
+                icon = Color(0xE681C784),
                 plus = Color(0x4D81C784),
             ),
         )
@@ -300,31 +311,37 @@ data class PressTypePalette(
             press = PressTypeColors(
                 header = Color(0xFF4A5160),
                 tile = Color(0x00000000),
+                icon = Color(0xCC4A5160),
                 plus = Color(0x4D4A5160),
             ),
             long = PressTypeColors(
                 header = Color(0xFF00838F),
                 tile = Color(0x3300838F),
+                icon = Color(0xE600838F),
                 plus = Color(0x5900838F),
             ),
             double = PressTypeColors(
                 header = Color(0xFFAD1457),
                 tile = Color(0x33AD1457),
+                icon = Color(0xE6AD1457),
                 plus = Color(0x59AD1457),
             ),
             chord = PressTypeColors(
                 header = Color(0xFF9A6700),
                 tile = Color(0x339A6700),
+                icon = Color(0xE69A6700),
                 plus = Color(0x599A6700),
             ),
             down = PressTypeColors(
                 header = Color(0xFFC62828),
                 tile = Color(0x33C62828),
+                icon = Color(0xE6C62828),
                 plus = Color(0x59C62828),
             ),
             up = PressTypeColors(
                 header = Color(0xFF2E7D32),
                 tile = Color(0x332E7D32),
+                icon = Color(0xE62E7D32),
                 plus = Color(0x592E7D32),
             ),
         )

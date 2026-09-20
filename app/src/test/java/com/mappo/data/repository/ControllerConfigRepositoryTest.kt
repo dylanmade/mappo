@@ -23,13 +23,14 @@ import com.mappo.data.model.steam.BindingOutputType
 import com.mappo.data.model.steam.ControllerType
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.LayerPresetBinding
-import com.mappo.data.model.steam.withInputCellMoved
+import com.mappo.data.model.steam.withRowCommandMoved
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -839,19 +840,31 @@ class ControllerConfigRepositoryTest {
      */
     private suspend fun assertOptimisticMatchesPersisted(
         groupId: Long,
-        fromKey: String,
-        fromType: ActivatorType,
+        bindingId: Long,
         toKey: String,
-        toType: ActivatorType,
+        swapWithBindingId: Long?,
+        toGroupId: Long = groupId,
     ) {
         val before = subject.observeActiveConfig(1L).first()!!
-        val optimistic = before.withInputCellMoved(groupId, fromKey, fromType, toKey, toType)
-        subject.moveInputCell(groupId, fromKey, fromType, toKey, toType)
+        val optimistic = before.withRowCommandMoved(bindingId, toGroupId, toKey, swapWithBindingId)
+        subject.moveRowCommand(bindingId, toGroupId, toKey, swapWithBindingId)
         val persisted = subject.observeActiveConfig(1L).first()!!
-        assertEquals(
-            renderedCells(persisted, groupId),
-            renderedCells(optimistic, groupId),
-        )
+        assertEquals(renderedCells(persisted, groupId), renderedCells(optimistic, groupId))
+        if (toGroupId != groupId) {
+            assertEquals(renderedCells(persisted, toGroupId), renderedCells(optimistic, toGroupId))
+        }
+    }
+
+    /** Bind a cell and hand back the binding that now holds it — the command's identity. */
+    private suspend fun bindCommand(
+        bindingGroupId: Long,
+        inputKey: String,
+        type: ActivatorType,
+        key: String,
+    ): Long {
+        val bindingId = subject.addRowCommand(bindingGroupId, inputKey, type)
+        subject.setCommand(bindingId, BindingOutput.KeyPress(key))
+        return bindingId
     }
 
     private suspend fun seededFaceGroupId(): Long {
@@ -865,41 +878,6 @@ class ControllerConfigRepositoryTest {
     private suspend fun seededGroupId(source: InputSource): Long {
         val config = subject.observeActiveConfig(1L).first()!!
         return config.activeActionSet!!.presetFor(source)!!.group.group.id
-    }
-
-    @Test
-    fun moveInputCell_acrossBindingGroups_swapsBothCommands() = runTest {
-        val faceId = seededFaceGroupId()
-        val dpadId = seededGroupId(InputSource.DPAD)
-        bindCell(faceId, "button_a", ActivatorType.FULL_PRESS, "A")
-        bindCell(dpadId, "dpad_up", ActivatorType.LONG_PRESS, "UP")
-
-        subject.moveInputCell(
-            bindingGroupId = faceId, fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
-            toKey = "dpad_up", toType = ActivatorType.LONG_PRESS, toBindingGroupId = dpadId,
-        )
-
-        assertEquals("A", cellOutput(dpadId, "dpad_up", ActivatorType.LONG_PRESS))
-        assertEquals("UP", cellOutput(faceId, "button_a", ActivatorType.FULL_PRESS))
-    }
-
-    @Test
-    fun optimisticMove_acrossBindingGroups_matchesRepository() = runTest {
-        val faceId = seededFaceGroupId()
-        val dpadId = seededGroupId(InputSource.DPAD)
-        bindCell(faceId, "button_a", ActivatorType.FULL_PRESS, "A")
-        bindCell(dpadId, "dpad_up", ActivatorType.LONG_PRESS, "UP")
-
-        val before = subject.observeActiveConfig(1L).first()!!
-        val optimistic = before.withInputCellMoved(
-            faceId, "button_a", ActivatorType.FULL_PRESS, "dpad_up", ActivatorType.LONG_PRESS, dpadId,
-        )
-        subject.moveInputCell(
-            faceId, "button_a", ActivatorType.FULL_PRESS, "dpad_up", ActivatorType.LONG_PRESS, dpadId,
-        )
-        val persisted = subject.observeActiveConfig(1L).first()!!
-        assertEquals(renderedCells(persisted, faceId), renderedCells(optimistic, faceId))
-        assertEquals(renderedCells(persisted, dpadId), renderedCells(optimistic, dpadId))
     }
 
     @Test
@@ -937,90 +915,105 @@ class ControllerConfigRepositoryTest {
     }
 
     @Test
-    fun optimisticMove_ontoOccupiedCell_matchesRepository() = runTest {
+    fun optimisticMove_ontoAnotherCommand_matchesRepository() = runTest {
         val groupId = seededFaceGroupId()
-        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
-        bindCell(groupId, "button_b", ActivatorType.LONG_PRESS, "B")
+        val a = bindCommand(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
+        val b = bindCommand(groupId, "button_b", ActivatorType.LONG_PRESS, "B")
+
+        assertOptimisticMatchesPersisted(groupId, a, toKey = "button_b", swapWithBindingId = b)
+    }
+
+    @Test
+    fun optimisticMove_ontoARowsPlus_matchesRepository() = runTest {
+        val groupId = seededFaceGroupId()
+        val a = bindCommand(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
+
+        assertOptimisticMatchesPersisted(groupId, a, toKey = "button_y", swapWithBindingId = null)
+    }
+
+    @Test
+    fun optimisticMove_ontoARowHoldingItsOwnPressType_matchesRepository() = runTest {
+        // The destination already has a bucket for the moving command's press type, so the
+        // binding is reparented into it rather than its activator travelling — the branch the
+        // two implementations are most likely to disagree on.
+        val groupId = seededFaceGroupId()
+        val a = bindCommand(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
+        bindCommand(groupId, "button_b", ActivatorType.FULL_PRESS, "B")
+
+        assertOptimisticMatchesPersisted(groupId, a, toKey = "button_b", swapWithBindingId = null)
+    }
+
+    @Test
+    fun moveRowCommand_ontoAnotherCommand_swapsTheirRows() = runTest {
+        val groupId = seedFaceGroup()
+        val a = bindCommand(groupId, "button_a", ActivatorType.FULL_PRESS, "A_PRESS")
+        val b = bindCommand(groupId, "button_b", ActivatorType.LONG_PRESS, "B_LONG")
+
+        subject.moveRowCommand(a, toBindingGroupId = groupId, toInputKey = "button_b", swapWithBindingId = b)
+
+        // Each keeps its OWN press type — the columns are gone, so a destination has no press
+        // type to impose (Dylan, 2026-09-20).
+        assertEquals("A_PRESS", cellOutput(groupId, "button_b", ActivatorType.FULL_PRESS))
+        assertEquals("B_LONG", cellOutput(groupId, "button_a", ActivatorType.LONG_PRESS))
+    }
+
+    @Test
+    fun moveRowCommand_ontoARowsPlus_addsItThereAndLeavesTheOriginEmpty() = runTest {
+        val groupId = seedFaceGroup()
+        val a = bindCommand(groupId, "button_a", ActivatorType.LONG_PRESS, "A_LONG")
+
+        subject.moveRowCommand(a, toBindingGroupId = groupId, toInputKey = "button_y", swapWithBindingId = null)
+
+        assertEquals("A_LONG", cellOutput(groupId, "button_y", ActivatorType.LONG_PRESS))
+        assertNull(cellOutput(groupId, "button_a", ActivatorType.LONG_PRESS))
+    }
+
+    @Test
+    fun moveRowCommand_ontoItsOwnRow_changesNothing() = runTest {
+        // Where a command sits in its row is the auto-sort's business, so a move that doesn't
+        // change rows is a no-op rather than a reshuffle.
+        val groupId = seedFaceGroup()
+        val a = bindCommand(groupId, "button_a", ActivatorType.FULL_PRESS, "PRESS")
+        val double = bindCommand(groupId, "button_a", ActivatorType.DOUBLE_PRESS, "DOUBLE")
+
+        subject.moveRowCommand(a, toBindingGroupId = groupId, toInputKey = "button_a", swapWithBindingId = double)
+
+        assertEquals("PRESS", cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
+        assertEquals("DOUBLE", cellOutput(groupId, "button_a", ActivatorType.DOUBLE_PRESS))
+    }
+
+    @Test
+    fun moveRowCommand_acrossBindingGroups_carriesTheCommandAndItsPressType() = runTest {
+        val faceId = seededFaceGroupId()
+        val dpadId = seededGroupId(InputSource.DPAD)
+        val a = bindCommand(faceId, "button_a", ActivatorType.LONG_PRESS, "A")
+
+        subject.moveRowCommand(a, toBindingGroupId = dpadId, toInputKey = "dpad_up", swapWithBindingId = null)
+
+        assertEquals("A", cellOutput(dpadId, "dpad_up", ActivatorType.LONG_PRESS))
+        assertNull(cellOutput(faceId, "button_a", ActivatorType.LONG_PRESS))
+    }
+
+    @Test
+    fun optimisticMove_acrossBindingGroups_matchesRepository() = runTest {
+        val faceId = seededFaceGroupId()
+        val dpadId = seededGroupId(InputSource.DPAD)
+        val a = bindCommand(faceId, "button_a", ActivatorType.FULL_PRESS, "A")
+        val up = bindCommand(dpadId, "dpad_up", ActivatorType.LONG_PRESS, "UP")
 
         assertOptimisticMatchesPersisted(
-            groupId, "button_a", ActivatorType.FULL_PRESS, "button_b", ActivatorType.LONG_PRESS,
+            groupId = faceId,
+            bindingId = a,
+            toKey = "dpad_up",
+            swapWithBindingId = up,
+            toGroupId = dpadId,
         )
     }
 
     @Test
-    fun optimisticMove_ontoEmptyCell_matchesRepository() = runTest {
-        val groupId = seededFaceGroupId()
-        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A")
-
-        assertOptimisticMatchesPersisted(
-            groupId, "button_a", ActivatorType.FULL_PRESS, "button_y", ActivatorType.CHORDED_PRESS,
-        )
-    }
-
-    @Test
-    fun optimisticMove_withinOneRow_matchesRepository() = runTest {
-        val groupId = seededFaceGroupId()
-        bindCell(groupId, "button_a", ActivatorType.FULL_PRESS, "PRESS")
-        bindCell(groupId, "button_a", ActivatorType.DOUBLE_PRESS, "DOUBLE")
-
-        assertOptimisticMatchesPersisted(
-            groupId, "button_a", ActivatorType.FULL_PRESS, "button_a", ActivatorType.DOUBLE_PRESS,
-        )
-    }
-
-    @Test
-    fun moveInputCell_ontoOccupiedCell_swapsBothCommands() = runTest {
-        val groupId = seedFaceGroup()
-        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A_PRESS")
-        seedCell(groupId, "button_b", ActivatorType.LONG_PRESS, "B_LONG")
-
-        subject.moveInputCell(
-            bindingGroupId = groupId,
-            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
-            toKey = "button_b", toType = ActivatorType.LONG_PRESS,
-        )
-
-        assertEquals("A_PRESS", cellOutput(groupId, "button_b", ActivatorType.LONG_PRESS))
-        assertEquals("B_LONG", cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
-    }
-
-    @Test
-    fun moveInputCell_withinOneRow_swapsAcrossPressTypes() = runTest {
-        // Same group input on both sides — the case where from/to share a parent, which a
-        // naive "reparent then reparent" can collapse into a no-op.
-        val groupId = seedFaceGroup()
-        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "PRESS")
-        seedCell(groupId, "button_a", ActivatorType.DOUBLE_PRESS, "DOUBLE")
-
-        subject.moveInputCell(
-            bindingGroupId = groupId,
-            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
-            toKey = "button_a", toType = ActivatorType.DOUBLE_PRESS,
-        )
-
-        assertEquals("PRESS", cellOutput(groupId, "button_a", ActivatorType.DOUBLE_PRESS))
-        assertEquals("DOUBLE", cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
-    }
-
-    @Test
-    fun moveInputCell_ontoEmptyCell_relocatesAndLeavesOriginEmpty() = runTest {
-        val groupId = seedFaceGroup()
-        seedCell(groupId, "button_a", ActivatorType.FULL_PRESS, "A_PRESS")
-
-        subject.moveInputCell(
-            bindingGroupId = groupId,
-            fromKey = "button_a", fromType = ActivatorType.FULL_PRESS,
-            toKey = "button_y", toType = ActivatorType.CHORDED_PRESS,
-        )
-
-        assertEquals("A_PRESS", cellOutput(groupId, "button_y", ActivatorType.CHORDED_PRESS))
-        assertNull(cellOutput(groupId, "button_a", ActivatorType.FULL_PRESS))
-    }
-
-    @Test
-    fun moveInputCell_carriesActivatorSettingsWithTheCommand() = runTest {
-        // Move REPARENTS the activator rather than copying its contents, so tuned settings
-        // (long-press time, chord partner, turbo) travel with the command.
+    fun moveRowCommand_carriesActivatorSettingsWithTheCommand() = runTest {
+        // A command that is alone in its bucket takes the whole activator with it, so tuned
+        // settings (long-press time, chord partner, turbo) travel with the command.
         val groupId = seedFaceGroup()
         val inputId = groupInputDao.insert(
             GroupInput(bindingGroupId = groupId, inputKey = "button_a", orderIndex = 0)
@@ -1033,20 +1026,33 @@ class ControllerConfigRepositoryTest {
                 orderIndex = 0,
             )
         )
-        bindingDao.insert(
+        val bindingId = bindingDao.insert(
             Binding(activatorId = activatorId, outputType = BindingOutputType.KEY_PRESS, args = "K", orderIndex = 0)
         )
 
-        subject.moveInputCell(
-            bindingGroupId = groupId,
-            fromKey = "button_a", fromType = ActivatorType.LONG_PRESS,
-            toKey = "button_b", toType = ActivatorType.LONG_PRESS,
-        )
+        subject.moveRowCommand(bindingId, toBindingGroupId = groupId, toInputKey = "button_b", swapWithBindingId = null)
 
         val movedInput = groupInputDao.getByGroups(listOf(groupId)).single { it.inputKey == "button_b" }
         val moved = activatorDao.getByGroupInputs(listOf(movedInput.id)).single()
         assertEquals("""{"long_press_time":0.9}""", moved.settingsJson)
         assertEquals(activatorId, moved.id)
+    }
+
+    @Test
+    fun addRowCommand_stacksASecondCommandOfTheSamePressType() = runTest {
+        // The point of the stack (Dylan, 2026-09-20): the schema always allowed two commands on
+        // one press type, and the table's fixed columns were what forbade it.
+        val groupId = seededFaceGroupId()
+        val first = bindCommand(groupId, "button_a", ActivatorType.LONG_PRESS, "ONE")
+        val second = bindCommand(groupId, "button_a", ActivatorType.LONG_PRESS, "TWO")
+        assertNotEquals(first, second)
+
+        val config = subject.observeActiveConfig(1L).first()!!
+        val row = config.activeActionSet!!.presetFor(InputSource.BUTTON_DIAMOND)!!
+            .group.inputByKey("button_a")!!
+        val longPress = row.activators.single { it.activator.type == ActivatorType.LONG_PRESS }
+        // ONE bucket, TWO commands — what the fixed press-type columns could never express.
+        assertEquals(listOf("ONE", "TWO"), longPress.bindings.map { it.args })
     }
 
     @Test

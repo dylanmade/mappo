@@ -187,33 +187,31 @@ fun RemapControlsScreen(
         showDeviceInitials: Boolean,
     ) -> Unit = { _, _, _, _ -> },
     onDeleteInputRow: (bindingId: Long) -> Unit = {},
-    // ── Advanced-table cell ops (the group editor's table; see its cell-ops block) ──
-    // [onEnsureInputCell] is the one async shape here: creating the row may have to hit the
+    // ── Advanced-table command ops (the group editor's table; see its command-ops block) ──
+    // [onAddRowCommand] is the one async shape here: creating the command may have to hit the
     // database before there's a bindingId to open the command picker against.
-    onEnsureInputCell: (
+    onAddRowCommand: (
         bindingGroupId: Long,
         inputKey: String,
         type: ActivatorType,
         onReady: (bindingId: Long) -> Unit,
     ) -> Unit = { _, _, _, _ -> },
-    onClearInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
-    onCopyInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
-    onPasteInputCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit = { _, _, _ -> },
-    onMoveInputCell: (
-        bindingGroupId: Long,
-        fromKey: String, fromType: ActivatorType,
-        toKey: String, toType: ActivatorType,
-    ) -> Unit = { _, _, _, _, _ -> },
+    onDeleteRowCommand: (bindingId: Long) -> Unit = {},
+    onCopyRowCommand: (bindingId: Long) -> Unit = {},
+    /** Paste over a command, or append to the row when the target is null (the "+"). */
+    onPasteRowCommand: (targetBindingId: Long?, bindingGroupId: Long, inputKey: String) -> Unit =
+        { _, _, _ -> },
+    /** Carry a command onto a row — in this group or another — swapping with what it lands on. */
+    onMoveRowCommand: (
+        bindingId: Long,
+        toBindingGroupId: Long,
+        toInputKey: String,
+        swapWithBindingId: Long?,
+    ) -> Unit = { _, _, _, _ -> },
     /** Whether the cell clipboard holds anything — greys the tile menus' Paste. */
     cellClipboardOccupied: Boolean = false,
     // ── Group-level ops: carrying commands between input groups, and whole-group
     // copy / paste / reset (2026-09-16) ──
-    /** A cell move whose destination is in another binding group (a command carried between
-     *  input groups). */
-    onMoveInputCellAcross: (
-        fromBindingGroupId: Long, fromKey: String, fromType: ActivatorType,
-        toBindingGroupId: Long, toKey: String, toType: ActivatorType,
-    ) -> Unit = { _, _, _, _, _, _ -> },
     groupClipboard: com.mappo.data.repository.ControllerConfigRepository.InputGroupSnapshot? = null,
     onCopyInputGroup: (rows: List<Pair<Long, String>>, settingsGroupId: Long?, inputs: Boolean, settings: Boolean) -> Unit =
         { _, _, _, _ -> },
@@ -422,20 +420,19 @@ fun RemapControlsScreen(
         },
         onSetLabel = onSetInputRowDisplay,
         onConfigure = onOpenActivatorSettings,
-        // "New" on an empty cell and "Edit" on a defined one are the same flow: make sure the
-        // cell exists, then open the command picker against its binding. The ensure step is a
-        // no-op for a cell that's already there.
-        onAssignCell = { bindingGroupId, inputKey, type, current, title ->
-            onEnsureInputCell(bindingGroupId, inputKey, type) { bindingId ->
-                onEditCommand(bindingId, current, title)
+        // The "+" tile creates the command first, then opens the picker on it: the picker
+        // edits a binding, so one has to exist before it can open.
+        onAddCommand = { bindingGroupId, inputKey, type, title ->
+            onAddRowCommand(bindingGroupId, inputKey, type) { bindingId ->
+                onEditCommand(bindingId, BindingOutput.Unbound, title)
             }
         },
-        onClearCell = onClearInputCell,
-        onCopyCell = onCopyInputCell,
-        onPasteCell = onPasteInputCell,
-        onMoveCell = onMoveInputCell,
+        onDeleteCommand = onDeleteRowCommand,
+        onSetPressType = onSetInputRowPressType,
+        onCopyCommand = onCopyRowCommand,
+        onPasteCommand = onPasteRowCommand,
+        onMoveCommand = onMoveRowCommand,
         clipboardOccupied = cellClipboardOccupied,
-        onMoveCellAcross = onMoveInputCellAcross,
         groupClipboard = groupClipboard,
         onCopyGroup = onCopyInputGroup,
         onPasteGroup = { rows, settingsGroupId ->

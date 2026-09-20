@@ -188,7 +188,7 @@ fun MainScreen(
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     // Session clipboard for the advanced table's cell Copy/Paste — read here so the tile
     // menus can grey Paste rather than hiding it.
-    val cellClipboard by viewModel.inputCellClipboard.collectAsStateWithLifecycle()
+    val commandClipboard by viewModel.commandClipboard.collectAsStateWithLifecycle()
     val groupClipboard by viewModel.inputGroupClipboard.collectAsStateWithLifecycle()
     val userTemplates = remember(templates) {
         templates.filterIsInstance<TemplateRef.User>().toImmutableList()
@@ -693,25 +693,18 @@ fun MainScreen(
                         viewModel.setInputRowDisplay(bindingId, label, icon, initials)
                     },
                     onDeleteInputRow = { bindingId -> viewModel.deleteInputRow(bindingId) },
-                    onEnsureInputCell = { bindingGroupId, inputKey, type, onReady ->
-                        viewModel.ensureInputCell(bindingGroupId, inputKey, type, onReady)
+                    onAddRowCommand = { bindingGroupId, inputKey, type, onReady ->
+                        viewModel.addRowCommand(bindingGroupId, inputKey, type, onReady)
                     },
-                    onClearInputCell = { bindingGroupId, inputKey, type ->
-                        viewModel.clearInputCell(bindingGroupId, inputKey, type)
+                    onDeleteRowCommand = { bindingId -> viewModel.deleteInputRow(bindingId) },
+                    onCopyRowCommand = { bindingId -> viewModel.copyRowCommand(bindingId) },
+                    onPasteRowCommand = { targetBindingId, bindingGroupId, inputKey ->
+                        viewModel.pasteRowCommand(targetBindingId, bindingGroupId, inputKey)
                     },
-                    onCopyInputCell = { bindingGroupId, inputKey, type ->
-                        viewModel.copyInputCell(bindingGroupId, inputKey, type)
+                    onMoveRowCommand = { bindingId, toGroupId, toKey, swapWith ->
+                        viewModel.moveRowCommand(bindingId, toGroupId, toKey, swapWith)
                     },
-                    onPasteInputCell = { bindingGroupId, inputKey, type ->
-                        viewModel.pasteInputCell(bindingGroupId, inputKey, type)
-                    },
-                    onMoveInputCell = { bindingGroupId, fromKey, fromType, toKey, toType ->
-                        viewModel.moveInputCell(bindingGroupId, fromKey, fromType, toKey, toType)
-                    },
-                    cellClipboardOccupied = cellClipboard != null,
-                    onMoveInputCellAcross = { fromGroupId, fromKey, fromType, toGroupId, toKey, toType ->
-                        viewModel.moveInputCell(fromGroupId, fromKey, fromType, toKey, toType, toGroupId)
-                    },
+                    cellClipboardOccupied = commandClipboard != null,
                     groupClipboard = groupClipboard,
                     onCopyInputGroup = { rows, settingsGroupId, inputs, settings ->
                         viewModel.copyInputGroup(rows, settingsGroupId, inputs, settings)

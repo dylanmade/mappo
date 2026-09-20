@@ -336,8 +336,12 @@ internal data class RowAssignment(
 )
 
 /**
- * Resolve one row's assignments, in the advanced table's column order ([pressTypeColumns]).
- * Layer view resolves override→base per sub-input (ghost semantics), same as the table.
+ * Resolve one row's assignments — every command on the row, in the same order the advanced
+ * table stacks them ([rowCommandsFor], auto-sorted by press type). Layer view resolves
+ * override→base per sub-input (ghost semantics), same as the table.
+ *
+ * A row can hold SEVERAL commands of one press type (2026-09-20), and shows them all: the basic
+ * view is the table compacted, not a summary of it.
  *
  * **A row reads exactly as the advanced tile does** — same device glyph, same initials, same
  * label — because both resolve through [commandDisplay] (Dylan, 2026-09-20). The basic view is
@@ -358,17 +362,10 @@ internal fun rowAssignments(
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     spec: SimpleRowSpec,
-): List<RowAssignment> {
-    val groupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-        ?: viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-        ?: return emptyList()
-    return pressTypeColumns.mapNotNull { type ->
-        val activator = groupInput.firstActivatorOfType(type) ?: return@mapNotNull null
-        val binding = activator.bindings.firstOrNull() ?: return@mapNotNull null
-        if (activator.primaryOutput == BindingOutput.Unbound) return@mapNotNull null
-        val display = commandDisplay(binding, activator.outputs, config)
-        RowAssignment(type, display.line, display.lineGlyph)
-    }
+    order: CommandOrder,
+): List<RowAssignment> = rowCommandsFor(viewingSet, viewingLayer, spec, order).map { command ->
+    val display = commandDisplay(command.binding, listOf(command.output), config)
+    RowAssignment(command.type, display.line, display.lineGlyph)
 }
 
 /**
@@ -491,7 +488,7 @@ private fun assignmentCells(
     config: ControllerConfig?,
     spec: SimpleRowSpec,
 ): List<AssignmentCell> {
-    val assignments = rowAssignments(viewingSet, viewingLayer, config, spec)
+    val assignments = rowAssignments(viewingSet, viewingLayer, config, spec, LocalCommandOrder.current)
     if (assignments.isEmpty()) {
         return listOf(
             AssignmentCell(

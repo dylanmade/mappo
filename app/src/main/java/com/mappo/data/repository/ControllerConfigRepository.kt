@@ -1483,57 +1483,198 @@ class ControllerConfigRepository @Inject constructor(
     }
 
     /**
-     * Clear the cell at ([inputKey], [type]) — deletes the whole Activator, so every command
-     * under it goes, not just the one the tile was showing. The group input itself stays: other
-     * press-type cells on the same row may still be bound.
+     * Add a command of [type] to the row ([bindingGroupId], [inputKey]) and return its binding
+     * id — what the advanced view's trailing "+" tile creates before the command picker opens.
+     *
+     * An input row is a STACK of commands now (Dylan, 2026-09-20), not one slot per press type,
+     * so this APPENDS rather than ensuring a single cell: several commands may share a press
+     * type, which in the schema means several bindings under one activator. A press type that
+     * has no bucket yet gets one.
+     *
+     * An UNBOUND binding already sitting in that bucket is reused instead of a second being
+     * stacked beside it: a cancelled "New" leaves one behind, and two empties would be two
+     * invisible commands.
      */
-    suspend fun clearInputCell(bindingGroupId: Long, inputKey: String, type: ActivatorType) {
-        val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return
-        val activator = activatorDao.getByGroupInputs(listOf(groupInputId))
-            .firstOrNull { it.type == type } ?: return
-        bindingDao.deleteByActivator(activator.id)
-        activatorDao.deleteById(activator.id)
-        syncAuxButtonMode(bindingGroupId)
+    suspend fun addRowCommand(bindingGroupId: Long, inputKey: String, type: ActivatorType): Long {
+        val groupInputId = ensureGroupInputId(bindingGroupId, inputKey)
+        val siblings = activatorDao.getByGroupInputs(listOf(groupInputId))
+        val activatorId = siblings.firstOrNull { it.type == type }?.id ?: activatorDao.insert(
+            Activator(
+                groupInputId = groupInputId,
+                type = type,
+                settingsJson = "{}",
+                orderIndex = (siblings.maxOfOrNull { it.orderIndex } ?: -1) + 1,
+            ),
+        )
+        val existing = bindingDao.getByActivators(listOf(activatorId))
+        val bindingId = existing.firstOrNull { it.outputType == BindingOutputType.UNBOUND }?.id
+            ?: bindingDao.insert(
+                Binding(
+                    activatorId = activatorId,
+                    outputType = BindingOutputType.UNBOUND,
+                    args = "",
+                    orderIndex = (existing.maxOfOrNull { it.orderIndex } ?: -1) + 1,
+                ),
+            )
+        configDirtyTick.value = configDirtyTick.value + 1
+        return bindingId
+    }
+
+    /**
+     * Carry the command [bindingId] onto the row ([toBindingGroupId], [toInputKey]), keeping its
+     * own press type.
+     *
+     * [swapWithBindingId] is the command it landed ON, which goes back the other way; null means
+     * it landed on the row's "+" and is simply ADDED there (Dylan, 2026-09-20). Within a group
+     * or across them is the same operation — a command only points at its row.
+     *
+     * When both commands are the only ones in their activator, the two ACTIVATORS exchange rows
+     * instead of their bindings being reparented: that keeps each command's activator settings
+     * (long-press time, chord partner, turbo) attached to the command they were tuned for, and
+     * regenerates no identifier for something that isn't a copy. Otherwise — a bucket holding
+     * more than one command — only the binding travels, since its neighbours must stay put.
+     */
+    suspend fun moveRowCommand(
+        bindingId: Long,
+        toBindingGroupId: Long,
+        toInputKey: String,
+        swapWithBindingId: Long? = null,
+    ) {
+        if (swapWithBindingId == bindingId) return
+        val binding = bindingDao.getById(bindingId) ?: return
+        val fromActivator = activatorDao.getById(binding.activatorId) ?: return
+        val fromInputId = fromActivator.groupInputId
+        val fromGroupId = resolveGroupIdForBinding(bindingId)
+        val toInputId = ensureGroupInputId(toBindingGroupId, toInputKey)
+        val swap = swapWithBindingId?.let { bindingDao.getById(it) }
+        val swapActivator = swap?.let { activatorDao.getById(it.activatorId) }
+        // Landing on the row it already belongs to changes nothing the user can see: where a
+        // command sits in its row is the sort's business, not the move's.
+        if (toInputId == fromInputId && (swapActivator == null || swapActivator.groupInputId == fromInputId)) {
+            return
+        }
+
+        val fromAlone = bindingDao.getByActivators(listOf(fromActivator.id)).size == 1
+        val swapAlone = swapActivator != null &&
+            bindingDao.getByActivators(listOf(swapActivator.id)).size == 1
+        if (swap != null && swapActivator != null && fromAlone && swapAlone) {
+            activatorDao.update(fromActivator.copy(groupInputId = toInputId))
+            activatorDao.update(swapActivator.copy(groupInputId = fromInputId))
+        } else {
+            reparentBinding(binding, fromActivator, toInputId, fromActivator.type)
+            if (swap != null && swapActivator != null) {
+                reparentBinding(swap, swapActivator, fromInputId, swapActivator.type)
+            }
+        }
+
+        fromGroupId?.let { syncAuxButtonMode(it) }
+        if (toBindingGroupId != fromGroupId) syncAuxButtonMode(toBindingGroupId)
         configDirtyTick.value = configDirtyTick.value + 1
     }
 
     /**
-     * Move the cell at ([fromKey], [fromType]) onto ([toKey], [toType]).
+     * Move one command onto [toGroupInputId], under its bucket for [type].
      *
-     * Implemented by REPARENTING activators rather than copying their contents, so the moved
-     * cell keeps its identity — activator settings (long-press time, chord partner, turbo) and
-     * every binding under it travel with it, and no id is regenerated for something that isn't a
-     * copy. When the destination is occupied the two activators exchange places (a swap); when
-     * it's empty the source simply lands there.
-     *
-     * [toBindingGroupId] names the DESTINATION's binding group, defaulting to the source's. The
-     * basic view moves commands between input groups (2026-09-16) — Face A onto D-pad Up is two
-     * different binding groups — and reparenting works identically across them, since the
-     * activator only points at its group input.
+     * When the command is the ONLY one in its activator and the destination has no bucket of
+     * that type, the whole ACTIVATOR travels: its id and its settings (long-press time, chord
+     * partner, turbo) stay attached to the command they were tuned for, and nothing is
+     * re-created for something that isn't a copy. Otherwise the bare binding moves — its
+     * neighbours in the old bucket must stay put — and a bucket created for it inherits the old
+     * one's settings so a command split out of a tuned bucket keeps the timings it was firing
+     * with. The vacated activator goes once it holds nothing.
      */
-    suspend fun moveInputCell(
-        bindingGroupId: Long,
-        fromKey: String,
-        fromType: ActivatorType,
-        toKey: String,
-        toType: ActivatorType,
-        toBindingGroupId: Long = bindingGroupId,
+    private suspend fun reparentBinding(
+        binding: Binding,
+        fromActivator: Activator,
+        toGroupInputId: Long,
+        type: ActivatorType,
     ) {
-        if (toBindingGroupId == bindingGroupId && fromKey == toKey && fromType == toType) return
-        val fromInputId = findGroupInputId(bindingGroupId, fromKey) ?: return
-        val fromActivator = activatorDao.getByGroupInputs(listOf(fromInputId))
-            .firstOrNull { it.type == fromType } ?: return
-        val toInputId = ensureGroupInputId(toBindingGroupId, toKey)
-        val toActivator = activatorDao.getByGroupInputs(listOf(toInputId))
-            .firstOrNull { it.type == toType }
-        activatorDao.update(fromActivator.copy(groupInputId = toInputId, type = toType))
-        // Swap: the displaced activator takes the vacated slot. Read before the write above
-        // lands so we're exchanging the original pair, not the half-applied state.
-        toActivator?.let {
-            activatorDao.update(it.copy(groupInputId = fromInputId, type = fromType))
+        val siblings = activatorDao.getByGroupInputs(listOf(toGroupInputId))
+        val bucket = siblings.firstOrNull { it.type == type }
+        val nextActivatorOrder = (siblings.maxOfOrNull { it.orderIndex } ?: -1) + 1
+        if (bucket == null && bindingDao.getByActivators(listOf(fromActivator.id)).size == 1) {
+            activatorDao.update(
+                fromActivator.copy(groupInputId = toGroupInputId, type = type, orderIndex = nextActivatorOrder),
+            )
+            return
+        }
+        val targetId = bucket?.id ?: activatorDao.insert(
+            Activator(
+                groupInputId = toGroupInputId,
+                type = type,
+                settingsJson = fromActivator.settingsJson,
+                orderIndex = nextActivatorOrder,
+            ),
+        )
+        if (targetId == fromActivator.id) return
+        val nextOrder =
+            (bindingDao.getByActivators(listOf(targetId)).maxOfOrNull { it.orderIndex } ?: -1) + 1
+        bindingDao.update(binding.copy(activatorId = targetId, orderIndex = nextOrder))
+        if (bindingDao.getByActivators(listOf(fromActivator.id)).isEmpty()) {
+            activatorDao.deleteById(fromActivator.id)
+        }
+    }
+
+    /** One command on the clipboard: what it fires, what it's called, how it prints, the press
+     *  type it fires on, and the settings of the bucket it came from. */
+    data class CommandSnapshot(
+        val type: ActivatorType,
+        val outputType: BindingOutputType,
+        val args: String,
+        val label: String?,
+        val showDeviceIcon: Boolean,
+        val showDeviceInitials: Boolean,
+        val activatorSettingsJson: String,
+    )
+
+    /** Read one command for the clipboard. */
+    suspend fun readRowCommand(bindingId: Long): CommandSnapshot? {
+        val binding = bindingDao.getById(bindingId) ?: return null
+        val activator = activatorDao.getById(binding.activatorId) ?: return null
+        return CommandSnapshot(
+            type = activator.type,
+            outputType = binding.outputType,
+            args = binding.args,
+            label = binding.label,
+            showDeviceIcon = binding.showDeviceIcon,
+            showDeviceInitials = binding.showDeviceInitials,
+            activatorSettingsJson = activator.settingsJson,
+        )
+    }
+
+    /**
+     * Paste [snapshot] onto the row ([bindingGroupId], [inputKey]) — overwriting [targetBindingId]
+     * when the paste was aimed at a command, ADDING when it was aimed at the row's "+".
+     *
+     * The pasted command keeps the press type it was COPIED with, in both cases: with the press
+     * type columns gone there is no destination column to inherit one from, and a copied Long
+     * press that pasted as a Regular press would be a surprise.
+     */
+    suspend fun pasteRowCommand(
+        targetBindingId: Long?,
+        bindingGroupId: Long,
+        inputKey: String,
+        snapshot: CommandSnapshot,
+    ) {
+        val bindingId = targetBindingId
+            ?: addRowCommand(bindingGroupId, inputKey, snapshot.type)
+        val binding = bindingDao.getById(bindingId) ?: return
+        bindingDao.update(
+            binding.copy(
+                outputType = snapshot.outputType,
+                args = snapshot.args,
+                label = snapshot.label,
+                showDeviceIcon = snapshot.showDeviceIcon,
+                showDeviceInitials = snapshot.showDeviceInitials,
+            ),
+        )
+        // Onto an existing command, the press type comes across too — the clipboard carries a
+        // whole command, not just its output.
+        if (targetBindingId != null) setInputRowPressType(bindingId, snapshot.type)
+        activatorDao.getById(bindingDao.getById(bindingId)?.activatorId ?: 0L)?.let {
+            activatorDao.update(it.copy(settingsJson = snapshot.activatorSettingsJson))
         }
         syncAuxButtonMode(bindingGroupId)
-        if (toBindingGroupId != bindingGroupId) syncAuxButtonMode(toBindingGroupId)
         configDirtyTick.value = configDirtyTick.value + 1
     }
 
@@ -1560,24 +1701,6 @@ class ControllerConfigRepository @Inject constructor(
         val mode: BindingMode?,
         val settingsJson: String?,
     )
-
-    /** Read the cell at ([inputKey], [type]), or null when it's empty. */
-    suspend fun readInputCell(
-        bindingGroupId: Long,
-        inputKey: String,
-        type: ActivatorType,
-    ): InputCellSnapshot? {
-        val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return null
-        val activator = activatorDao.getByGroupInputs(listOf(groupInputId))
-            .firstOrNull { it.type == type } ?: return null
-        val binding = bindingDao.getByActivators(listOf(activator.id)).firstOrNull() ?: return null
-        return InputCellSnapshot(
-            outputType = binding.outputType,
-            args = binding.args,
-            label = binding.label,
-            activatorSettingsJson = activator.settingsJson,
-        )
-    }
 
     /**
      * Paste [snapshot] into the cell at ([inputKey], [type]), creating it if absent and
@@ -1610,7 +1733,8 @@ class ControllerConfigRepository @Inject constructor(
     // ── Whole-row / whole-group ops (the basic view's group menu, 2026-09-16) ────────────────
 
     /** Every bound cell on one row, keyed by press type. Empty when the row has none. Same
-     *  snapshot shape (and same first-binding-only rule) as [readInputCell]. */
+     *  snapshot shape, and only the FIRST command of each press type — the group-level copy
+     *  predates rows holding stacks (2026-09-20) and still carries one command per type. */
     suspend fun readRowCells(bindingGroupId: Long, inputKey: String): Map<ActivatorType, InputCellSnapshot> {
         val groupInputId = findGroupInputId(bindingGroupId, inputKey) ?: return emptyMap()
         return buildMap {

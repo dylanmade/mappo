@@ -135,19 +135,25 @@ internal fun RemapStage(
     val focusHandle: (CellKey) -> FocusRequester = { key ->
         cellFocus.getOrPut(key) { FocusRequester() }
     }
+    val order = LocalCommandOrder.current
+    // How many tiles a row shows — its commands plus the "+". The stepper asks for this because
+    // rows are variable-length stacks now (2026-09-20), not six fixed press-type columns.
+    val slotsOf: (RemapSimpleGroup, SimpleRowSpec) -> Int = { _, spec ->
+        rowSlotCount(rowCommandsFor(viewingSet, viewingLayer, spec, order).size)
+    }
+    val stepTarget: (CellKey, Int, Int) -> CellKey? = { key, dRow, dCol ->
+        stepCellAcrossGroups(key, dRow, dCol, slotsOf)
+    }
     val onMoveCommitted: (CellKey, CellKey) -> Unit = { from, to ->
         // Rows resolve INDIVIDUALLY: one card can span two sources (the shoulder is a trigger
-        // plus a bumper), and those are separate binding groups.
-        val fromId = viewingSet?.presetFor(from.source)?.group?.group?.id
+        // plus a bumper), and those are separate binding groups. A command only points at its
+        // row, so carrying one across groups is the same operation as moving it within one.
+        val lifted = rowCommandsFor(viewingSet, viewingLayer, from.row, order).getOrNull(from.slot)
+        val landedOn = rowCommandsFor(viewingSet, viewingLayer, to.row, order).getOrNull(to.slot)
         val toId = viewingSet?.presetFor(to.source)?.group?.group?.id
-        if (fromId != null && toId != null) {
-            if (fromId == toId) {
-                callbacks.onMoveCell(fromId, from.inputKey, from.type, to.inputKey, to.type)
-            } else {
-                // Across binding groups — both "carried to another card" and "carried between
-                // the two sources sharing one card" (trigger ↔ bumper).
-                callbacks.onMoveCellAcross(fromId, from.inputKey, from.type, toId, to.inputKey, to.type)
-            }
+        if (lifted != null && toId != null) {
+            // A null landing command means the row's "+": an ADD, not a swap.
+            callbacks.onMoveCommand(lifted.id, toId, to.inputKey, landedOn?.id)
         }
     }
 
@@ -256,6 +262,7 @@ internal fun RemapStage(
                             onLookAt = { if (group != focus) onLookAt(group) },
                             onClose = onClose,
                             moveState = moveState,
+                            stepTarget = stepTarget,
                             onMoveCommitted = onMoveCommitted,
                             focusHandle = focusHandle,
                             focusRequester = entryFocus.takeIf { group == focus },
@@ -570,6 +577,7 @@ private fun StageAdvancedContent(
     onLookAt: () -> Unit,
     onClose: () -> Unit,
     moveState: com.mappo.ui.component.MoveModeState<CellKey>,
+    stepTarget: (CellKey, Int, Int) -> CellKey?,
     onMoveCommitted: (CellKey, CellKey) -> Unit,
     focusHandle: (CellKey) -> FocusRequester,
     focusRequester: FocusRequester?,
@@ -606,7 +614,7 @@ private fun StageAdvancedContent(
                     modifier = Modifier.fillMaxSize(),
                     chrome = focused,
                     moveState = moveState,
-                    stepTarget = ::stepCellAcrossGroups,
+                    stepTarget = stepTarget,
                     onMoveCommitted = onMoveCommitted,
                     focusHandle = focusHandle,
                     focusRequester = focusRequester,

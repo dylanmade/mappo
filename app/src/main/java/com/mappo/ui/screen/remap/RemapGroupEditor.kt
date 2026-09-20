@@ -49,6 +49,11 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -132,6 +137,9 @@ import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.mappo.ui.minput.MinputButton
+import com.mappo.ui.minput.MinputDialog
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -182,33 +190,40 @@ internal class RemapGroupEditorCallbacks(
     ) -> Unit,
     val onResetGroup: (bindingGroupId: Long) -> Unit,
     val onConfigure: (activatorId: Long, title: String) -> Unit,
-    // ── Cell ops (see ControllerConfigRepository's advanced-table block) ──
-    /** Ensure the cell exists, then open the command picker against it. Drives both the empty
-     *  tile's "New" and the defined tile's "Edit" — the difference is only whether the ensure
-     *  step has anything to do. */
-    val onAssignCell: (
+    // ── Command ops (see ControllerConfigRepository's input-row block) ──
+    /** Add a command of [type] to a row and open the command picker on it — what the row's
+     *  trailing "+" tile does. The creation has to land first: the picker edits a binding. */
+    val onAddCommand: (
         bindingGroupId: Long,
         inputKey: String,
         type: ActivatorType,
-        current: BindingOutput,
         title: String,
     ) -> Unit,
-    val onClearCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit,
-    val onCopyCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit,
-    val onPasteCell: (bindingGroupId: Long, inputKey: String, type: ActivatorType) -> Unit,
-    val onMoveCell: (
-        bindingGroupId: Long,
-        fromKey: String, fromType: ActivatorType,
-        toKey: String, toType: ActivatorType,
+    /** Delete one command. Its activator goes too if that leaves it empty. */
+    val onDeleteCommand: (bindingId: Long) -> Unit,
+    /** Which press type a command fires on. */
+    val onSetPressType: (bindingId: Long, type: ActivatorType) -> Unit,
+    val onCopyCommand: (bindingId: Long) -> Unit,
+    /** Paste over [bindingId], or APPEND to the row when it is null (the "+" tile's Paste). */
+    val onPasteCommand: (bindingId: Long?, bindingGroupId: Long, inputKey: String) -> Unit,
+    /**
+     * Carry a command onto a row — within a group or across them, which is the same operation
+     * since a command only points at its row.
+     *
+     * [swapWithBindingId] is the command it lands ON, which goes back the other way; null means
+     * it landed on the row's "+" and is simply ADDED there (Dylan, 2026-09-20). Either way the
+     * moved command keeps its own press type, and the auto-sort decides where in the row it
+     * comes to rest.
+     */
+    val onMoveCommand: (
+        bindingId: Long,
+        toBindingGroupId: Long,
+        toInputKey: String,
+        swapWithBindingId: Long?,
     ) -> Unit,
     /** Whether anything has been copied this session — greys Paste rather than hiding it. */
     val clipboardOccupied: Boolean,
     // ── Group-level ops (2026-09-16): carrying commands between groups, whole-group copy/reset ──
-    /** [onMoveCell] across binding groups — a command carried from one input group to another. */
-    val onMoveCellAcross: (
-        fromBindingGroupId: Long, fromKey: String, fromType: ActivatorType,
-        toBindingGroupId: Long, toKey: String, toType: ActivatorType,
-    ) -> Unit = { _, _, _, _, _, _ -> },
     /** The group menu's clipboard, or null when nothing has been copied. */
     val groupClipboard: com.mappo.data.repository.ControllerConfigRepository.InputGroupSnapshot? = null,
     /** Copy a group: its rows as (bindingGroupId, sub-input key) in display order, the binding
@@ -221,14 +236,17 @@ internal class RemapGroupEditorCallbacks(
 )
 
 /**
- * The table's press-type columns, in the user's specified order. Note this is NOT
- * [pressTypeOrder] (the canonical Steam render order) — the table puts Chord before the
+ * **The order a row's commands are auto-sorted into** — the order the table's fixed press-type
+ * columns used to run in, kept as a sort when the columns went (Dylan, 2026-09-20). Also the
+ * order the type picker lists them in.
+ *
+ * Note this is NOT [pressTypeOrder] (the canonical Steam render order): Chord comes before the
  * Down/Up edge triggers because the edge pair reads as a tail-end special case.
  *
  * `SOFT_PRESS` is absent by design: it's a sub-input (the trigger's "soft_press" row), not an
  * activator the user picks. See `feedback_soft_press_unified_to_soft_pull`.
  */
-internal val pressTypeColumns = listOf(
+internal val pressTypeSortOrder = listOf(
     ActivatorType.FULL_PRESS,
     ActivatorType.LONG_PRESS,
     ActivatorType.DOUBLE_PRESS,
@@ -274,7 +292,14 @@ internal fun ActivatorType.columnColors(): PressTypeColors {
 internal data class CellKey(
     val group: RemapSimpleGroup,
     val row: SimpleRowSpec,
-    val type: ActivatorType,
+    /**
+     * Which TILE of the row, counting outward from the input glyph. A row holds its commands
+     * followed by one "+" slot, so the last index is always the add affordance (2026-09-20) —
+     * where the six fixed press-type columns used to be, and why this replaced the
+     * `ActivatorType` a cell used to be keyed by. What a slot HOLDS is data, not identity:
+     * resolve it through the row's commands (see [rowCommandsFor]).
+     */
+    val slot: Int,
 ) {
     val inputKey: String get() = row.subInputKey
     val source: InputSource get() = row.source
@@ -302,7 +327,7 @@ internal fun RemapGroupEditor(
     // both ends' binding groups, and focus handles it can reach any cell through. On its own,
     // an editor keeps the single-table behaviour these defaults describe.
     moveState: MoveModeState<CellKey> = rememberMoveModeState(),
-    stepTarget: (CellKey, Int, Int) -> CellKey? = ::stepCellWithinGroup,
+    stepTarget: ((CellKey, Int, Int) -> CellKey?)? = null,
     onMoveCommitted: ((from: CellKey, to: CellKey) -> Unit)? = null,
     focusHandle: ((CellKey) -> FocusRequester)? = null,
     // Landing spot for controller focus when the editor opens (and after a tap wipes focus):
@@ -334,10 +359,22 @@ internal fun RemapGroupEditor(
     val ownFocusHandles = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
     val cellFocusHandle = focusHandle
         ?: { key -> ownFocusHandles.getOrPut(key) { FocusRequester() } }
+    // A standalone editor resolves its own move: which command was lifted, and what (if
+    // anything) it landed on. The scene passes its own, which can reach across groups.
+    val order = LocalCommandOrder.current
+    // How many tiles each row has — the commands plus its "+". Rows differ in length now, so
+    // the stepper is handed this rather than assuming a fixed column count.
+    val slotsOf: (RemapSimpleGroup, SimpleRowSpec) -> Int = { _, spec ->
+        rowSlotCount(rowCommandsFor(viewingSet, viewingLayer, spec, order).size)
+    }
+    val stepper = stepTarget
+        ?: { key: CellKey, dRow: Int, dCol: Int -> stepCellWithinGroup(key, dRow, dCol, slotsOf) }
     val commitMove = onMoveCommitted ?: { from: CellKey, to: CellKey ->
-        val bindingGroupId = viewingSet?.presetFor(from.source)?.group?.group?.id
-        if (bindingGroupId != null) {
-            callbacks.onMoveCell(bindingGroupId, from.inputKey, from.type, to.inputKey, to.type)
+        val lifted = rowCommandsFor(viewingSet, viewingLayer, from.row, order).getOrNull(from.slot)
+        val landedOn = rowCommandsFor(viewingSet, viewingLayer, to.row, order).getOrNull(to.slot)
+        val bindingGroupId = viewingSet?.presetFor(to.source)?.group?.group?.id
+        if (lifted != null && bindingGroupId != null) {
+            callbacks.onMoveCommand(lifted.id, bindingGroupId, to.inputKey, landedOn?.id)
         }
     }
     val headerKebabFocus = remember { FocusRequester() }
@@ -438,7 +475,7 @@ internal fun RemapGroupEditor(
             upTarget = if (chrome) tableUpTarget else FocusRequester.Default,
             focusRequester = focusRequester.takeIf { editable },
             moveState = moveState,
-            stepTarget = stepTarget,
+            stepTarget = stepper,
             onMoveCommitted = commitMove,
             focusHandle = cellFocusHandle,
         )
@@ -464,6 +501,16 @@ private data class LabelEdit(
  * Alignment between the two halves is structural, not synchronized: both use the same fixed
  * [TileHeight] and [TileRowGap], so they can't drift.
  */
+/** One row of the table, resolved: its spec, whether a layer overrides it, and its commands. */
+private data class RowCommands(
+    val spec: SimpleRowSpec,
+    val overridden: Boolean,
+    val commands: List<RowCommand>,
+)
+
+/** What the "Type" verb is editing: one command, and the press type it currently fires on. */
+private data class TypeEdit(val bindingId: Long, val current: ActivatorType)
+
 @Composable
 private fun AdvancedTable(
     group: RemapSimpleGroup,
@@ -484,45 +531,46 @@ private fun AdvancedTable(
 ) {
     // The flanking groups on the LEFT of the controller read as the right flank's reflection
     // (Dylan, 2026-09-17), exactly as their basic-view boxes do: input glyph pinned to the
-    // card's right edge, the press columns running outward to the left from it. Only the
-    // ORDER and the side change — the header bar above stays as it is.
+    // card's right edge, the commands running outward to the left from it. Only the ORDER and
+    // the side change — the header bar above stays as it is. A slot's INDEX always counts
+    // outward from the glyph, so everything keyed on it (stepping, scroll offsets) is untouched
+    // by mirroring.
     val mirrored = group.editorMirrored()
-    val columns = remember(mirrored) { if (mirrored) pressTypeColumns.reversed() else pressTypeColumns }
-    // Which way a column step moves a tile on screen. Column INDEX always counts outward from
-    // the glyph, so everything keyed on the index (scroll offsets, stepping) is unchanged by
-    // mirroring; only what the user SEES flips.
     val columnDirection = if (mirrored) -1 else 1
+    val order = LocalCommandOrder.current
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
-    // The grid has gutters between rows (and between columns), which belong to no cell. Without
+    // The grid has gutters between rows (and between tiles), which belong to no cell. Without
     // a tolerance a finger crossing one resolves to nothing and the drop target snaps back to
-    // the origin — visible as the landing marker flickering home mid-drag. Sized to the widest
-    // gutter so any point inside one resolves to whichever cell it's nearest, and generously
-    // enough to keep working if the gaps grow.
+    // the origin — visible as the landing marker flickering home mid-drag.
     moveState.hitTolerancePx = with(density) { maxOf(TileRowGap, TileGap).toPx() }
-    // What the "Label" verb is editing. The table has no resting label FIELD any more (the cell
-    // renders the label as overline text), so the editor dialog is summoned directly rather
-    // than by a MinputTextField pill.
+    // What the "Label" and "Type" verbs are editing. Both are summoned from a tile's menu, and
+    // both live here rather than on the tile so they survive the menu closing.
     var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
+    var typeTarget by remember { mutableStateOf<TypeEdit?>(null) }
 
-    // Does a cell actually hold a command? An EMPTY cell is behaviorally empty as far as a
-    // move is concerned — it's a slot, not a tile — so it must not slide around during a swap
-    // preview. (It did: the "+" glyphs shuffled with everything else, which read as though
-    // blank space were being dragged about.)
-    fun isDefined(key: CellKey): Boolean {
-        val groupInput = viewingLayer?.presetFor(key.source)?.group?.inputByKey(key.inputKey)
-            ?: viewingSet?.presetFor(key.source)?.group?.inputByKey(key.inputKey)
-        val activator = groupInput?.firstActivatorOfType(key.type) ?: return false
-        return activator.bindings.firstOrNull() != null &&
-            activator.primaryOutput != BindingOutput.Unbound
+    // Every row's commands, resolved ONCE for the whole composition — the tiles, the slot
+    // counts the d-pad clamps against, the move's identities and the drop rules all read this
+    // one list, so they cannot disagree about what a row holds.
+    val rows = group.rows.map { spec ->
+        val layerGroupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+        val baseGroupInput = viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
+        RowCommands(
+            spec = spec,
+            overridden = layerGroupInput != null,
+            commands = (layerGroupInput ?: baseGroupInput).rowCommands(order),
+        )
     }
+    fun rowAt(spec: SimpleRowSpec): RowCommands? = rows.firstOrNull { it.spec == spec }
+    /** The command a cell holds, or null for the row's trailing "+" slot. */
+    fun commandAt(key: CellKey): RowCommand? =
+        rowAt(key.row)?.commands?.getOrNull(key.slot)
 
     fun cellAt(key: CellKey): Pair<Int, Int>? {
         val r = group.rows.indexOf(key.row).takeIf { it >= 0 } ?: return null
-        val c = pressTypeColumns.indexOf(key.type).takeIf { it >= 0 } ?: return null
-        return r to c
+        return r to key.slot
     }
 
     fun stepMoveTarget(dRow: Int, dCol: Int) {
@@ -548,17 +596,9 @@ private fun AdvancedTable(
     fun bindingGroupIdFor(spec: SimpleRowSpec): Long? =
         viewingSet?.presetFor(spec.source)?.group?.group?.id
 
-    // The move being previewed. Everything visual (displacement, z-order, vacated slot) reads
-    // THESE rather than moveState's fields directly, so there is one place to change if the
-    // preview ever needs to outlive the gesture again.
-    //
-    // It does NOT need to today: `MainViewModel.moveInputCell` applies the move optimistically
-    // to the rendered config, so by the frame the preview drops, the cells already hold their
-    // new contents. An earlier attempt held the preview across the DB roundtrip instead; that
-    // only moved the problem, since the held displacement would then be applied on top of the
-    // already-correct data.
-    // Scoped to this table: a command carried INTO another group displaces nothing here, and
-    // the vacated slot belongs to whichever table the command was lifted from.
+    // The move being previewed. Everything visual (displacement, z-order) reads THESE rather
+    // than moveState's fields directly. Scoped to this table: a command carried INTO another
+    // group displaces nothing here.
     val previewOrigin = moveState.origin?.takeIf { it.group == group }
     val previewTarget = moveState.target?.takeIf { it.group == group }
 
@@ -575,22 +615,11 @@ private fun AdvancedTable(
         // No focus handling here, deliberately. On the controller path focus already TRACKS the
         // drop target (see stepMoveTarget), so by the time a move commits it is on the
         // destination — nothing to move, and nothing that could lag a frame behind the data.
-        // On the touch path there is no focus ring to maintain, and seating one on a drop would
-        // put a controller cursor on screen in the middle of a finger gesture.
     }
 
     // Viewport of the horizontally scrolling body, in window space — the frame the pointer's
     // position is compared against for edge-scrolling.
     var hViewport by remember { mutableStateOf<Rect?>(null) }
-
-
-    // Does this cell show the empty-slot "+"? Every cell with no command — plus the slot a
-    // lifted tile has vacated, which would otherwise read as a hole in the grid while you
-    // carry its tile somewhere else. (When the drop target is occupied, that tile slides in
-    // and covers this anyway; the "+" layer sits underneath.)
-    fun showsSlot(key: CellKey): Boolean =
-        !isDefined(key) || (previewOrigin != null && key == previewOrigin)
-
 
     // GREEN marks where the lifted tile will land, BLUE where it was picked up from; green wins
     // when they're the same cell, which is how "put it back where I found it" reads as a real
@@ -607,9 +636,6 @@ private fun AdvancedTable(
     // This is the swap PREVIEW: the lifted tile slides toward the drop target and the tile
     // currently there slides back into the vacated slot, so the exchange is visible before
     // it's committed — and visibly undone the moment the target moves on.
-    //
-    // Grid steps rather than measured positions because every cell is a fixed size; there is
-    // nothing to measure.
     fun displacementFor(key: CellKey): DpOffset {
         val origin = previewOrigin ?: return DpOffset.Zero
         val target = previewTarget ?: return DpOffset.Zero
@@ -617,8 +643,8 @@ private fun AdvancedTable(
         val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
         val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
         val (row, col) = cellAt(key) ?: return DpOffset.Zero
-        // Mirrored tables lay their columns out right-to-left, so a step toward a higher
-        // column index moves a tile the other way on screen.
+        // Mirrored tables lay their slots out right-to-left, so a step toward a higher slot
+        // index moves a tile the other way on screen.
         val stepX = (TileWidth + TileGap) * columnDirection
         val stepY = TileHeight + TileRowGap
         return when (key) {
@@ -628,17 +654,18 @@ private fun AdvancedTable(
                 if (moveState.pointerDriven) DpOffset.Zero
                 else DpOffset(stepX * (targetCol - col), stepY * (targetRow - row))
             // The displaced occupant takes the vacated slot — but only if there IS one.
-            // Dropping onto empty space is a relocation, not a swap, so nothing comes back
-            // the other way.
+            // Dropping onto a row's "+" is an ADD, not a swap, so nothing comes back the
+            // other way.
             target ->
-                if (isDefined(target)) DpOffset(stepX * (originCol - col), stepY * (originRow - row))
-                else DpOffset.Zero
+                if (commandAt(target) != null) {
+                    DpOffset(stepX * (originCol - col), stepY * (originRow - row))
+                } else DpOffset.Zero
             else -> DpOffset.Zero
         }
     }
 
     // Keep the drop target on screen. A controller move walks the target with the d-pad and
-    // will happily walk it off the visible columns; there is no free hand to scroll with, so
+    // will happily walk it off the visible slots; there is no free hand to scroll with, so
     // the table follows the target instead.
     LaunchedEffect(moveState.target, moveState.active) {
         val target = moveState.target.takeIf { moveState.active && it?.group == group }
@@ -648,9 +675,9 @@ private fun AdvancedTable(
         val stepY = with(density) { (TileHeight + TileRowGap).toPx() }
         val cellW = with(density) { TileWidth.toPx() }
         val cellH = with(density) { TileHeight.toPx() }
-        // The scroller's content starts after the table's own top padding (applied INSIDE
-        // verticalScroll) and the column-header row.
-        val headerH = with(density) { (TableVerticalPadding + ColumnHeaderHeight + HeaderToRowsGap).toPx() }
+        // The scroller's content starts after the table's own top padding, applied INSIDE
+        // verticalScroll. (There is no column-header row any more — see AdvancedTable's KDoc.)
+        val headerH = with(density) { TableVerticalPadding.toPx() }
 
         val left = col * stepX
         if (left < hScroll.value) {
@@ -668,7 +695,7 @@ private fun AdvancedTable(
     }
 
     // Edge-scroll during a FINGER drag: the target is resolved by hit-testing whatever is
-    // under the pointer, so without this a touch user simply cannot reach a column that isn't
+    // under the pointer, so without this a touch user simply cannot reach a slot that isn't
     // already on screen. Holding near an edge scrolls, and the hit test re-runs each frame so
     // the target keeps up with the cells moving under a stationary finger.
     LaunchedEffect(moveState.pointerDriven) {
@@ -694,36 +721,26 @@ private fun AdvancedTable(
         }
     }
 
+    /** The slot indices of a row, laid out in the order they are DRAWN. */
+    fun slotOrder(row: RowCommands): List<Int> {
+        val slots = (0 until rowSlotCount(row.commands.size)).toList()
+        return if (mirrored) slots.reversed() else slots
+    }
+
     // The frozen glyph column ("column zero"). A lambda because a MIRRORED table places it on
     // the other side of the body — see [mirrored].
     val glyphColumn: @Composable () -> Unit = {
-        Column {
-            // "Input" heads the glyphs the way each press type heads its column — the header row
-            // now names every column of the table, its frozen one included (Dylan, 2026-09-18).
-            Box(
-                modifier = Modifier.width(GlyphColumnWidth).height(ColumnHeaderHeight),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "Input".uppercase(),
-                    style = minputOverlineTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.height(HeaderToRowsGap))
-            Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                group.rows.forEach { spec ->
-                    Box(
-                        modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        InputGlyphs.SubInputGlyph(
-                            source = spec.source,
-                            subInputKey = spec.subInputKey,
-                            size = TableGlyphSize,
-                        )
-                    }
+        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+            group.rows.forEach { spec ->
+                Box(
+                    modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    InputGlyphs.SubInputGlyph(
+                        source = spec.source,
+                        subInputKey = spec.subInputKey,
+                        size = TableGlyphSize,
+                    )
                 }
             }
         }
@@ -747,8 +764,7 @@ private fun AdvancedTable(
                     if (moveState.target?.group != group) return@onKeyEvent false
 
                     // Activate FIRST, and on the key's release — which is why this sits above
-                    // the key-down filter below. (It didn't, once, and the filter ate every
-                    // confirm before this branch could see it.)
+                    // the key-down filter below.
                     if (event.key in TileActivateKeys) {
                         if (event.type == KeyEventType.KeyUp) {
                             val wasLiftingPress = liftHeld
@@ -757,8 +773,7 @@ private fun AdvancedTable(
                             // target moved while it was held — ordinary drag-and-drop. Released
                             // without having moved, it reads as the user taking their thumb off
                             // a tile they've picked up to look around with, so the move stays
-                            // live and a later press confirms. That later press is also how a
-                            // tile gets put back down exactly where it came from.
+                            // live and a later press confirms.
                             val movedWhileHeld = moveState.target != moveState.origin
                             if (!wasLiftingPress || movedWhileHeld) {
                                 commitMove(moveState.commit())
@@ -803,7 +818,7 @@ private fun AdvancedTable(
                     Spacer(Modifier.width(TileGap))
                 }
 
-                // ── Scrolling body: header row + cells ────────────────────
+                // ── Scrolling body ────────────────────────────────────────
                 MinputOverflowScroll(
                     state = hScroll,
                     orientation = Orientation.Horizontal,
@@ -815,26 +830,17 @@ private fun AdvancedTable(
                         .weight(1f, fill = false)
                         .onGloballyPositioned { hViewport = it.boundsInWindow() },
                 ) {
-                    // LAYER 0 — the empty-slot "+" glyphs, drawn beneath EVERY tile.
+                    // LAYER 0 — the move markers, drawn beneath EVERY tile.
                     //
-                    // They live in their own layer rather than inside the empty cells because
-                    // z-order between tiles is per-Row (zIndex only orders siblings), so a
-                    // tile sliding into another row would draw UNDER that row's cells — and a
-                    // "+" would sit on top of a command. A slot is background; it can never be
-                    // above a tile now, by construction.
-                    Column {
-                        Spacer(Modifier.height(ColumnHeaderHeight + HeaderToRowsGap))
-                        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                        group.rows.forEach { spec ->
+                    // They live in their own layer rather than on the cells because z-order
+                    // between tiles is per-Row (zIndex only orders siblings), so a marker drawn
+                    // on the origin CELL sat above the tile sliding into it. Down here nothing
+                    // can get underneath a tile.
+                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                        rows.forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                                columns.forEach { type ->
-                                    val key = CellKey(group, spec, type)
-                                    // Move markers live HERE, in the background layer, not on
-                                    // the cell: z-order between cells is per-Row, and the
-                                    // lifted tile's row outranks every other, so a marker
-                                    // drawn on the origin CELL sat above the tile sliding into
-                                    // it. Down here nothing can get underneath a tile.
-                                    val marker = moveMarkerFor(key)
+                                slotOrder(row).forEach { slot ->
+                                    val marker = moveMarkerFor(CellKey(group, row.spec, slot))
                                     Box(
                                         modifier = Modifier
                                             .width(TileWidth)
@@ -846,41 +852,16 @@ private fun AdvancedTable(
                                                         .background(marker)
                                                 } else Modifier,
                                             ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        if (showsSlot(key)) {
-                                            Icon(
-                                                Icons.Filled.Add,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(EmptyTilePlusSize),
-                                                // Alpha rides in the palette color itself —
-                                                // no extra .alpha() here, or the value in
-                                                // Theme.kt would stop being what renders.
-                                                tint = type.columnColors().plus,
-                                            )
-                                        }
-                                    }
+                                    )
                                 }
                             }
                         }
-                        }
                     }
 
-                    // LAYER 1 — header + the tiles themselves.
-                    Column {
-                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                            columns.forEach { type -> PressColumnHeader(type) }
-                        }
-                        // Fixed lead-in, independent of [TileRowGap]: spacing the rows apart
-                        // must not also push the header row away from them.
-                        Spacer(Modifier.height(HeaderToRowsGap))
-                        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                        group.rows.forEachIndexed { rowIndex, spec ->
-                            // Layer view resolves override→base (ghost semantics): the layer's own
-                            // group input wins when it exists, else the base set's shows through.
-                            val layerGroupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-                            val baseGroupInput = viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-                            val groupInput = layerGroupInput ?: baseGroupInput
+                    // LAYER 1 — the tiles themselves.
+                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                        rows.forEachIndexed { rowIndex, row ->
+                            val spec = row.spec
                             val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
                             val groupId = bindingGroupIdFor(spec)
 
@@ -894,29 +875,27 @@ private fun AdvancedTable(
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(TileGap),
                             ) {
-                                columns.forEach { type ->
-                                    val cellKey = CellKey(group, spec, type)
-                                    val activator = groupInput?.firstActivatorOfType(type)
-                                    val binding = activator?.bindings?.firstOrNull()
-                                    val output = activator?.primaryOutput ?: BindingOutput.Unbound
-                                    val defined = binding != null && output != BindingOutput.Unbound
-                                    val title = "$subLabel · ${type.activatorDisplayLabel()}"
+                                slotOrder(row).forEach { slot ->
+                                    val cellKey = CellKey(group, spec, slot)
+                                    val command = row.commands.getOrNull(slot)
                                     // How this command prints — the SAME resolution the basic
-                                    // view's rows use ([commandDisplay]), so one binding reads
-                                    // the same way in both. The label appears only when the user
-                                    // typed something other than the command's own name (Dylan,
-                                    // 2026-09-19): the editor's AUTO state IS that name, so a
-                                    // label repeating it means "auto", not a second line saying
-                                    // what the first already says.
-                                    val outputs = activator?.outputs.orEmpty()
-                                    val display = commandDisplay(binding, outputs, config)
+                                    // view's rows use, so one binding reads the same way in
+                                    // both (see [commandDisplay]).
+                                    val display = command?.let {
+                                        commandDisplay(it.binding, listOf(it.output), config)
+                                    }
+                                    val type = command?.type ?: ActivatorType.FULL_PRESS
+                                    val title = "$subLabel · ${type.activatorDisplayLabel()}"
 
                                     CommandTile(
                                         colors = type.columnColors(),
-                                        output = output.takeIf { defined },
-                                        label = display.label,
-                                        outputText = display.text,
-                                        showDeviceIcon = display.glyph != null,
+                                        // The "+" slot wears no press type: it isn't a command
+                                        // yet, and colouring it would claim one.
+                                        pressType = type.takeIf { command != null },
+                                        output = command?.output,
+                                        label = display?.label,
+                                        outputText = display?.text.orEmpty(),
+                                        showDeviceIcon = display?.glyph != null,
                                         enabled = editable && groupId != null,
                                         cellKey = cellKey,
                                         moveState = moveState,
@@ -931,7 +910,7 @@ private fun AdvancedTable(
                                                 // override onto the layer), and an input the layer
                                                 // actually overrides can be handed back to base.
                                                 layerTileActions(
-                                                    overridden = layerGroupInput != null,
+                                                    overridden = row.overridden,
                                                     onEdit = {
                                                         callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
                                                     },
@@ -941,35 +920,51 @@ private fun AdvancedTable(
                                                 )
                                             } else {
                                                 tileActions(
-                                                    defined = defined,
+                                                    defined = command != null,
                                                     clipboardOccupied = callbacks.clipboardOccupied,
                                                     onEdit = {
-                                                        if (groupId != null) {
-                                                            callbacks.onAssignCell(groupId, spec.subInputKey, type, output, title)
-                                                        }
-                                                    },
-                                                    onLabel = {
-                                                        binding?.let {
-                                                            labelTarget = LabelEdit(
-                                                                bindingId = it.id,
-                                                                label = it.label.orEmpty(),
-                                                                outputs = outputs,
-                                                                showDeviceIcon = it.showDeviceIcon,
-                                                                showDeviceInitials = it.showDeviceInitials,
+                                                        if (command != null) {
+                                                            callbacks.onEditCommand(command.id, command.output, title)
+                                                        } else if (groupId != null) {
+                                                            // The "+" makes the command first, then
+                                                            // opens the picker on it — a new command
+                                                            // starts as a Regular Press and is
+                                                            // retyped from the same menu.
+                                                            callbacks.onAddCommand(
+                                                                groupId,
+                                                                spec.subInputKey,
+                                                                ActivatorType.FULL_PRESS,
+                                                                title,
                                                             )
                                                         }
                                                     },
-                                                    onSettings = { activator?.let { callbacks.onConfigure(it.activator.id, title) } },
-                                                    onCopy = {
-                                                        if (groupId != null) callbacks.onCopyCell(groupId, spec.subInputKey, type)
+                                                    onLabel = {
+                                                        command?.let {
+                                                            labelTarget = LabelEdit(
+                                                                bindingId = it.id,
+                                                                label = it.binding.label.orEmpty(),
+                                                                outputs = listOf(it.output),
+                                                                showDeviceIcon = it.binding.showDeviceIcon,
+                                                                showDeviceInitials = it.binding.showDeviceInitials,
+                                                            )
+                                                        }
                                                     },
+                                                    onType = {
+                                                        command?.let {
+                                                            typeTarget = TypeEdit(it.id, it.type)
+                                                        }
+                                                    },
+                                                    onSettings = {
+                                                        command?.let { callbacks.onConfigure(it.activator.id, title) }
+                                                    },
+                                                    onCopy = { command?.let { callbacks.onCopyCommand(it.id) } },
                                                     onPaste = {
-                                                        if (groupId != null) callbacks.onPasteCell(groupId, spec.subInputKey, type)
+                                                        if (groupId != null) {
+                                                            callbacks.onPasteCommand(command?.id, groupId, spec.subInputKey)
+                                                        }
                                                     },
                                                     onMove = { moveState.pickUp(cellKey, byPointer = false) },
-                                                    onClear = {
-                                                        if (groupId != null) callbacks.onClearCell(groupId, spec.subInputKey, type)
-                                                    },
+                                                    onClear = { command?.let { callbacks.onDeleteCommand(it.id) } },
                                                 )
                                             }
                                         },
@@ -983,16 +978,13 @@ private fun AdvancedTable(
                                                 } else Modifier,
                                             )
                                             .then(
-                                                if (focusRequester != null && rowIndex == 0 &&
-                                                    type == ActivatorType.FULL_PRESS
-                                                ) {
+                                                if (focusRequester != null && rowIndex == 0 && slot == 0) {
                                                     Modifier.focusRequester(focusRequester)
                                                 } else Modifier,
                                             ),
                                     )
                                 }
                             }
-                        }
                         }
                     }
                 }
@@ -1037,57 +1029,120 @@ private fun AdvancedTable(
                 onClose = { labelTarget = null },
             )
         }
+        typeTarget?.let { target ->
+            PressTypeDialog(
+                current = target.current,
+                onPick = { type -> callbacks.onSetPressType(target.bindingId, type) },
+                onClose = { typeTarget = null },
+            )
+        }
     }
 }
 
 /**
- * Column header: the press type's full name in the overline treatment, wearing the column accent
- * so the header reads as the head of its colored stack.
+ * The "Type" verb's picker: which press type a command fires on.
  *
- * The concept glyph that used to lead it went on 2026-09-18 (Dylan), along with the abbreviated
- * names — six icons across a row read as a toolbar, and the words now say the whole thing
- * ([columnLabel]).
+ * A stop-gap by design (Dylan, 2026-09-20) — the per-command configuration page will own this
+ * eventually. It lives in the tile menu so the press-type LOOK can be worked on now: each type
+ * shows the glyph and color the tile will wear, so picking one is picking a tile.
  */
 @Composable
-private fun PressColumnHeader(type: ActivatorType) {
-    Box(
-        modifier = Modifier.width(TileWidth).height(ColumnHeaderHeight),
-        contentAlignment = Alignment.Center,
-    ) {
+private fun PressTypeDialog(
+    current: ActivatorType,
+    onPick: (ActivatorType) -> Unit,
+    onClose: () -> Unit,
+) {
+    MinputDialog(onDismissRequest = onClose) {
         Text(
-            text = type.columnLabel().uppercase(),
+            text = "PRESS TYPE",
             style = minputOverlineTextStyle(),
-            // The neutral column takes the THEME token rather than the palette's approximation
-            // of it, so "REGULAR PRESS" matches the "INPUT" caption and the header's MODE
-            // caption exactly (Dylan, 2026-09-19). Every other column wears its own accent.
-            color = if (type == ActivatorType.FULL_PRESS) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                type.columnColors().header
-            },
-            maxLines = 1,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(TypeDialogTitleGap))
+        pressTypeSortOrder.forEach { type ->
+            val colors = type.columnColors()
+            val selected = type == current
+            val shape = RoundedCornerShape(TypeDialogRowCorner)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(if (selected) colors.tile else Color.Transparent, shape)
+                    .clickable(onClickLabel = type.columnLabel()) {
+                        onPick(type)
+                        onClose()
+                    }
+                    .padding(horizontal = TypeDialogRowPadding, vertical = TypeDialogRowPadding / 2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // The glyph box is reserved even for Regular Press, which has none by design —
+                // the names must still line up with each other.
+                Box(
+                    modifier = Modifier.size(TilePressGlyphSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    type.pressIcon()?.let { icon ->
+                        Icon(icon, contentDescription = null, tint = colors.icon)
+                    }
+                }
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = type.columnLabel(),
+                        style = minputMiniTextStyle(),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = type.helperText(),
+                        style = minputOverlineTextStyle(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (selected) {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = "Current",
+                        modifier = Modifier.size(MinputPillIconSize),
+                        tint = colors.icon,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(TypeDialogTitleGap))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+        ) {
+            MinputButton(text = "Cancel", onClick = onClose)
+        }
     }
 }
 
 /**
- * One cell.
+ * One tile — a command, or the row's trailing "+".
  *
- * **Defined** ([output] non-null): a tall rounded button on the column's accent-tinted surface,
- * carrying the output glyph ahead of a stack of (optional) label over output text. The label
- * takes the overline treatment above the output's ordinary mini text — no separate label FIELD
- * exists any more, which is what bought the height.
+ * **A command** ([output] non-null): a capsule on its press type's accent-tinted surface, led
+ * by that press type's glyph, carrying a stack of (optional) label over the output line. The
+ * leading glyph is how a tile says which press type it is now that the columns are gone (Dylan,
+ * 2026-09-20): it is left-aligned, larger than the output's own device glyph, and wears the
+ * palette's [PressTypeColors.icon] rather than the tile's tint so it reads ON the tile instead
+ * of dissolving into it. **Regular Press deliberately has no glyph** — it is the ordinary case,
+ * and an icon for "nothing special" is noise on the tile the user sees most.
  *
- * **Empty** ([output] null): transparent, strokeless, a dimmed "+" in the column accent. The
- * absence of any chrome is the signal — an empty cell shouldn't compete with real assignments
- * for attention across a six-column row.
+ * **The "+"** ([output] null): transparent, strokeless, a dimmed plus. The absence of any
+ * chrome is the signal — the create affordance shouldn't compete with the commands beside it.
  *
- * Output glyph and text deliberately do NOT take the column accent (readability); only the
- * container tint, the header, and the empty "+" carry it.
+ * Output glyph and text deliberately do NOT take the press accent (readability); the container
+ * tint, the press glyph and the "+" carry it.
  */
 @Composable
 private fun CommandTile(
     colors: PressTypeColors,
+    /** The press type whose glyph leads the tile, or null for Regular Press and the "+". */
+    pressType: ActivatorType?,
     output: BindingOutput?,
     label: String?,
     /** The command's name as it should print — device initials already applied. */
@@ -1330,52 +1385,75 @@ private fun CommandTile(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        // An empty cell draws NOTHING — it is a transparent, interactive slot. Its "+" is
-        // painted by the table's background slot layer, a whole layer below every tile, so a
-        // tile sliding past during a move can never end up underneath one.
-        if (output != null) {
-            // The device glyph belongs to the COMMAND line, not to the tile (Dylan,
-            // 2026-09-19): spanning both rows it read as an icon for the label as well, and
-            // left the label hanging off the start of the thing it names. The label now sits
-            // centred OVER its command.
-            Column(
-                modifier = Modifier.padding(horizontal = TileContentPadding),
-                horizontalAlignment = Alignment.CenterHorizontally,
+        if (output == null) {
+            // The row's create affordance. A plus and nothing else: it is a slot, not a command.
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = null,
+                modifier = Modifier.size(EmptyTilePlusSize),
+                // Alpha rides in the palette color itself — no extra .alpha() here, or the
+                // value in Theme.kt would stop being what renders.
+                tint = colors.plus,
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = TileContentPadding),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (label != null) {
-                    Text(
-                        text = label.uppercase(),
-                        style = minputOverlineTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                // The press type's own glyph, at the tile's start edge. Absent on Regular Press,
+                // and the text simply takes the whole tile then rather than sitting beside a gap.
+                pressType?.pressIcon()?.let { icon ->
+                    Icon(
+                        icon,
+                        contentDescription = pressType.columnLabel(),
+                        modifier = Modifier.size(TilePressGlyphSize),
+                        tint = colors.icon,
                     )
+                    Spacer(Modifier.width(TilePressGlyphGap))
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
+                // The device glyph belongs to the COMMAND line, not to the tile (Dylan,
+                // 2026-09-19): spanning both rows it read as an icon for the label as well, and
+                // left the label hanging off the start of the thing it names. The label now sits
+                // centred OVER its command.
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    if (showDeviceIcon) {
-                        InputGlyphs.outputPainter(output)?.let { painter ->
-                            Icon(
-                                painter,
-                                contentDescription = null,
-                                modifier = Modifier.size(TileOutputGlyphSize),
-                                tint = LocalContentColor.current,
-                            )
-                            Spacer(Modifier.width(MinputGlyphLabelGap))
-                        }
+                    if (label != null) {
+                        Text(
+                            text = label.uppercase(),
+                            style = minputOverlineTextStyle(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    Text(
-                        text = outputText,
-                        style = minputMiniTextStyle(),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        // ALWAYS one line, label or no label. A wrapped command pushed the
-                        // glyph off-centre and made a labelled tile and an unlabelled one
-                        // read as different components; ellipsis is the honest overflow.
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        if (showDeviceIcon) {
+                            InputGlyphs.outputPainter(output)?.let { painter ->
+                                Icon(
+                                    painter,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(TileOutputGlyphSize),
+                                    tint = LocalContentColor.current,
+                                )
+                                Spacer(Modifier.width(MinputGlyphLabelGap))
+                            }
+                        }
+                        Text(
+                            text = outputText,
+                            style = minputMiniTextStyle(),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            // ALWAYS one line, label or no label. A wrapped command pushed the
+                            // glyph off-centre and made a labelled tile and an unlabelled one
+                            // read as different components; ellipsis is the honest overflow.
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -1413,16 +1491,19 @@ private fun CommandTile(
  * Paste stays LISTED but greyed when nothing has been copied, so the menu's shape doesn't
  * shift between cells.
  *
- * **Label and Settings are additions to the specified list** (Edit / Copy / Paste / Move /
- * Clear): the table dropped the row's label field and cog, and without these two the tile's
- * label would be unsettable and activator settings — crucially the CHORD PARTNER, without
- * which a Chord cell can't function — would be unreachable.
+ * **Label, Type and Settings are additions to the specified list** (Edit / Copy / Paste / Move
+ * / Clear): the table dropped the row's label field and cog, and without these the tile's label
+ * would be unsettable, activator settings — crucially the CHORD PARTNER, without which a Chord
+ * command can't function — would be unreachable, and with the press-type columns gone there
+ * would be nowhere to say what a command fires on. Type is explicitly a stop-gap until the
+ * per-command configuration page lands (Dylan, 2026-09-20).
  */
 internal fun tileActions(
     defined: Boolean,
     clipboardOccupied: Boolean,
     onEdit: () -> Unit,
     onLabel: () -> Unit,
+    onType: () -> Unit,
     onSettings: () -> Unit,
     onCopy: () -> Unit,
     onPaste: () -> Unit,
@@ -1437,6 +1518,7 @@ internal fun tileActions(
     listOf(
         MinputAction("Edit", Icons.Filled.Edit, onClick = onEdit),
         MinputAction("Label", Icons.AutoMirrored.Filled.Label, onClick = onLabel),
+        MinputAction("Type", Icons.Filled.TouchApp, onClick = onType),
         MinputAction("Settings", Icons.Filled.Settings, onClick = onSettings),
         MinputAction("Copy", Icons.Filled.ContentCopy, onClick = onCopy),
         MinputAction("Paste", Icons.Filled.ContentPaste, enabled = clipboardOccupied, onClick = onPaste),
@@ -1465,28 +1547,39 @@ internal fun layerTileActions(
 
 /** Stable test handle for a cell. */
 /**
- * Addressable per cell: "cell:<GROUP>:<sub-input key>:<ACTIVATOR_TYPE>".
+ * Addressable per cell: "cell:<GROUP>:<SOURCE>:<sub-input key>:<slot>".
  *
  * The GROUP is in the tag because the zoomed scene holds every group's table at once
  * (2026-09-17) and sub-input keys repeat across groups — "dpad_up" belongs to the d-pad and to
- * both sticks. Without it, three cells answer to one tag.
+ * both sticks. Without it, three cells answer to one tag. The SLOT replaced the activator type
+ * when rows became stacks (2026-09-20), so a tag names a POSITION in a row, not a press type.
  */
 internal fun cellTestTag(key: CellKey): String =
-    "cell:${key.group.name}:${key.source.name}:${key.inputKey}:${key.type.name}"
+    "cell:${key.group.name}:${key.source.name}:${key.inputKey}:${key.slot}"
 
 /**
  * The cell one grid step from [from], staying inside its own group: the single-table stepping
  * every editor had before the zoomed scene, and what a standalone editor still does. A step off
  * an edge goes nowhere. (The scene's own stepper crosses into the neighbouring group instead —
  * see RemapZoomScene.)
+ *
+ * [slots] reports how many tiles a row has, INCLUDING its trailing "+". Rows are no longer the
+ * same length as each other (2026-09-20), so the stepper has to ask rather than assume: a row
+ * with one command has two stops, the row under it may have five, and a step between them
+ * clamps to what is actually there.
  */
-internal fun stepCellWithinGroup(from: CellKey, dRow: Int, dCol: Int): CellKey? {
+internal fun stepCellWithinGroup(
+    from: CellKey,
+    dRow: Int,
+    dCol: Int,
+    slots: (RemapSimpleGroup, SimpleRowSpec) -> Int,
+): CellKey? {
     val rows = from.group.rows
     val row = rows.indexOf(from.row).takeIf { it >= 0 } ?: return null
-    val column = pressTypeColumns.indexOf(from.type).takeIf { it >= 0 } ?: return null
     val nextRow = (row + dRow).coerceIn(0, rows.lastIndex)
-    val nextColumn = (column + dCol).coerceIn(0, pressTypeColumns.lastIndex)
-    return CellKey(from.group, rows[nextRow], pressTypeColumns[nextColumn])
+    val spec = rows[nextRow]
+    val lastSlot = (slots(from.group, spec) - 1).coerceAtLeast(0)
+    return CellKey(from.group, spec, (from.slot + dCol).coerceIn(0, lastSlot))
 }
 
 /** The scrolling table of [group]'s editor — one per group in the scene. */
@@ -1613,7 +1706,7 @@ private fun ModeDropdownLabel(
 
 // ── Shared press-type vocabulary (moved from the retired detail-pane editor) ─────────────────
 
-/** Canonical Steam render order for press types. The advanced table uses [pressTypeColumns]
+/** Canonical Steam render order for press types. The advanced table uses [pressTypeSortOrder]
  *  instead — same set, user-specified column order. */
 internal val pressTypeOrder = listOf(
     ActivatorType.FULL_PRESS,
@@ -1652,13 +1745,20 @@ internal fun ActivatorType.helperText(): String = when (this) {
     ActivatorType.SOFT_PRESS -> "Fires on a soft (partial) pull."
 }
 
-internal fun ActivatorType.pressIcon(): androidx.compose.ui.graphics.vector.ImageVector = when (this) {
-    ActivatorType.FULL_PRESS -> Icons.Filled.TouchApp
-    ActivatorType.LONG_PRESS -> Icons.Filled.Timer
-    ActivatorType.DOUBLE_PRESS -> Icons.Filled.Repeat
-    ActivatorType.START_PRESS -> Icons.Filled.Bolt
-    ActivatorType.RELEASE_PRESS -> Icons.AutoMirrored.Filled.Logout
-    ActivatorType.CHORDED_PRESS -> Icons.Filled.Link
+/**
+ * The glyph a press type wears on its tiles and in the type picker (Dylan's set, 2026-09-20).
+ *
+ * **Regular Press has none** — it is the default case, and marking it would put an icon on
+ * nearly every tile in the view saying only "ordinary". Material icons throughout, for the same
+ * reason the dropdown arrow is Material's: iconography is platform chrome, not minput's.
+ */
+internal fun ActivatorType.pressIcon(): ImageVector? = when (this) {
+    ActivatorType.FULL_PRESS -> null
+    ActivatorType.LONG_PRESS -> Icons.Filled.HourglassEmpty
+    ActivatorType.DOUBLE_PRESS -> Icons.Filled.KeyboardDoubleArrowDown
+    ActivatorType.CHORDED_PRESS -> Icons.Filled.Workspaces
+    ActivatorType.START_PRESS -> Icons.Filled.ArrowDownward
+    ActivatorType.RELEASE_PRESS -> Icons.Filled.ArrowUpward
     ActivatorType.SOFT_PRESS -> Icons.Filled.Adjust
 }
 
@@ -1763,13 +1863,6 @@ private val TileGap = 4.dp
  *  [HeaderToRowsGap] and [TableVerticalPadding], and they stay put. */
 private val TileRowGap = 16.dp
 
-/** Fixed gap from the press-type header row down to the first tile row. Deliberately NOT
- *  [TileRowGap] — the header's distance from the grid is a separate design decision. */
-private val HeaderToRowsGap = 4.dp
-
-/** The press-type header row's height. */
-private val ColumnHeaderHeight = 20.dp
-
 /** Input glyphs render LARGER here than in the old rows — with the press-type word gone from
  *  the cell, the glyph is the row's only identity, so it carries the weight of one. */
 private val TableGlyphSize = 38.dp
@@ -1788,8 +1881,20 @@ private val TileCorner = TileHeight / 2
 private val TileContentPadding = 8.dp
 private val TileOutputGlyphSize = 14.dp
 
-/** The empty cell's "+": present enough to invite a tap, faint enough that a row of empties
- *  doesn't read as content. Its COLOR (and opacity) comes from `PressTypePalette`. */
+/** The PRESS-TYPE glyph leading a tile. Larger than the output's device glyph (Dylan,
+ *  2026-09-20): it identifies the tile, where the device glyph only qualifies its name. */
+private val TilePressGlyphSize = 19.dp
+
+/** Air between that glyph and the command it fronts. */
+private val TilePressGlyphGap = 6.dp
+
+/** The press-type picker's row rhythm. */
+private val TypeDialogTitleGap = 10.dp
+private val TypeDialogRowCorner = 8.dp
+private val TypeDialogRowPadding = 8.dp
+
+/** The row's "+": present enough to invite a tap, faint enough that it doesn't read as a
+ *  command. Its COLOR (and opacity) comes from `PressTypePalette`. */
 private val EmptyTilePlusSize = 22.dp
 
 /** How long a displaced tile takes to slide aside during a swap preview. */
@@ -1823,15 +1928,21 @@ private val TableScrollbarGap = 3.dp
  * what lets the editor's HOST size itself to the content instead of filling the screen (a
  * two-row group used to leave most of a screen empty below it). Callers should still clamp to
  * the space available; the table scrolls vertically if it doesn't fit.
+ *
+ * **Floored at [MinTableRows] rows** (Dylan, 2026-09-20): a one-row group — either stick — made
+ * a card barely taller than a single tile, which is a small thing to aim a controller at and a
+ * hard one to pan to. A card is at least two rows tall whether it has two rows or not.
  */
 internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
-    val rows = group.rows.size
+    val rows = group.rows.size.coerceAtLeast(MinTableRows)
     val table = TableVerticalPadding * 2 +
-        ColumnHeaderHeight + HeaderToRowsGap +
         TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
     return EditorHeaderHeight + EditorDividerHeight + table +
         TableScrollbarGap + MinputScrollbarThickness + TableBottomGap
 }
+
+/** The shortest a card may be, in tile rows. See [advancedEditorHeight]. */
+private const val MinTableRows = 2
 
 /** The inset divider under the header is a hairline; counted so the height math is exact. */
 private val EditorDividerHeight = 1.dp

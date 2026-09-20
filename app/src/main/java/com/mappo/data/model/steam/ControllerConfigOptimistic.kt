@@ -26,103 +26,205 @@ package com.mappo.data.model.steam
  */
 
 /**
- * The in-memory twin of `ControllerConfigRepository.moveInputCell`: move the command at
- * ([fromKey], [fromType]) onto ([toKey], [toType]) within the binding group [bindingGroupId],
- * swapping with whatever is already there.
+ * The in-memory twin of `ControllerConfigRepository.moveRowCommand`: carry the command
+ * [bindingId] onto the row ([toBindingGroupId], [toInputKey]), keeping its own press type.
  *
- * Mirrors the repository by REPARENTING the activator rather than copying its contents, so
- * activator settings and every binding under it travel with the command and no identifier is
- * regenerated for something that isn't a copy.
+ * [swapWithBindingId] is the command it landed ON, which goes back the other way; null means it
+ * landed on the row's "+" and is simply ADDED there. Within a group or across them is one
+ * operation, since a command only points at its row.
  *
- * Returns the config unchanged when the source cell doesn't exist or the move is a no-op.
+ * The repository exchanges whole ACTIVATORS when each holds a single command, and reparents
+ * bare bindings otherwise. The difference is invisible here on purpose: what the two sides must
+ * agree on is the RENDERED state — which commands sit on which row, firing on which press type
+ * — and that is what the parity tests compare.
+ *
+ * Returns the config unchanged when the command doesn't exist or the move is a no-op.
  */
-fun ControllerConfig.withInputCellMoved(
-    bindingGroupId: Long,
-    fromKey: String,
-    fromType: ActivatorType,
-    toKey: String,
-    toType: ActivatorType,
-    toBindingGroupId: Long = bindingGroupId,
+fun ControllerConfig.withRowCommandMoved(
+    bindingId: Long,
+    toBindingGroupId: Long,
+    toInputKey: String,
+    swapWithBindingId: Long? = null,
 ): ControllerConfig {
-    if (toBindingGroupId != bindingGroupId) {
-        return withInputCellMovedAcrossGroups(bindingGroupId, fromKey, fromType, toBindingGroupId, toKey, toType)
+    if (swapWithBindingId == bindingId) return this
+    val from = findCommandSite(bindingId) ?: return this
+    val swap = swapWithBindingId?.let { findCommandSite(it) }
+    val landingOnItsOwnRow = from.bindingGroupId == toBindingGroupId && from.inputKey == toInputKey
+    val swapStaysPut = swap == null ||
+        (swap.bindingGroupId == from.bindingGroupId && swap.inputKey == from.inputKey)
+    // Landing on the row it already belongs to changes nothing the user can see: where a
+    // command sits in its row is the sort's business, not the move's.
+    if (landingOnItsOwnRow && swapStaysPut) return this
+
+    // Both commands alone in their buckets: the two ACTIVATORS exchange rows, as the repository
+    // does, so each keeps the settings it was tuned with. Both leave before either lands, so a
+    // swap between two rows can't see a half-applied state.
+    if (swap != null && from.activator.bindings.size == 1 && swap.activator.bindings.size == 1) {
+        return this
+            .withoutActivator(from.bindingGroupId, from.inputKey, from.activator.activator.id)
+            .withoutActivator(swap.bindingGroupId, swap.inputKey, swap.activator.activator.id)
+            .withActivatorOnRow(toBindingGroupId, toInputKey, from.activator)
+            .withActivatorOnRow(from.bindingGroupId, from.inputKey, swap.activator)
     }
-    if (fromKey == toKey && fromType == toType) return this
-    return mapBindingGroup(bindingGroupId) { group ->
-        group.movingCell(fromKey, fromType, toKey, toType)
+
+    // Otherwise one command moves at a time, each re-reading the graph the previous one left —
+    // the repository's sequential behaviour, including which buckets exist by then.
+    var result = withOneCommandMoved(bindingId, toBindingGroupId, toInputKey)
+    if (swap != null) {
+        result = result.withOneCommandMoved(swap.binding.id, from.bindingGroupId, from.inputKey)
     }
+    return result
 }
 
 /**
- * The cross-group half of [withInputCellMoved]: the moving activator leaves its row in one
- * binding group and lands in another (materializing the destination row bare, as the
- * repository does), and whatever it displaces goes back the other way.
+ * One command onto one row: the activator travels when the command is alone in it and the
+ * destination has no bucket of its press type, otherwise the bare binding does — the same
+ * branch `ControllerConfigRepository.reparentBinding` takes.
  */
-private fun ControllerConfig.withInputCellMovedAcrossGroups(
-    fromGroupId: Long,
-    fromKey: String,
-    fromType: ActivatorType,
-    toGroupId: Long,
-    toKey: String,
-    toType: ActivatorType,
+private fun ControllerConfig.withOneCommandMoved(
+    bindingId: Long,
+    toBindingGroupId: Long,
+    toInputKey: String,
 ): ControllerConfig {
-    val fromGroup = findBindingGroup(fromGroupId) ?: return this
-    val toGroup = findBindingGroup(toGroupId) ?: return this
-    val moving = fromGroup.inputByKey(fromKey)?.firstActivatorOfType(fromType) ?: return this
-    val displaced = toGroup.inputByKey(toKey)?.firstActivatorOfType(toType)
-    val movedIn = moving.copy(activator = moving.activator.copy(type = toType))
-    val movedOut = displaced?.copy(activator = displaced.activator.copy(type = fromType))
-    return this
-        .mapBindingGroup(fromGroupId) { group ->
-            group.replacingOnRow(fromKey, removeId = moving.activator.id, add = movedOut)
-        }
-        .mapBindingGroup(toGroupId) { group ->
-            group.replacingOnRow(toKey, removeId = displaced?.activator?.id, add = movedIn)
-        }
+    val site = findCommandSite(bindingId) ?: return this
+    val type = site.activator.activator.type
+    val bucket = allBindingGroups().firstOrNull { it.group.id == toBindingGroupId }
+        ?.inputByKey(toInputKey)
+        ?.activators
+        ?.firstOrNull { it.activator.type == type }
+    return if (bucket == null && site.activator.bindings.size == 1) {
+        withoutActivator(site.bindingGroupId, site.inputKey, site.activator.activator.id)
+            .withActivatorOnRow(toBindingGroupId, toInputKey, site.activator)
+    } else {
+        withoutBinding(site.bindingGroupId, site.inputKey, bindingId)
+            .withBindingOnRow(toBindingGroupId, toInputKey, site.activator.activator, site.binding)
+    }
 }
 
-/** On row [inputKey]: drop the activator [removeId] (if any) and add [add] (if any),
- *  materializing the row bare when it doesn't exist yet and there's something to add. */
-private fun BindingGroupGraph.replacingOnRow(
-    inputKey: String,
-    removeId: Long?,
-    add: ActivatorGraph?,
-): BindingGroupGraph {
-    val existing = inputByKey(inputKey)
-    if (existing == null) {
-        if (add == null) return this
-        return copy(
-            inputs = inputs + GroupInputGraph(
-                input = GroupInput(
-                    bindingGroupId = group.id,
-                    inputKey = inputKey,
-                    orderIndex = (inputs.maxOfOrNull { it.input.orderIndex } ?: -1) + 1,
-                ),
-                activators = listOf(add),
-            ),
-        )
+/** Where a command lives: its binding group, its row, the activator giving it its press type. */
+private data class CommandSite(
+    val bindingGroupId: Long,
+    val inputKey: String,
+    val activator: ActivatorGraph,
+    val binding: Binding,
+)
+
+/** Find a command anywhere in the config — every set, layer, preset and mode-shift group. */
+private fun ControllerConfig.findCommandSite(bindingId: Long): CommandSite? {
+    allBindingGroups().forEach { group ->
+        group.inputs.forEach { input ->
+            input.activators.forEach { activator ->
+                activator.bindings.firstOrNull { it.id == bindingId }?.let { binding ->
+                    return CommandSite(group.group.id, input.input.inputKey, activator, binding)
+                }
+            }
+        }
     }
-    return copy(
-        inputs = inputs.map { inputGraph ->
+    return null
+}
+
+/** Drop one binding from a row, and the activator with it if that empties it. */
+private fun ControllerConfig.withoutBinding(
+    bindingGroupId: Long,
+    inputKey: String,
+    bindingId: Long,
+): ControllerConfig = mapBindingGroup(bindingGroupId) { group ->
+    group.copy(
+        inputs = group.inputs.map { inputGraph ->
             if (inputGraph.input.inputKey != inputKey) return@map inputGraph
-            val kept = inputGraph.activators.filterNot { removeId != null && it.activator.id == removeId }
-            inputGraph.copy(activators = if (add != null) kept + add else kept)
+            inputGraph.copy(
+                activators = inputGraph.activators
+                    .map { it.copy(bindings = it.bindings.filterNot { binding -> binding.id == bindingId }) }
+                    .filter { it.bindings.isNotEmpty() },
+            )
         },
     )
 }
 
-/** The [BindingGroupGraph] with [bindingGroupId], searched everywhere [mapBindingGroup] maps. */
-private fun ControllerConfig.findBindingGroup(bindingGroupId: Long): BindingGroupGraph? {
+/** Drop a whole activator from a row. */
+private fun ControllerConfig.withoutActivator(
+    bindingGroupId: Long,
+    inputKey: String,
+    activatorId: Long,
+): ControllerConfig = mapBindingGroup(bindingGroupId) { group ->
+    group.copy(
+        inputs = group.inputs.map { inputGraph ->
+            if (inputGraph.input.inputKey != inputKey) return@map inputGraph
+            inputGraph.copy(activators = inputGraph.activators.filterNot { it.activator.id == activatorId })
+        },
+    )
+}
+
+/**
+ * Put one binding on a row, under that row's bucket for [activator]'s press type — created from
+ * the source activator when the row has none, exactly as the repository does (so a command
+ * carried onto a fresh row keeps the settings it was firing with).
+ */
+private fun ControllerConfig.withBindingOnRow(
+    bindingGroupId: Long,
+    inputKey: String,
+    activator: Activator,
+    binding: Binding,
+): ControllerConfig = withRow(bindingGroupId, inputKey, ActivatorGraph(activator, listOf(binding))) { inputGraph, incoming ->
+    val bucket = inputGraph.activators.firstOrNull { it.activator.type == activator.type }
+    if (bucket == null) {
+        inputGraph.copy(activators = inputGraph.activators + incoming)
+    } else {
+        inputGraph.copy(
+            activators = inputGraph.activators.map {
+                if (it.activator.id == bucket.activator.id) it.copy(bindings = it.bindings + binding) else it
+            },
+        )
+    }
+}
+
+/** Put a whole activator on a row, materializing the row if it doesn't exist yet. */
+private fun ControllerConfig.withActivatorOnRow(
+    bindingGroupId: Long,
+    inputKey: String,
+    activator: ActivatorGraph,
+): ControllerConfig = withRow(bindingGroupId, inputKey, activator) { inputGraph, incoming ->
+    inputGraph.copy(activators = inputGraph.activators + incoming)
+}
+
+/** Apply [place] to a row's activators, materializing the row (carrying [incoming]) when the
+ *  binding group doesn't have it yet — as the repository's `ensureGroupInputId` does. */
+private fun ControllerConfig.withRow(
+    bindingGroupId: Long,
+    inputKey: String,
+    incoming: ActivatorGraph,
+    place: (GroupInputGraph, ActivatorGraph) -> GroupInputGraph,
+): ControllerConfig = mapBindingGroup(bindingGroupId) { group ->
+    val existingRow = group.inputByKey(inputKey)
+        ?: return@mapBindingGroup group.copy(
+            inputs = group.inputs + GroupInputGraph(
+                input = GroupInput(
+                    bindingGroupId = group.group.id,
+                    inputKey = inputKey,
+                    orderIndex = (group.inputs.maxOfOrNull { it.input.orderIndex } ?: -1) + 1,
+                ),
+                activators = listOf(incoming),
+            ),
+        )
+    group.copy(
+        inputs = group.inputs.map { inputGraph ->
+            if (inputGraph.input.inputKey != existingRow.input.inputKey) inputGraph
+            else place(inputGraph, incoming)
+        },
+    )
+}
+
+/** Every binding group in the config, wherever it lives. */
+private fun ControllerConfig.allBindingGroups(): List<BindingGroupGraph> = buildList {
     actionSets.forEach { set ->
-        set.preset.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
-        set.modeShifts.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+        set.preset.forEach { add(it.group) }
+        set.modeShifts.forEach { add(it.group) }
         set.layers.forEach { layer ->
-            layer.preset.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
-            layer.bindingGroups.firstOrNull { it.group.id == bindingGroupId }?.let { return it }
-            layer.modeShifts.firstOrNull { it.group.group.id == bindingGroupId }?.let { return it.group }
+            layer.preset.forEach { add(it.group) }
+            addAll(layer.bindingGroups)
+            layer.modeShifts.forEach { add(it.group) }
         }
     }
-    return null
 }
 
 /** Apply [transform] to the [BindingGroupGraph] with [bindingGroupId], wherever it lives —
@@ -154,53 +256,3 @@ private fun ControllerConfig.mapBindingGroup(
     )
 }
 
-/** The cell move, within one binding group. */
-private fun BindingGroupGraph.movingCell(
-    fromKey: String,
-    fromType: ActivatorType,
-    toKey: String,
-    toType: ActivatorType,
-): BindingGroupGraph {
-    val fromInput = inputs.firstOrNull { it.input.inputKey == fromKey } ?: return this
-    val moving = fromInput.activators.firstOrNull { it.activator.type == fromType } ?: return this
-
-    // The destination row may not exist yet — the repository creates it bare (no seeded
-    // activator), so do the same here or the two sides would disagree by one empty Press cell.
-    val existingTo = inputs.firstOrNull { it.input.inputKey == toKey }
-    val displaced = existingTo?.activators?.firstOrNull { it.activator.type == toType }
-
-    val movedIn = moving.copy(activator = moving.activator.copy(type = toType))
-    val movedOut = displaced?.copy(activator = displaced.activator.copy(type = fromType))
-
-    val updated = inputs.map { inputGraph ->
-        when (inputGraph.input.inputKey) {
-            // Both ends on one row: drop both originals, add both replacements.
-            fromKey, toKey -> {
-                var activators = inputGraph.activators
-                    .filterNot { it.activator.id == moving.activator.id }
-                    .filterNot { displaced != null && it.activator.id == displaced.activator.id }
-                if (inputGraph.input.inputKey == toKey) activators = activators + movedIn
-                if (inputGraph.input.inputKey == fromKey && movedOut != null) {
-                    activators = activators + movedOut
-                }
-                inputGraph.copy(activators = activators)
-            }
-            else -> inputGraph
-        }
-    }
-
-    val withDestination = if (existingTo != null) {
-        updated
-    } else {
-        // Materialize the destination row, carrying the moved activator.
-        updated + GroupInputGraph(
-            input = GroupInput(
-                bindingGroupId = group.id,
-                inputKey = toKey,
-                orderIndex = (inputs.maxOfOrNull { it.input.orderIndex } ?: -1) + 1,
-            ),
-            activators = listOf(movedIn),
-        )
-    }
-    return copy(inputs = withDestination)
-}

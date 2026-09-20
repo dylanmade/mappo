@@ -709,31 +709,39 @@ class RemapControlsScreenTest {
 
     /**
      * The left flank's tables are MIRRORED (Dylan, 2026-09-17): glyph column at the card's right
-     * edge, press columns running outward to the left, so a card and the basic-view box it grew
-     * out of have the same shape. Asserted on the CELLS rather than the glyphs — the column
+     * edge, the row's commands running outward to the left, so a card and the basic-view box it
+     * grew out of have the same shape. Asserted on the CELLS rather than the glyphs — the slot
      * order is the thing that flips, and it's what the move-preview arithmetic keys off.
      */
     @Test
-    fun zoomScene_mirrorsTheLeftFlanksColumns() {
-        setScreenLocal(seedShapedConfig())
+    fun zoomScene_mirrorsTheLeftFlanksSlots() {
+        setScreenLocal(
+            seedShapedConfig()
+                .withTwoCommands(InputSource.DPAD, "dpad_up", idBase = 500L)
+                .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
+        )
 
         composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         composeRule.waitForIdle()
-        val press = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:FULL_PRESS", useUnmergedTree = true)
+        val first = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val long = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:LONG_PRESS", useUnmergedTree = true)
+        val second = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:1", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        assert(long.left < press.left) { "Long should sit LEFT of Press on a mirrored table: $press / $long" }
+        assert(second.left < first.left) {
+            "slot 1 should sit LEFT of slot 0 on a mirrored table: $first / $second"
+        }
 
         composeRule.onNodeWithContentDescription("Close").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        val facePress = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:FULL_PRESS", useUnmergedTree = true)
+        val faceFirst = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val faceLong = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:LONG_PRESS", useUnmergedTree = true)
+        val faceSecond = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:1", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        assert(faceLong.left > facePress.left) { "the right flank keeps its normal order: $facePress / $faceLong" }
+        assert(faceSecond.left > faceFirst.left) {
+            "the right flank keeps its normal order: $faceFirst / $faceSecond"
+        }
     }
 
     /**
@@ -828,8 +836,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS").assertIsDisplayed()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertIsDisplayed()
     }
 
     @Test
@@ -859,8 +867,8 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:FULL_PRESS").performClick()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").performClick()
         // Driven through semantics rather than performClick: menu rows live in a Popup, and
         // popup bounds come back NEGATED under Robolectric (a menu anchored at x=56 reports
         // x=-56), so a coordinate-based click can miss depending on where the menu sits.
@@ -1096,14 +1104,14 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun groupEditor_emptyCell_newCommand_reachesEnsureInputCell() {
-        var ensured: Triple<Long, String, ActivatorType>? = null
+    fun groupEditor_plusTile_newCommand_addsToTheRow() {
+        var added: Triple<Long, String, ActivatorType>? = null
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
                         config = seedShapedConfig(),
-                        onEnsureInputCell = { g, k, t, _ -> ensured = Triple(g, k, t) },
+                        onAddRowCommand = { g, k, t, _ -> added = Triple(g, k, t) },
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
@@ -1113,13 +1121,15 @@ class RemapControlsScreenTest {
         }
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
+        // Nothing is bound in this fixture, so every row is just its "+" — slot 0. A new
+        // command starts as a Regular Press and is retyped from the same menu.
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:LONG_PRESS"))
-        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:LONG_PRESS").performClick()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
-        assert(ensured == Triple(1L, "button_a", ActivatorType.LONG_PRESS)) {
-            "Expected New to ensure (1, button_a, LONG_PRESS); got $ensured"
+        assert(added == Triple(1L, "button_a", ActivatorType.FULL_PRESS)) {
+            "Expected New to add (1, button_a, FULL_PRESS); got $added"
         }
     }
 
@@ -1127,6 +1137,56 @@ class RemapControlsScreenTest {
     private val modePillMatcher = androidx.compose.ui.test.SemanticsMatcher("mode pill") { node ->
         node.config.getOrElseNullable(SemanticsActions.OnClick) { null }?.label == "Change input mode"
     }
+
+    /**
+     * Put two bound commands — a Regular and a Long press — on one row of [source], for tests
+     * that need a row holding more than its "+" tile.
+     */
+    private fun ControllerConfig.withTwoCommands(
+        source: InputSource,
+        inputKey: String,
+        idBase: Long,
+    ): ControllerConfig = copy(
+        actionSets = actionSets.map { set ->
+            set.copy(
+                preset = set.preset.map { entry ->
+                    if (entry.inputSource != source) return@map entry
+                    entry.copy(
+                        group = entry.group.copy(
+                            inputs = entry.group.inputs.map { input ->
+                                if (input.input.inputKey != inputKey) return@map input
+                                input.copy(
+                                    activators = listOf(
+                                        ActivatorType.FULL_PRESS to "ENTER",
+                                        ActivatorType.LONG_PRESS to "SPACE",
+                                    ).mapIndexed { index, (type, key) ->
+                                        val activator = Activator(
+                                            id = idBase + index,
+                                            groupInputId = input.input.id,
+                                            type = type,
+                                            orderIndex = index,
+                                        )
+                                        val (outputType, args) = BindingOutput.KeyPress(key).toEntity()
+                                        ActivatorGraph(
+                                            activator,
+                                            listOf(
+                                                Binding(
+                                                    id = idBase + 50L + index,
+                                                    activatorId = activator.id,
+                                                    outputType = outputType,
+                                                    args = args,
+                                                ),
+                                            ),
+                                        )
+                                    },
+                                )
+                            },
+                        ),
+                    )
+                },
+            )
+        },
+    )
 
     /**
      * A config shaped like `seedDefaultConfig` leaves one: every default-seeded source present

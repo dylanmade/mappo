@@ -44,18 +44,31 @@ internal fun cardDistance(geometry: SceneGeometry, from: RemapSimpleGroup, to: R
  * its table — the scene's stepper for a controller-driven move.
  *
  * Entering a neighbour keeps the sense of the travel: arriving from above lands on its top row,
- * from below its bottom row, and from the side keeps the row you were on and starts at the
- * column you are walking toward. Columns are the same six everywhere, so only rows need
- * clamping.
+ * from below its bottom row, and from the side keeps the row you were on and starts at the slot
+ * you are walking toward.
+ *
+ * [slots] reports a row's tile count, its trailing "+" included. Rows became variable-length
+ * stacks on 2026-09-20, so both the "did this step leave the table" test and the landing slot
+ * have to ask rather than assume — a row of one command has two stops, its neighbour may have
+ * six, and stepping between them clamps to what each actually holds.
  */
-internal fun stepCellAcrossGroups(from: CellKey, dRow: Int, dCol: Int): CellKey? {
+internal fun stepCellAcrossGroups(
+    from: CellKey,
+    dRow: Int,
+    dCol: Int,
+    slots: (RemapSimpleGroup, SimpleRowSpec) -> Int,
+): CellKey? {
     val rows = from.group.rows
     val row = rows.indexOf(from.row).takeIf { it >= 0 } ?: return null
-    val column = pressTypeColumns.indexOf(from.type).takeIf { it >= 0 } ?: return null
     val nextRow = row + dRow
-    val nextColumn = column + dCol
-    if (nextRow in rows.indices && nextColumn in pressTypeColumns.indices) {
-        return CellKey(from.group, rows[nextRow], pressTypeColumns[nextColumn])
+    val nextSlot = from.slot + dCol
+    if (nextRow in rows.indices) {
+        val spec = rows[nextRow]
+        val count = slots(from.group, spec)
+        // A row step keeps the slot, clamped: stepping down from slot 4 onto a two-tile row
+        // lands on its last tile rather than nowhere.
+        if (dRow != 0) return CellKey(from.group, spec, nextSlot.coerceIn(0, count - 1))
+        if (nextSlot in 0 until count) return CellKey(from.group, spec, nextSlot)
     }
     val neighbour = from.group.neighbour(dRow, dCol) ?: return null
     val neighbourRows = neighbour.rows
@@ -64,12 +77,14 @@ internal fun stepCellAcrossGroups(from: CellKey, dRow: Int, dCol: Int): CellKey?
         dRow < 0 -> neighbourRows.lastIndex
         else -> row.coerceAtMost(neighbourRows.lastIndex)
     }
-    val landingColumn = when {
+    val spec = neighbourRows[landingRow]
+    val lastSlot = (slots(neighbour, spec) - 1).coerceAtLeast(0)
+    val landingSlot = when {
         dCol > 0 -> 0
-        dCol < 0 -> pressTypeColumns.lastIndex
-        else -> column
+        dCol < 0 -> lastSlot
+        else -> from.slot.coerceAtMost(lastSlot)
     }
-    return CellKey(neighbour, neighbourRows[landingRow], pressTypeColumns[landingColumn])
+    return CellKey(neighbour, spec, landingSlot)
 }
 
 /**

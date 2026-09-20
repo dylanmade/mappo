@@ -31,7 +31,7 @@ import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.resolveActionSet
 import com.mappo.data.repository.AppLayoutBindingRepository
-import com.mappo.data.model.steam.withInputCellMoved
+import com.mappo.data.model.steam.withRowCommandMoved
 import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.InstalledAppsRepository
 import com.mappo.data.repository.KeyboardTemplateRepository
@@ -724,17 +724,17 @@ class MainViewModel @Inject constructor(
     /** Cut/copy buffer for the table's Copy → Paste flow. Session-scoped ON PURPOSE: a
      *  clipboard that outlived the process would paste a command referencing an action set or
      *  layer the user may have deleted since. Observed by the tile menus to grey out Paste. */
-    private val _inputCellClipboard =
-        MutableStateFlow<ControllerConfigRepository.InputCellSnapshot?>(null)
-    val inputCellClipboard: StateFlow<ControllerConfigRepository.InputCellSnapshot?> =
-        _inputCellClipboard.asStateFlow()
+    private val _commandClipboard =
+        MutableStateFlow<ControllerConfigRepository.CommandSnapshot?>(null)
+    val commandClipboard: StateFlow<ControllerConfigRepository.CommandSnapshot?> =
+        _commandClipboard.asStateFlow()
 
     /**
-     * Ensure the cell exists and hand its bindingId to [onReady] — the "New" / "Edit" path,
-     * where the caller then opens the command picker against that binding. Asynchronous
-     * because the row may need creating first.
+     * Add a command to a row and hand its bindingId to [onReady] — the "+" tile's path, where
+     * the caller then opens the command picker against that binding. Asynchronous because the
+     * row (and the command) may need creating first.
      */
-    fun ensureInputCell(
+    fun addRowCommand(
         bindingGroupId: Long,
         inputKey: String,
         type: com.mappo.data.model.steam.ActivatorType,
@@ -742,49 +742,34 @@ class MainViewModel @Inject constructor(
     ) {
         if (editedLayout() == null) return
         viewModelScope.launch {
-            onReady(controllerConfigRepository.ensureInputCell(bindingGroupId, inputKey, type))
-        }
-    }
-
-    /** Clear a cell — removes the activator and every command under it. */
-    fun clearInputCell(
-        bindingGroupId: Long,
-        inputKey: String,
-        type: com.mappo.data.model.steam.ActivatorType,
-    ) {
-        if (editedLayout() == null) return
-        viewModelScope.launch {
-            controllerConfigRepository.clearInputCell(bindingGroupId, inputKey, type)
+            onReady(controllerConfigRepository.addRowCommand(bindingGroupId, inputKey, type))
         }
     }
 
     /**
-     * Move a cell onto another, swapping when the destination is occupied.
+     * Carry a command onto another row, swapping with the command it lands on (or simply
+     * joining the row when it lands on the "+").
      *
      * Applied OPTIMISTICALLY first: the table drops its drag preview the instant the move
      * commits, so the rendered config has to already show the result or the tile flashes back
-     * to its old cell for a frame. The repository write then makes it durable and its emission
+     * to its old slot for a frame. The repository write then makes it durable and its emission
      * replaces the overlay. See [_optimisticControllerConfig].
      */
-    fun moveInputCell(
-        bindingGroupId: Long,
-        fromKey: String,
-        fromType: com.mappo.data.model.steam.ActivatorType,
-        toKey: String,
-        toType: com.mappo.data.model.steam.ActivatorType,
-        // The destination's binding group — differs from [bindingGroupId] when the basic view
-        // moves a command into another input group.
-        toBindingGroupId: Long = bindingGroupId,
+    fun moveRowCommand(
+        bindingId: Long,
+        toBindingGroupId: Long,
+        toInputKey: String,
+        swapWithBindingId: Long?,
     ) {
         if (editedLayout() == null) return
         viewedControllerConfig.value?.let { current ->
-            _optimisticControllerConfig.value = current.withInputCellMoved(
-                bindingGroupId, fromKey, fromType, toKey, toType, toBindingGroupId,
+            _optimisticControllerConfig.value = current.withRowCommandMoved(
+                bindingId, toBindingGroupId, toInputKey, swapWithBindingId,
             )
         }
         viewModelScope.launch {
-            controllerConfigRepository.moveInputCell(
-                bindingGroupId, fromKey, fromType, toKey, toType, toBindingGroupId,
+            controllerConfigRepository.moveRowCommand(
+                bindingId, toBindingGroupId, toInputKey, swapWithBindingId,
             )
         }
     }
@@ -857,28 +842,22 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    /** Copy a cell into [inputCellClipboard]. No-op (clipboard untouched) on an empty cell. */
-    fun copyInputCell(
-        bindingGroupId: Long,
-        inputKey: String,
-        type: com.mappo.data.model.steam.ActivatorType,
-    ) {
+    /** Copy one command into [commandClipboard]. */
+    fun copyRowCommand(bindingId: Long) {
         viewModelScope.launch {
-            controllerConfigRepository.readInputCell(bindingGroupId, inputKey, type)
-                ?.let { _inputCellClipboard.value = it }
+            controllerConfigRepository.readRowCommand(bindingId)?.let { _commandClipboard.value = it }
         }
     }
 
-    /** Paste the clipboard into a cell, creating or overwriting it. */
-    fun pasteInputCell(
-        bindingGroupId: Long,
-        inputKey: String,
-        type: com.mappo.data.model.steam.ActivatorType,
-    ) {
+    /**
+     * Paste the clipboard onto a row: over [targetBindingId] when the paste was aimed at a
+     * command, appended to the row when it was aimed at the "+".
+     */
+    fun pasteRowCommand(targetBindingId: Long?, bindingGroupId: Long, inputKey: String) {
         if (editedLayout() == null) return
-        val snapshot = _inputCellClipboard.value ?: return
+        val snapshot = _commandClipboard.value ?: return
         viewModelScope.launch {
-            controllerConfigRepository.writeInputCell(bindingGroupId, inputKey, type, snapshot)
+            controllerConfigRepository.pasteRowCommand(targetBindingId, bindingGroupId, inputKey, snapshot)
         }
     }
 

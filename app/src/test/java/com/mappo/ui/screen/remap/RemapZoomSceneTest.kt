@@ -1,10 +1,14 @@
 package com.mappo.ui.screen.remap
 
 import androidx.compose.ui.unit.dp
+import com.mappo.data.model.steam.Activator
+import com.mappo.data.model.steam.ActivatorGraph
 import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.Binding
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.BindingOutputType
+import com.mappo.data.model.steam.GroupInput
+import com.mappo.data.model.steam.GroupInputGraph
 import kotlin.math.abs
 import org.junit.Test
 
@@ -19,67 +23,81 @@ import org.junit.Test
  */
 class RemapZoomSceneTest {
 
-    private fun cell(group: RemapSimpleGroup, row: Int, column: Int) =
-        CellKey(group, group.rows[row], pressTypeColumns[column])
+    private companion object {
+        const val Slots = 6
+    }
+
+    /**
+     * Every row in these tests holds five commands plus its trailing "+" — six tiles, the width
+     * the fixed press-type columns used to have, so the routes these pin are the same ones.
+     * Rows are variable-length stacks now (2026-09-20), which is why the steppers ASK.
+     */
+    private val slots: (RemapSimpleGroup, SimpleRowSpec) -> Int = { _, _ -> Slots }
+
+    private fun cell(group: RemapSimpleGroup, row: Int, slot: Int) =
+        CellKey(group, group.rows[row], slot)
 
     @Test
     fun steppingInsideAGroup_staysInIt() {
-        val from = cell(RemapSimpleGroup.FACE, row = 0, column = 0)
-        val down = stepCellAcrossGroups(from, dRow = 1, dCol = 0)
-        assert(down == cell(RemapSimpleGroup.FACE, row = 1, column = 0)) { "got $down" }
-        val right = stepCellAcrossGroups(from, dRow = 0, dCol = 1)
-        assert(right == cell(RemapSimpleGroup.FACE, row = 0, column = 1)) { "got $right" }
+        val from = cell(RemapSimpleGroup.FACE, row = 0, slot = 0)
+        val down = stepCellAcrossGroups(from, dRow = 1, dCol = 0, slots = slots)
+        assert(down == cell(RemapSimpleGroup.FACE, row = 1, slot = 0)) { "got $down" }
+        val right = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
+        assert(right == cell(RemapSimpleGroup.FACE, row = 0, slot = 1)) { "got $right" }
     }
 
     @Test
     fun steppingOffTheBottom_entersTheGroupBelow_atItsTopRow() {
         val last = RemapSimpleGroup.DPAD.rows.lastIndex
-        val from = cell(RemapSimpleGroup.DPAD, row = last, column = 2)
-        val next = stepCellAcrossGroups(from, dRow = 1, dCol = 0)
+        val from = cell(RemapSimpleGroup.DPAD, row = last, slot = 2)
+        val next = stepCellAcrossGroups(from, dRow = 1, dCol = 0, slots = slots)
         // Down the left flank: d-pad → left stick, arriving on its first row, same column.
-        assert(next == cell(RemapSimpleGroup.LEFT_STICK, row = 0, column = 2)) { "got $next" }
+        assert(next == cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 2)) { "got $next" }
     }
 
     @Test
     fun steppingOffTheTop_entersTheGroupAbove_atItsBottomRow() {
-        val from = cell(RemapSimpleGroup.FACE, row = 0, column = 0)
-        val next = stepCellAcrossGroups(from, dRow = -1, dCol = 0)
+        val from = cell(RemapSimpleGroup.FACE, row = 0, slot = 0)
+        val next = stepCellAcrossGroups(from, dRow = -1, dCol = 0, slots = slots)
         val shoulderLast = RemapSimpleGroup.RIGHT_SHOULDER.rows.lastIndex
-        assert(next == cell(RemapSimpleGroup.RIGHT_SHOULDER, row = shoulderLast, column = 0)) {
+        assert(next == cell(RemapSimpleGroup.RIGHT_SHOULDER, row = shoulderLast, slot = 0)) {
             "got $next"
         }
     }
 
     @Test
     fun steppingOffTheLastColumn_crossesToTheOppositeFlank_atItsFirstColumn() {
-        val lastColumn = pressTypeColumns.lastIndex
-        val from = cell(RemapSimpleGroup.DPAD, row = 1, column = lastColumn)
-        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1)
-        assert(next == cell(RemapSimpleGroup.FACE, row = 1, column = 0)) { "got $next" }
+        val lastSlot = Slots - 1
+        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = lastSlot)
+        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
+        assert(next == cell(RemapSimpleGroup.FACE, row = 1, slot = 0)) { "got $next" }
     }
 
     @Test
     fun theUtilityGroupSitsBetweenTheSticks() {
-        val lastColumn = pressTypeColumns.lastIndex
+        val lastSlot = Slots - 1
         val outOfLeftStick = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.LEFT_STICK, row = 0, column = lastColumn),
+            cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = lastSlot),
             dRow = 0,
             dCol = 1,
+            slots = slots,
         )
         assert(outOfLeftStick?.group == RemapSimpleGroup.UTILITY) { "got $outOfLeftStick" }
 
         val outOfRightStick = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.RIGHT_STICK, row = 0, column = 0),
+            cell(RemapSimpleGroup.RIGHT_STICK, row = 0, slot = 0),
             dRow = 0,
             dCol = -1,
+            slots = slots,
         )
         assert(outOfRightStick?.group == RemapSimpleGroup.UTILITY) { "got $outOfRightStick" }
 
         // And out the far side of utility, on to the other stick.
         val onward = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.UTILITY, row = 0, column = lastColumn),
+            cell(RemapSimpleGroup.UTILITY, row = 0, slot = lastSlot),
             dRow = 0,
             dCol = 1,
+            slots = slots,
         )
         assert(onward?.group == RemapSimpleGroup.RIGHT_STICK) { "got $onward" }
     }
@@ -89,8 +107,8 @@ class RemapZoomSceneTest {
         // Utility has two rows (Start, Select), a stick one (its click): stepping right out of
         // utility's BOTTOM row must land on a row the stick actually has.
         val last = RemapSimpleGroup.UTILITY.rows.lastIndex
-        val from = cell(RemapSimpleGroup.UTILITY, row = last, column = pressTypeColumns.lastIndex)
-        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1)
+        val from = cell(RemapSimpleGroup.UTILITY, row = last, slot = Slots - 1)
+        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
         assert(next?.group == RemapSimpleGroup.RIGHT_STICK) { "got $next" }
         assert(next!!.inputKey in RemapSimpleGroup.RIGHT_STICK.rows.map { it.subInputKey }) { "got $next" }
     }
@@ -107,18 +125,18 @@ class RemapZoomSceneTest {
     @Test
     fun theEdgesOfTheSceneGoNowhere() {
         // Nothing above the shoulders, nothing below the sticks, nothing outboard of a flank.
-        val topLeft = cell(RemapSimpleGroup.LEFT_SHOULDER, row = 0, column = 0)
-        assert(stepCellAcrossGroups(topLeft, dRow = -1, dCol = 0) == null)
-        assert(stepCellAcrossGroups(topLeft, dRow = 0, dCol = -1) == null)
-        val bottomLeft = cell(RemapSimpleGroup.LEFT_STICK, row = RemapSimpleGroup.LEFT_STICK.rows.lastIndex, column = 0)
-        assert(stepCellAcrossGroups(bottomLeft, dRow = 1, dCol = 0) == null)
+        val topLeft = cell(RemapSimpleGroup.LEFT_SHOULDER, row = 0, slot = 0)
+        assert(stepCellAcrossGroups(topLeft, dRow = -1, dCol = 0, slots = slots) == null)
+        assert(stepCellAcrossGroups(topLeft, dRow = 0, dCol = -1, slots = slots) == null)
+        val bottomLeft = cell(RemapSimpleGroup.LEFT_STICK, row = RemapSimpleGroup.LEFT_STICK.rows.lastIndex, slot = 0)
+        assert(stepCellAcrossGroups(bottomLeft, dRow = 1, dCol = 0, slots = slots) == null)
     }
 
     @Test
     fun theStandaloneEditorsStepper_neverLeavesItsGroup() {
-        val lastColumn = pressTypeColumns.lastIndex
-        val from = cell(RemapSimpleGroup.DPAD, row = 1, column = lastColumn)
-        val next = stepCellWithinGroup(from, dRow = 0, dCol = 1)
+        val lastSlot = Slots - 1
+        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = lastSlot)
+        val next = stepCellWithinGroup(from, dRow = 0, dCol = 1, slots = slots)
         assert(next == from) { "an edge step should stay put, got $next" }
     }
 
@@ -126,8 +144,8 @@ class RemapZoomSceneTest {
     fun aCellKnowsItsGroup_soRepeatedSubInputKeysStayDistinct() {
         // "click" names a row in the utility group AND in both sticks; the group is what tells
         // them apart, in move state and in test tags alike.
-        val onUtility = cell(RemapSimpleGroup.UTILITY, row = 0, column = 0)
-        val onStick = cell(RemapSimpleGroup.LEFT_STICK, row = 0, column = 0)
+        val onUtility = cell(RemapSimpleGroup.UTILITY, row = 0, slot = 0)
+        val onStick = cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 0)
         assert(onUtility.inputKey == onStick.inputKey) { "the keys should be the colliding pair" }
         assert(onUtility != onStick)
         assert(cellTestTag(onUtility) != cellTestTag(onStick))
@@ -137,13 +155,13 @@ class RemapZoomSceneTest {
     fun twoRowsOfOneGroupSharingASubInputKeyStayDistinct() {
         // Start and Select are both a "click" — different SOURCES, one group, one table. Their
         // cells were the same object until the row spec became the identity (2026-09-17).
-        val start = cell(RemapSimpleGroup.UTILITY, row = 0, column = 0)
-        val select = cell(RemapSimpleGroup.UTILITY, row = 1, column = 0)
+        val start = cell(RemapSimpleGroup.UTILITY, row = 0, slot = 0)
+        val select = cell(RemapSimpleGroup.UTILITY, row = 1, slot = 0)
         assert(start.inputKey == select.inputKey) { "the keys should be the colliding pair" }
         assert(start != select) { "got $start and $select" }
         assert(cellTestTag(start) != cellTestTag(select))
         // And the d-pad can actually walk between them.
-        assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0) == select)
+        assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0, slots = slots) == select)
     }
 
     @Test
@@ -181,6 +199,89 @@ class RemapZoomSceneTest {
      * [commandDisplay] (Dylan, 2026-09-20). The basic view showed no device glyph at all and
      * resolved its own text, so the two views disagreed about the same binding.
      */
+    /**
+     * A row is a STACK now (Dylan, 2026-09-20): every command on the input, auto-sorted into the
+     * press-type order the table's columns used to run in, with several of one type allowed.
+     */
+    @Test
+    fun aRowsCommandsAreSortedByPressType_andSeveralMayShareOne() {
+        fun command(id: Long, type: ActivatorType, key: String, order: Int = 0) =
+            ActivatorGraph(
+                Activator(id = id, groupInputId = 1L, type = type, orderIndex = order),
+                listOf(
+                    Binding(
+                        id = id * 10,
+                        activatorId = id,
+                        outputType = BindingOutputType.KEY_PRESS,
+                        args = key,
+                    ),
+                ),
+            )
+
+        val row = GroupInputGraph(
+            input = GroupInput(id = 1L, bindingGroupId = 1L, inputKey = "button_a"),
+            activators = listOf(
+                command(3L, ActivatorType.RELEASE_PRESS, "UP"),
+                command(1L, ActivatorType.LONG_PRESS, "LONG"),
+                command(2L, ActivatorType.FULL_PRESS, "PRESS"),
+                // An UNBOUND command is a cancelled "New", not something to show.
+                ActivatorGraph(
+                    Activator(id = 4L, groupInputId = 1L, type = ActivatorType.DOUBLE_PRESS),
+                    listOf(Binding(id = 40L, activatorId = 4L, outputType = BindingOutputType.UNBOUND)),
+                ),
+            ),
+        )
+        val sorted = row.rowCommands(CommandOrder.PRESS_TYPE).map {
+            BindingOutput.fromEntity(it.binding.outputType, it.binding.args)
+        }
+        assert(sorted.map { (it as BindingOutput.KeyPress).keyCode } == listOf("PRESS", "LONG", "UP")) {
+            "got $sorted"
+        }
+
+        // TWO commands on one press type — the thing the fixed columns could never express.
+        val doubled = row.copy(
+            activators = listOf(
+                ActivatorGraph(
+                    Activator(id = 5L, groupInputId = 1L, type = ActivatorType.LONG_PRESS),
+                    listOf(
+                        Binding(id = 50L, activatorId = 5L, outputType = BindingOutputType.KEY_PRESS, args = "ONE", orderIndex = 0),
+                        Binding(id = 51L, activatorId = 5L, outputType = BindingOutputType.KEY_PRESS, args = "TWO", orderIndex = 1),
+                    ),
+                ),
+            ),
+        ).rowCommands(CommandOrder.PRESS_TYPE)
+        assert(doubled.map { (it.output as BindingOutput.KeyPress).keyCode } == listOf("ONE", "TWO")) {
+            "got $doubled"
+        }
+        // And the row shows one more tile than it holds commands: the trailing "+".
+        assert(rowSlotCount(doubled.size) == 3)
+    }
+
+    /**
+     * Rows are different LENGTHS now, so a step between them clamps to what each actually holds
+     * rather than to a fixed column count.
+     */
+    @Test
+    fun steppingOntoAShorterRow_landsOnItsLastTile() {
+        // The d-pad's first row has five tiles, the second only two.
+        val counts: (RemapSimpleGroup, SimpleRowSpec) -> Int = { group, spec ->
+            if (spec == group.rows[0]) 5 else 2
+        }
+        val from = cell(RemapSimpleGroup.DPAD, row = 0, slot = 4)
+        val down = stepCellAcrossGroups(from, dRow = 1, dCol = 0, slots = counts)
+        assert(down == cell(RemapSimpleGroup.DPAD, row = 1, slot = 1)) { "got $down" }
+
+        // And a step off the SHORT row's end still leaves the table for the neighbour.
+        val onward = stepCellAcrossGroups(
+            cell(RemapSimpleGroup.DPAD, row = 1, slot = 1),
+            dRow = 0,
+            dCol = 1,
+            slots = counts,
+        )
+        assert(onward?.group == RemapSimpleGroup.FACE) { "got $onward" }
+        assert(onward?.slot == 0) { "crossing a flank starts at the first tile, got $onward" }
+    }
+
     @Test
     fun aCommandReadsTheSameWayInBothViews() {
         val outputs = listOf(BindingOutput.KeyPress("ESCAPE"))
