@@ -71,6 +71,23 @@ class MoveModeState<K : Any> {
     val active: Boolean get() = origin != null
 
     /**
+     * A move that ended WITHOUT relocating anything — cancelled outright, or released back where
+     * it started — as `origin to target`.
+     *
+     * It exists so the visuals can play the move BACKWARDS instead of teleporting: a tile that
+     * was carried somewhere and then called off should fly home the way it came (Dylan,
+     * 2026-09-21). The state machine itself is already finished by then — [active] is false — so
+     * this is purely a note for whoever draws the tile, and it is that caller's job to say when
+     * the tile has arrived, with [settled]. A caller that doesn't animate can ignore it; the next
+     * [pickUp] clears it either way.
+     */
+    var returning by mutableStateOf<Pair<K, K>?>(null)
+        private set
+
+    /** The tiles of a [returning] move have arrived home. */
+    fun settled() { returning = null }
+
+    /**
      * Window-space bounds per cell, kept current by [Modifier.moveModeCell]. Only the pointer
      * path reads these, and only during a gesture.
      *
@@ -105,6 +122,8 @@ class MoveModeState<K : Any> {
         dragOffset = Offset.Zero
         pointerDriven = byPointer
         pointerWindow = Offset.Zero
+        // A new lift supersedes any tile still drifting home from the last one.
+        returning = null
     }
 
     /**
@@ -166,13 +185,17 @@ class MoveModeState<K : Any> {
     fun commit(): Pair<K, K>? {
         val from = origin
         val to = target
-        reset()
-        return if (from != null && to != null && from != to) from to to else null
+        val relocated = from != null && to != null && from != to
+        // A no-op drop is a cancellation by another name: nothing moves, so the tile flies home.
+        end(settle = !relocated)
+        return if (from != null && to != null && relocated) from to to else null
     }
 
-    fun cancel() = reset()
+    fun cancel() = end(settle = true)
 
-    private fun reset() {
+    private fun end(settle: Boolean) {
+        val from = origin
+        returning = if (settle && from != null) from to (target ?: from) else null
         origin = null
         target = null
         dragOffset = Offset.Zero

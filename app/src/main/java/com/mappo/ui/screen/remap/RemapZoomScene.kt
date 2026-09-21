@@ -30,15 +30,6 @@ import androidx.compose.ui.unit.dp
 
 internal fun zoomCardTestTag(group: RemapSimpleGroup): String = "zoom-card:${group.name}"
 
-/** Distance between two cards' centres — the order neighbouring tables compose in. */
-internal fun cardDistance(geometry: SceneGeometry, from: RemapSimpleGroup, to: RemapSimpleGroup): Float {
-    val a = geometry.cards.getValue(from)
-    val b = geometry.cards.getValue(to)
-    val dx = (a.x + a.width / 2) - (b.x + b.width / 2)
-    val dy = (a.y + a.height / 2) - (b.y + b.height / 2)
-    return dx.value * dx.value + dy.value * dy.value
-}
-
 /**
  * The cell one grid step from [from], CROSSING into the neighbouring group when the step leaves
  * its table — the scene's stepper for a controller-driven move.
@@ -248,11 +239,20 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
  * flush to it, which is exactly the "table on its own side, controller beside it" framing, while
  * the utility card — the only one in the middle — genuinely centres.
  */
-internal fun cameraAxis(cardStart: Float, cardExtent: Float, viewportExtent: Float, sceneExtent: Float): Float {
+internal fun cameraAxis(cardStart: Float, cardExtent: Float, viewportExtent: Float, sceneExtent: Float): Float =
+    clampCameraAxis(cardStart + cardExtent / 2f - viewportExtent / 2f, viewportExtent, sceneExtent)
+
+/**
+ * Hold one camera axis inside the scene — the only positions the camera may occupy.
+ *
+ * Shared with the TOUCH PAN (2026-09-21), which moves the camera directly rather than by picking
+ * a card: a finger and a d-pad must be able to reach exactly the same set of views, or the two
+ * ways of navigating the scene would disagree about where its edges are.
+ */
+internal fun clampCameraAxis(value: Float, viewportExtent: Float, sceneExtent: Float): Float {
     val slack = sceneExtent - viewportExtent
-    val centred = cardStart + cardExtent / 2f - viewportExtent / 2f
     // Scene smaller than the window: centre the scene itself rather than pinning it to a corner.
-    return if (slack <= 0f) slack / 2f else centred.coerceIn(0f, slack)
+    return if (slack <= 0f) slack / 2f else value.coerceIn(0f, slack)
 }
 
 /** How much of the viewport one column takes — the group's table, leaving the rest for the

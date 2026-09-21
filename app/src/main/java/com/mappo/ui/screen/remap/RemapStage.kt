@@ -8,6 +8,9 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +25,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -35,8 +39,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Measurable
@@ -62,7 +68,7 @@ import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The remap controls view — basic AND advanced — as ONE set of elements that zoom between two
@@ -207,10 +213,106 @@ internal fun RemapStage(
             }
         }
 
-        // Which groups' advanced tables exist right now. Composing seven of them costs far more
-        // than one frame, so the opened group's arrives immediately and the rest one per frame
-        // once the zoom has landed, nearest card first — they only have to be there by the time
-        // someone pans to one or carries a command into it.
+        // ── Touch panning (2026-09-21, Dylan) ────────────────────────────────────────────────
+        //
+        // The camera parks on a GROUP, which is the right model for a d-pad: it follows focus,
+        // and there is no free-roaming cursor to get lost with. A finger has no focus to follow,
+        // so that left touch users tapping the sliver of a neighbouring card to get to it, when
+        // the instinct is to drag the scene. The scene is now draggable — the camera is the same
+        // camera and obeys the same [clampCameraAxis] bounds, so both ways of navigating reach
+        // exactly the same views, and nothing about the gamepad path changes.
+        val panScope = rememberCoroutineScope()
+        val panEnabled = zoomed && !moveState.active
+        fun clampCamera(value: Offset): Offset = with(density) {
+            Offset(
+                x = clampCameraAxis(value.x, viewportW.toPx(), scene.width.toPx()),
+                y = clampCameraAxis(value.y, viewportH.toPx(), scene.height.toPx()),
+            )
+        }
+        /** Drag the scene by [delta]; returns the part of it the scene's edges actually allowed. */
+        fun pan(delta: Offset): Offset {
+            val from = camera.value
+            val to = clampCamera(from - delta)
+            panScope.launch { camera.snapTo(to) }
+            return from - to
+        }
+        /**
+         * Adopt whichever group the viewport has come to rest over.
+         *
+         * Only when it CHANGES: re-parking the camera on the group it is already on would yank a
+         * deliberate off-centre view back to centre every time the finger lifted. A new group
+         * animates in the ordinary way, so a pan that crosses the scene ends framed like a
+         * d-pad walk would leave it — and the header chrome, the entry focus and the resting-card
+         * dimming all follow, since they key off the focused group.
+         */
+        fun settleOnNearestGroup() {
+            val centre = with(density) {
+                camera.value + Offset(viewportW.toPx() / 2f, viewportH.toPx() / 2f)
+            }
+            val nearest = groups.minByOrNull { group ->
+                val rect = scene.cards.getValue(group)
+                with(density) {
+                    val dx = rect.x.toPx() + rect.width.toPx() / 2f - centre.x
+                    val dy = rect.y.toPx() + rect.height.toPx() / 2f - centre.y
+                    dx * dx + dy * dy
+                }
+            }
+            if (nearest != null && nearest != focus) onLookAt(nearest)
+        }
+        /**
+         * **Is a finger actually dragging right now?**
+         *
+         * The gate on the nested-scroll route below, and it is not optional. Compose scrolls a
+         * newly focused node into view through the very same `scrollable` machinery a finger
+         * uses — `ContentInViewNode` dispatches it as `NestedScrollSource.UserInput` — so a card
+         * whose table has nothing left to scroll hands the leftover straight to this connection.
+         * Ungated, walking the d-pad from one card to the next SNAPPED the camera, which cancels
+         * the pan that focus had just started: the camera sat where it was while focus carried
+         * on without it (Dylan, 2026-09-21). Checking the `source` can't tell the two apart;
+         * only the presence of a finger can.
+         *
+         * Observed in the Initial pass and never consumed, so nothing downstream is disturbed.
+         */
+        var dragging by remember { mutableStateOf(false) }
+        // Drags that START on a card belong to that card's own scrollers first; the scene takes
+        // only what they leave — which is what makes "keep dragging past the end of a table"
+        // carry on into the scene instead of stopping dead.
+        val panConnection = remember(scene, panEnabled) {
+            object : NestedScrollConnection {
+                override fun onPostScroll(
+                    consumed: Offset,
+                    available: Offset,
+                    source: NestedScrollSource,
+                ): Offset = if (panEnabled && dragging && available != Offset.Zero) {
+                    pan(available)
+                } else {
+                    Offset.Zero
+                }
+            }
+        }
+
+        /**
+         * Which groups' advanced tables exist right now: NONE at rest, ALL of them once zoomed.
+         *
+         * Zoomed in, the scene is one canvas the user pans around (by d-pad or by finger), so
+         * every card on it has to be a real, finished card — a table that materializes as you
+         * arrive at it is the thing that reads as the view still loading (Dylan, 2026-09-21).
+         * They used to arrive one per frame, nearest first, and the reason has expired: the table
+         * that made seven of them too expensive pre-exposed a tile for every (input × press type)
+         * intersection, and a row is now just the commands that exist (see [rowCommands]).
+         *
+         * **What survives is the one-frame deferral, and it is load-bearing.** Composing the
+         * tables on the frame the box is TAPPED is what made opening a group feel sluggish — the
+         * frame that should be starting the zoom spends itself building tables instead. The
+         * opened group's table still arrives immediately (it is the one being zoomed into, and
+         * the crossfade needs it); everything else lands one frame later, while the zoom is
+         * already travelling. And nothing is composed at all while the basic view is at rest, so
+         * the screen still costs what it always did to show.
+         *
+         * If a big configuration ever makes that second frame drop, the fix is inside the table —
+         * the rows are plain Columns, and going lazy there would spend the effort where the tiles
+         * actually are — not by staggering the cards again.
+         */
         val live = remember { mutableStateListOf<RemapSimpleGroup>() }
         LaunchedEffect(focus) {
             val open = focus
@@ -220,13 +322,8 @@ internal fun RemapStage(
             }
             if (open !in live) live.add(open)
             if (live.size == groups.size) return@LaunchedEffect
-            delay(ExpandMillis.toLong())
-            groups.filter { it !in live }
-                .sortedBy { cardDistance(scene, open, it) }
-                .forEach {
-                    withFrameNanos { }
-                    live.add(it)
-                }
+            withFrameNanos { }
+            live.addAll(groups.filter { it !in live })
         }
 
         val slots = buildList<@Composable () -> Unit> {
@@ -283,6 +380,43 @@ internal fun RemapStage(
             }
         }
 
+        Box(
+            Modifier
+                .fillMaxSize()
+                // Watch for a finger past touch slop, consuming nothing. See [dragging].
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        var downAt: Offset? = null
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull()
+                            if (change == null || !change.pressed) {
+                                downAt = null
+                                dragging = false
+                                continue
+                            }
+                            val from = downAt ?: change.position.also { downAt = it }
+                            if ((change.position - from).getDistance() > viewConfiguration.touchSlop) {
+                                dragging = true
+                            }
+                        }
+                    }
+                }
+                .nestedScroll(panConnection)
+                // And drags that start anywhere ELSE — the plate, the controller, the gaps
+                // between cards — pan directly. Nothing is consumed until the gesture has passed
+                // touch slop without a card claiming it, so taps, tile menus and the long-press
+                // carry are all untouched.
+                .pointerInput(panEnabled) {
+                    if (!panEnabled) return@pointerInput
+                    detectDragGestures(
+                        onDragEnd = { settleOnNearestGroup() },
+                    ) { change, delta ->
+                        change.consume()
+                        pan(delta)
+                    }
+                },
+        ) {
         // The cards know the stage draws their tiles in flight for them, and hide the ones the
         // overlay is standing in for rather than drawing each twice.
         CompositionLocalProvider(LocalMoveOverlay provides true) {
@@ -435,11 +569,14 @@ internal fun RemapStage(
                     )
                 }
 
-                // A card the camera is not on recedes as the zoom takes hold — but every card comes
-                // back up while a command is being CARRIED, since they are all drop targets.
-                val moveActive = moveState.active
+                // A card the camera is not on recedes as the zoom takes hold — but every card
+                // comes back up while a command is being CARRIED (they are all drop
+                // targets) and while the scene is being DRAGGED (they are all where the finger
+                // might be heading). Dimming what the user is actively reaching for reads as the
+                // view resisting them.
+                val allLit = moveState.active || dragging
                 fun dimOf(group: RemapSimpleGroup): Float =
-                    if (group == focus || moveActive) 1f else 1f - (1f - RestingCardAlpha) * p
+                    if (group == focus || allLit) 1f else 1f - (1f - RestingCardAlpha) * p
 
                 layout(width, height) {
                     platePlaceable.place(plateNow.left, plateNow.top)
@@ -484,6 +621,7 @@ internal fun RemapStage(
             viewingLayer = viewingLayer,
             config = config,
         )
+        }
     }
 }
 
@@ -623,12 +761,24 @@ private fun StageAdvancedContent(
             // The touch equivalent, observed in the Initial pass and never consumed: a finger
             // reaching into a half-visible card brings it over without taking the press away
             // from whatever tile it landed on.
+            //
+            // Only a press that STAYS PUT counts (2026-09-21). A press that travels is a scroll
+            // or a pan of the scene, and pulling the camera onto this card the moment such a
+            // gesture began fought the finger for the rest of it.
             .pointerInput(group) {
-                awaitPointerEventScope {
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    var travelled = 0f
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) onLookAt()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        travelled = maxOf(travelled, (change.position - down.position).getDistance())
+                        if (!change.pressed) break
                     }
+                    if (travelled <= viewConfiguration.touchSlop) onLookAt()
                 }
             }
             // The focused card carries the editor's identity, so anything asking for "the open

@@ -145,6 +145,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputDialog
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -649,11 +650,15 @@ private fun AdvancedTable(
     val previewTarget = moveState.target?.takeIf { it.group == group }
     // Is the HOST drawing the tiles in flight above the stage? Then this table draws neither of
     // them: the overlay is standing in for both, and a card can't show a tile leaving it anyway
-    // (see [LocalMoveOverlay]).
-    val overlayInFlight = LocalMoveOverlay.current && moveState.active
+    // (see [LocalMoveOverlay]). A move that has been CALLED OFF still counts — its tiles are
+    // flying home, and they would flash back into their slots the instant the state cleared.
+    val overlayHosted = LocalMoveOverlay.current
+    val flightOrigin = moveState.origin ?: moveState.returning?.first.takeIf { overlayHosted }
+    val flightHovered = moveState.target ?: moveState.returning?.second.takeIf { overlayHosted }
+    val overlayInFlight = overlayHosted && flightOrigin != null
     fun carriedByOverlay(key: CellKey, command: RowCommand?): Boolean = overlayInFlight && (
-        key == moveState.origin ||
-            (command != null && key == moveState.target && moveState.target != moveState.origin)
+        key == flightOrigin ||
+            (command != null && key == flightHovered && flightHovered != flightOrigin)
         )
 
     // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
@@ -804,13 +809,22 @@ private fun AdvancedTable(
         // On the centre card the two glyph columns meet in the middle, so each drops its INNER
         // padding to [CentreGlyphInset] — the glyphs cluster on the centre line instead of
         // sitting a full column's padding apart across the split (Dylan, 2026-09-21).
-        val glyphWidth =
-            if (p.centred) GlyphColumnWidth - GlyphColumnPadding + CentreGlyphInset else GlyphColumnWidth
+        // A centred pane's INNER padding is the one that shrinks — and it is applied as padding
+        // rather than by narrowing the box, so the glyph sits that far from the centre line
+        // instead of merely re-centring in a narrower column (which only moves it half as far).
+        // A mirrored pane's inner edge is its END; a normal one's is its START.
+        val innerPad = if (p.centred) CentreGlyphInset else GlyphColumnPadding
         val glyphColumn: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                 p.rows.forEach { row ->
                     Box(
-                        modifier = Modifier.width(glyphWidth).height(TileHeight),
+                        modifier = Modifier
+                            .width(TableGlyphSize + GlyphColumnPadding + innerPad)
+                            .height(TileHeight)
+                            .padding(
+                                start = if (p.mirrored) GlyphColumnPadding else innerPad,
+                                end = if (p.mirrored) innerPad else GlyphColumnPadding,
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         InputGlyphs.SubInputGlyph(
@@ -1514,7 +1528,10 @@ private fun CommandTile(
         MinputActionMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
-            actions = actions(),
+            // Built only when the menu is actually up. Every card's table composes at once now
+            // (see RemapStage's `live`), and a closed menu's eight verbs — each with its own
+            // callback — were being allocated for every tile in the scene on every composition.
+            actions = if (menuOpen) actions() else emptyList(),
             placement = MinputMenuPlacement.End,
             caret = true,
         )
@@ -1558,9 +1575,18 @@ internal val LocalMoveOverlay = staticCompositionLocalOf { false }
  * clips (see [LocalMoveOverlay]).
  *
  * Positions come from the move state's own cell registry, which is in WINDOW space — the one
- * space every card shares — converted into this overlay by [stageOrigin]. They are re-read every
- * frame rather than per recomposition: the registry is a plain map, and the camera pans while a
- * command is being carried between groups, so both ends of the flight keep moving under it.
+ * space every card shares — converted into this overlay by [stageOrigin], and re-read every
+ * frame: the registry is a plain map, and both ends of a flight keep moving (the camera pans
+ * toward the group a command is carried into, and that card scrolls the destination slot into
+ * view).
+ *
+ * **A tile in flight is positioned RELATIVE TO THE SLOT IT IS AIMED AT, never in absolute stage
+ * coordinates** (Dylan, 2026-09-21). [carriedResidual] is how far it still has to go; it decays
+ * to nothing over [MoveSlideMillis], and the slot it is measured from is re-read each frame. So
+ * the tile lands exactly on its slot however far the scene has travelled underneath it, instead
+ * of animating toward where the slot USED to be and then shuffling onto it once the pan
+ * finished. Re-aiming mid-flight (the d-pad walking the target on) re-anchors the residual
+ * rather than restarting the journey, so the tile never jumps back to where it was lifted from.
  */
 @Composable
 internal fun MoveOverlay(
@@ -1572,60 +1598,98 @@ internal fun MoveOverlay(
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
 ) {
-    val origin = moveState.origin ?: return
-    val target = moveState.target ?: origin
+    val live = moveState.origin
+    // A move that has been called off is still on screen: its tiles fly home rather than
+    // teleporting, and the overlay keeps drawing them until `settled()` says they have arrived.
+    val settling = moveState.returning
+    val origin = live ?: settling?.first ?: return
+    val hovered = (if (live != null) moveState.target else settling?.second) ?: origin
     val order = LocalCommandOrder.current
     val lifted = rowCommandsFor(viewingSet, viewingLayer, origin.row, order).getOrNull(origin.slot)
         ?: return
     // Null when the target is a row's "+": that is an ADD, and nothing comes back the other way.
-    val displaced = if (target == origin) {
+    val displaced = if (hovered == origin) {
         null
     } else {
-        rowCommandsFor(viewingSet, viewingLayer, target.row, order).getOrNull(target.slot)
+        rowCommandsFor(viewingSet, viewingLayer, hovered.row, order).getOrNull(hovered.slot)
     }
 
     fun homeOf(key: CellKey): Offset? =
         moveState.boundsOf(key)?.takeIf { !it.isEmpty }?.topLeft?.minus(stageOrigin)
 
-    var originHome by remember(origin) { mutableStateOf(homeOf(origin) ?: Offset.Zero) }
-    var targetHome by remember(origin) { mutableStateOf(homeOf(origin) ?: Offset.Zero) }
+    val start = homeOf(origin) ?: Offset.Zero
+    var originHome by remember(origin) { mutableStateOf(start) }
+    var hoveredHome by remember(origin) { mutableStateOf(start) }
+    /** Where the carried tile is aimed — the slot it is measured FROM. */
+    var aimHome by remember(origin) { mutableStateOf(start) }
+    /** How far the carried tile still is from that slot. Always decaying toward zero. */
+    val carriedResidual = remember(origin) { Animatable(Offset.Zero, Offset.VectorConverter) }
+
     LaunchedEffect(origin, stageOrigin) {
+        var aimed = origin
         while (isActive) {
             withFrameNanos { }
-            val from = moveState.origin ?: break
-            val to = moveState.target ?: break
+            val liveNow = moveState.origin
+            val hoveredNow =
+                (if (liveNow != null) moveState.target else moveState.returning?.second) ?: origin
+            // Once the move is called off the tile is aimed at its OWN slot: the same flight,
+            // run backwards.
+            val aimNow = if (liveNow != null) hoveredNow else origin
             // A cell scrolled entirely out of its viewport registers an empty rect; keeping the
-            // last real one stops the tile in flight from snapping to the stage's corner.
-            homeOf(from)?.let { originHome = it }
-            homeOf(to)?.let { targetHome = it }
+            // last real one stops a tile in flight from snapping to the stage's corner.
+            homeOf(origin)?.let { originHome = it }
+            homeOf(hoveredNow)?.let { hoveredHome = it }
+            val next = homeOf(aimNow) ?: aimHome
+            when {
+                // Under the finger: the residual is simply whatever separates the finger from
+                // the slot it happens to be over, so releasing anywhere leaves the tile exactly
+                // where it is and the decay below carries it from there.
+                liveNow != null && moveState.pointerDriven -> {
+                    aimed = aimNow
+                    carriedResidual.snapTo(originHome + moveState.dragOffset - next)
+                }
+                aimNow != aimed -> {
+                    // Re-anchor onto the new slot WITHOUT moving the tile: everything it still
+                    // has to travel becomes residual.
+                    carriedResidual.snapTo(aimHome + carriedResidual.value - next)
+                    aimed = aimNow
+                    launch { carriedResidual.animateTo(Offset.Zero, tween(MoveSlideMillis)) }
+                }
+            }
+            aimHome = next
         }
     }
 
-    // The carried tile. On the POINTER path it belongs under the finger, unanimated; on the
-    // controller path it travels to whichever slot the d-pad has aimed at, and retargets in
-    // flight when the aim moves again.
-    val carried = remember(origin) { Animatable(originHome, Offset.VectorConverter) }
-    LaunchedEffect(targetHome, moveState.pointerDriven) {
-        if (!moveState.pointerDriven) carried.animateTo(targetHome, tween(MoveSlideMillis))
-    }
-    val carriedAt = if (moveState.pointerDriven) originHome + moveState.dragOffset else carried.value
+    // The displaced tile takes the vacated slot — and gives it back if the move is called off.
+    // A PROGRESS value rather than an animated offset, so both of its endpoints can keep moving
+    // without the animation restarting from wherever it began.
+    val swapping = live != null && displaced != null
+    val swap = remember(origin, hovered) { Animatable(0f) }
+    LaunchedEffect(swap, swapping) { swap.animateTo(if (swapping) 1f else 0f, tween(MoveSlideMillis)) }
 
-    // The displaced tile takes the vacated slot. Driven by a PROGRESS value rather than an
-    // animated offset so that both of its endpoints can keep moving (the camera) without the
-    // animation restarting from wherever it began.
-    val swap = remember(origin, target) { Animatable(0f) }
-    LaunchedEffect(swap) { swap.animateTo(1f, tween(MoveSlideMillis)) }
+    // The tiles have arrived; let the state machine forget the move.
+    LaunchedEffect(settling) {
+        if (settling == null) return@LaunchedEffect
+        delay(MoveSlideMillis.toLong())
+        moveState.settled()
+    }
 
     Box(modifier.fillMaxSize()) {
         if (displaced != null) {
             FloatingTile(
                 command = displaced,
                 config = config,
-                position = lerp(targetHome, originHome, swap.value),
+                position = lerp(hoveredHome, originHome, swap.value),
                 scale = 1f,
             )
         }
-        FloatingTile(command = lifted, config = config, position = carriedAt, scale = MoveLiftScale)
+        FloatingTile(
+            command = lifted,
+            config = config,
+            position = aimHome + carriedResidual.value,
+            // The swell goes as the move does: a tile flying home has already been put down.
+            scale = if (live != null) MoveLiftScale else 1f,
+        )
     }
 }
 
@@ -1773,7 +1837,10 @@ private fun TileContent(
             Icon(
                 pressGlyph,
                 contentDescription = pressType.columnLabel(),
-                modifier = Modifier.align(Alignment.CenterStart).size(TilePressGlyphSize),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = TilePressGlyphStartBias)
+                    .size(TilePressGlyphSize),
                 tint = colors.icon,
             )
         }
@@ -2157,9 +2224,12 @@ private val TileGap = 4.dp
  *  full-height panel has going spare.
  *
  *  Strictly between: it is applied by an inner Column that holds ONLY the rows, so raising it
- *  can't also push the header away or pad the bottom of the table. Those are
- *  [HeaderToRowsGap] and [TableVerticalPadding], and they stay put. */
-private val TileRowGap = 16.dp
+ *  can't also push the header away or pad the bottom of the table. Those are the table's own
+ *  top/bottom padding, and they stay put.
+ *
+ *  Tightened from 16dp on 2026-09-21 (Dylan), in the same pass that made the tiles taller: the
+ *  rows carry more weight of their own now and needed less air between them. */
+private val TileRowGap = 11.dp
 
 /** Input glyphs render LARGER here than in the old rows — with the press-type word gone from
  *  the cell, the glyph is the row's only identity, so it carries the weight of one. */
@@ -2174,9 +2244,9 @@ private val GlyphColumnWidth = TableGlyphSize + GlyphColumnPadding * 2
 
 /** The INNER padding of a glyph column on the centre card, where two panes meet: the two glyph
  *  columns sat a full [GlyphColumnPadding] apart on either side of [CentreSplitGap], which put a
- *  visible gulf down the middle of the card (Dylan, 2026-09-21). The outer side keeps its full
- *  padding, so only the meeting edge tightens. */
-private val CentreGlyphInset = 4.dp
+ *  visible gulf down the middle of the card (Dylan, 2026-09-21; tightened again the same day).
+ *  The outer side keeps its full padding, so only the meeting edge closes up. */
+private val CentreGlyphInset = 2.dp
 
 /** FULLY rounded (Dylan, 2026-09-18): half the tile's height, so a cell is a capsule. An
  *  absolute radius rather than a percentage, per the minput rule — a percentage turns anything
@@ -2191,6 +2261,11 @@ private val TilePressGlyphSize = 19.dp
 
 /** Air between that glyph and the command it fronts. */
 private val TilePressGlyphGap = 6.dp
+
+/** How far in from the tile's content edge the press glyph sits (Dylan, 2026-09-21). Flush
+ *  against a capsule's start it read as crowded by the curve; the glyphs ink well inside their
+ *  boxes, so a couple of dp buys the optical inset without a visible gap. */
+private val TilePressGlyphStartBias = 3.dp
 
 /** The press-type picker's row rhythm. */
 private val TypeDialogTitleGap = 10.dp
