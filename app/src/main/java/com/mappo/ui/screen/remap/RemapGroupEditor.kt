@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -67,6 +68,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,6 +80,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
@@ -97,6 +100,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.mappo.R
@@ -128,6 +132,7 @@ import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPanelHeaderHeight
+import com.mappo.ui.minput.MinputBoxStroke
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputScrollbarThickness
@@ -522,6 +527,9 @@ private data class TypeEdit(val bindingId: Long, val current: ActivatorType)
 private data class Pane(
     val rows: List<RowCommands>,
     val mirrored: Boolean,
+    /** Does this pane's glyph column meet another one on the card's centre line? Its inner edge
+     *  then tightens to [CentreGlyphInset], so the two columns read as one cluster. */
+    val centred: Boolean,
     val scroll: ScrollState,
     val onViewport: (Rect) -> Unit,
 )
@@ -588,10 +596,11 @@ private fun AdvancedTable(
     val startScroll = rememberScrollState()
     var endViewport by remember { mutableStateOf<Rect?>(null) }
     var startViewport by remember { mutableStateOf<Rect?>(null) }
-    val endPane = Pane(endRows, mirrored = true, scroll = endScroll) { endViewport = it }
+    val endPane = Pane(endRows, mirrored = true, centred = true, scroll = endScroll) { endViewport = it }
     val startPane = Pane(
         rows = if (split) startRows else rows,
         mirrored = if (split) false else mirrored,
+        centred = split,
         scroll = startScroll,
     ) { startViewport = it }
     /** Which way a row's slots run on screen: outward from its own pane's glyph column. */
@@ -638,6 +647,14 @@ private fun AdvancedTable(
     // group displaces nothing here.
     val previewOrigin = moveState.origin?.takeIf { it.group == group }
     val previewTarget = moveState.target?.takeIf { it.group == group }
+    // Is the HOST drawing the tiles in flight above the stage? Then this table draws neither of
+    // them: the overlay is standing in for both, and a card can't show a tile leaving it anyway
+    // (see [LocalMoveOverlay]).
+    val overlayInFlight = LocalMoveOverlay.current && moveState.active
+    fun carriedByOverlay(key: CellKey, command: RowCommand?): Boolean = overlayInFlight && (
+        key == moveState.origin ||
+            (command != null && key == moveState.target && moveState.target != moveState.origin)
+        )
 
     // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
     // because a held activate button auto-repeats while focus moves, so the release can arrive
@@ -670,6 +687,8 @@ private fun AdvancedTable(
     // currently there slides back into the vacated slot, so the exchange is visible before
     // it's committed — and visibly undone the moment the target moves on.
     fun displacementFor(key: CellKey): DpOffset {
+        // The overlay carries both ends of the exchange; nothing in the grid moves.
+        if (overlayInFlight) return DpOffset.Zero
         val origin = previewOrigin ?: return DpOffset.Zero
         val target = previewTarget ?: return DpOffset.Zero
         if (origin == target) return DpOffset.Zero
@@ -713,7 +732,7 @@ private fun AdvancedTable(
         val cellH = with(density) { TileHeight.toPx() }
         // The scroller's content starts after the table's own top padding, applied INSIDE
         // verticalScroll. (There is no column-header row any more — see AdvancedTable's KDoc.)
-        val headerH = with(density) { TableVerticalPadding.toPx() }
+        val headerH = with(density) { TableTopPadding.toPx() }
 
         val left = col * stepX
         if (left < hScroll.value) {
@@ -782,11 +801,16 @@ private fun AdvancedTable(
     // [Pane.mirrored], not the card's: the centre card's left pane is mirrored and its right
     // pane is not.
     val pane: @Composable (Pane, Modifier) -> Unit = { p, paneModifier ->
+        // On the centre card the two glyph columns meet in the middle, so each drops its INNER
+        // padding to [CentreGlyphInset] — the glyphs cluster on the centre line instead of
+        // sitting a full column's padding apart across the split (Dylan, 2026-09-21).
+        val glyphWidth =
+            if (p.centred) GlyphColumnWidth - GlyphColumnPadding + CentreGlyphInset else GlyphColumnWidth
         val glyphColumn: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                 p.rows.forEach { row ->
                     Box(
-                        modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
+                        modifier = Modifier.width(glyphWidth).height(TileHeight),
                         contentAlignment = Alignment.Center,
                     ) {
                         InputGlyphs.SubInputGlyph(
@@ -889,6 +913,7 @@ private fun AdvancedTable(
                                     enabled = editable && groupId != null,
                                     cellKey = cellKey,
                                     moveState = moveState,
+                                    carried = carriedByOverlay(cellKey, command),
                                     displacement = displacementFor(cellKey),
                                     previewOrigin = previewOrigin,
                                     onCommitMove = { commitMove(it) },
@@ -1048,7 +1073,12 @@ private fun AdvancedTable(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
+                        .padding(
+                            start = 8.dp,
+                            end = 8.dp,
+                            top = TableTopPadding,
+                            bottom = TableBottomPadding,
+                        ),
                 ) {
                     if (split) {
                         CentreSplit(
@@ -1068,7 +1098,9 @@ private fun AdvancedTable(
             MinputScrollbar(
                 state = vScroll,
                 orientation = Orientation.Vertical,
-                modifier = Modifier.align(Alignment.CenterEnd).padding(vertical = TableVerticalPadding),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(top = TableTopPadding, bottom = TableBottomPadding),
             )
         }
         // Under the body, inset to the table's own margin. Outside the vertical scroller so it
@@ -1212,8 +1244,9 @@ private fun PressTypeDialog(
  * of dissolving into it. **Regular Press deliberately has no glyph** — it is the ordinary case,
  * and an icon for "nothing special" is noise on the tile the user sees most.
  *
- * **The "+"** ([output] null): transparent, strokeless, a dimmed plus. The absence of any
- * chrome is the signal — the create affordance shouldn't compete with the commands beside it.
+ * **The "+"** ([output] null): unfilled, a dimmed plus inside a hairline ring ([tileOutline]).
+ * The missing FILL is the signal — the create affordance shouldn't compete with the commands
+ * beside it — while the ring still gives the empty slot a footprint to aim at.
  *
  * Output glyph and text deliberately do NOT take the press accent (readability); the container
  * tint, the press glyph and the "+" carry it.
@@ -1232,6 +1265,10 @@ private fun CommandTile(
     enabled: Boolean,
     cellKey: CellKey,
     moveState: MoveModeState<CellKey>,
+    /** Is the stage's [MoveOverlay] drawing this tile right now? Then the one in the grid goes
+     *  invisible — its slot, its focus ring and its drop marker stay exactly where they are, and
+     *  the tile itself is over in the overlay, where no card's edge can clip it. */
+    carried: Boolean,
     /** Grid-step offset this tile should animate to while a move previews a swap. */
     displacement: DpOffset,
     /** The lifted cell of the move currently being previewed — live OR still committing.
@@ -1446,16 +1483,12 @@ private fun CommandTile(
                 }
                 scaleX = lift
                 scaleY = lift
+                if (carried) alpha = 0f
             }
             .minputInteractiveMotion(pressInteraction)
             .clip(shape)
             .background(container, shape)
-            // Empty cells stay strokeless by spec; defined ones wear the family bevel.
-            .then(
-                if (output != null) {
-                    Modifier.border(minputBevelBorder(container, TileCorner), shape)
-                } else Modifier,
-            )
+            .then(tileOutline(container, output != null, shape))
             .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = pressInteraction,
@@ -1465,78 +1498,14 @@ private fun CommandTile(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (output == null) {
-            // The row's create affordance. A plus and nothing else: it is a slot, not a command.
-            Icon(
-                Icons.Filled.Add,
-                contentDescription = null,
-                modifier = Modifier.size(EmptyTilePlusSize),
-                // Alpha rides in the palette color itself — no extra .alpha() here, or the
-                // value in Theme.kt would stop being what renders.
-                tint = colors.plus,
-            )
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = TileContentPadding),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // The press type's own glyph, at the tile's start edge. Absent on Regular Press,
-                // and the text simply takes the whole tile then rather than sitting beside a gap.
-                pressType?.pressIcon()?.let { icon ->
-                    Icon(
-                        icon,
-                        contentDescription = pressType.columnLabel(),
-                        modifier = Modifier.size(TilePressGlyphSize),
-                        tint = colors.icon,
-                    )
-                    Spacer(Modifier.width(TilePressGlyphGap))
-                }
-                // The device glyph belongs to the COMMAND line, not to the tile (Dylan,
-                // 2026-09-19): spanning both rows it read as an icon for the label as well, and
-                // left the label hanging off the start of the thing it names. The label now sits
-                // centred OVER its command.
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    if (label != null) {
-                        Text(
-                            text = label.uppercase(),
-                            style = minputOverlineTextStyle(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        if (showDeviceIcon) {
-                            InputGlyphs.outputPainter(output)?.let { painter ->
-                                Icon(
-                                    painter,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(TileOutputGlyphSize),
-                                    tint = LocalContentColor.current,
-                                )
-                                Spacer(Modifier.width(MinputGlyphLabelGap))
-                            }
-                        }
-                        Text(
-                            text = outputText,
-                            style = minputMiniTextStyle(),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            // ALWAYS one line, label or no label. A wrapped command pushed the
-                            // glyph off-centre and made a labelled tile and an unlabelled one
-                            // read as different components; ellipsis is the honest overflow.
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
+        TileContent(
+            colors = colors,
+            pressType = pressType,
+            output = output,
+            label = label,
+            outputText = outputText,
+            showDeviceIcon = showDeviceIcon,
+        )
 
         // Beside the tile, not over it: the cell IS the thing being acted on, and a menu
         // dropped on top of it hides the command you're deciding about. Mirrors to the start
@@ -1561,6 +1530,253 @@ private fun CommandTile(
             .clip(shape)
             .indication(focusInteraction, minputIndication()),
     )
+    }
+}
+
+/**
+ * **Does the HOST draw the tile in flight?** (Dylan, 2026-09-21.)
+ *
+ * A card clips: its body scrolls in both directions and its rows sit beside a frozen glyph
+ * column, so a tile lifted out of the top-right slot had its swollen corner sliced off by the
+ * viewport's edge, and a tile carried toward another group simply stopped at its own card's rim —
+ * the move committed correctly, but nothing on screen said so.
+ *
+ * The fix is to draw the tile being carried OUTSIDE every card, at the top of the stage, where
+ * nothing clips it and the whole scene is one coordinate space ([MoveOverlay]). Where that
+ * happens, the tiles in the grid that the overlay is standing in for hide themselves rather than
+ * rendering twice. A host that doesn't draw the overlay keeps the old in-grid slide, which is
+ * correct as far as its own card's edges.
+ */
+internal val LocalMoveOverlay = staticCompositionLocalOf { false }
+
+/**
+ * The tiles IN FLIGHT, drawn above the whole stage.
+ *
+ * Up to two: the tile being CARRIED, and — when it is hovering over a command rather than a row's
+ * "+" — the tile it would displace, sliding the other way. Both are drawn here rather than in
+ * their own cards because either end of the exchange may be in a different card, and a card
+ * clips (see [LocalMoveOverlay]).
+ *
+ * Positions come from the move state's own cell registry, which is in WINDOW space — the one
+ * space every card shares — converted into this overlay by [stageOrigin]. They are re-read every
+ * frame rather than per recomposition: the registry is a plain map, and the camera pans while a
+ * command is being carried between groups, so both ends of the flight keep moving under it.
+ */
+@Composable
+internal fun MoveOverlay(
+    moveState: MoveModeState<CellKey>,
+    /** The stage's own top-left in window space. */
+    stageOrigin: Offset,
+    viewingSet: ActionSetGraph?,
+    viewingLayer: ActionLayerGraph?,
+    config: ControllerConfig?,
+    modifier: Modifier = Modifier,
+) {
+    val origin = moveState.origin ?: return
+    val target = moveState.target ?: origin
+    val order = LocalCommandOrder.current
+    val lifted = rowCommandsFor(viewingSet, viewingLayer, origin.row, order).getOrNull(origin.slot)
+        ?: return
+    // Null when the target is a row's "+": that is an ADD, and nothing comes back the other way.
+    val displaced = if (target == origin) {
+        null
+    } else {
+        rowCommandsFor(viewingSet, viewingLayer, target.row, order).getOrNull(target.slot)
+    }
+
+    fun homeOf(key: CellKey): Offset? =
+        moveState.boundsOf(key)?.takeIf { !it.isEmpty }?.topLeft?.minus(stageOrigin)
+
+    var originHome by remember(origin) { mutableStateOf(homeOf(origin) ?: Offset.Zero) }
+    var targetHome by remember(origin) { mutableStateOf(homeOf(origin) ?: Offset.Zero) }
+    LaunchedEffect(origin, stageOrigin) {
+        while (isActive) {
+            withFrameNanos { }
+            val from = moveState.origin ?: break
+            val to = moveState.target ?: break
+            // A cell scrolled entirely out of its viewport registers an empty rect; keeping the
+            // last real one stops the tile in flight from snapping to the stage's corner.
+            homeOf(from)?.let { originHome = it }
+            homeOf(to)?.let { targetHome = it }
+        }
+    }
+
+    // The carried tile. On the POINTER path it belongs under the finger, unanimated; on the
+    // controller path it travels to whichever slot the d-pad has aimed at, and retargets in
+    // flight when the aim moves again.
+    val carried = remember(origin) { Animatable(originHome, Offset.VectorConverter) }
+    LaunchedEffect(targetHome, moveState.pointerDriven) {
+        if (!moveState.pointerDriven) carried.animateTo(targetHome, tween(MoveSlideMillis))
+    }
+    val carriedAt = if (moveState.pointerDriven) originHome + moveState.dragOffset else carried.value
+
+    // The displaced tile takes the vacated slot. Driven by a PROGRESS value rather than an
+    // animated offset so that both of its endpoints can keep moving (the camera) without the
+    // animation restarting from wherever it began.
+    val swap = remember(origin, target) { Animatable(0f) }
+    LaunchedEffect(swap) { swap.animateTo(1f, tween(MoveSlideMillis)) }
+
+    Box(modifier.fillMaxSize()) {
+        if (displaced != null) {
+            FloatingTile(
+                command = displaced,
+                config = config,
+                position = lerp(targetHome, originHome, swap.value),
+                scale = 1f,
+            )
+        }
+        FloatingTile(command = lifted, config = config, position = carriedAt, scale = MoveLiftScale)
+    }
+}
+
+/** One tile in flight: the same face it wears in the grid, placed in the overlay's own space. */
+@Composable
+private fun FloatingTile(
+    command: RowCommand,
+    config: ControllerConfig?,
+    position: Offset,
+    scale: Float,
+) {
+    val display = commandDisplay(command.binding, listOf(command.output), config)
+    val colors = command.type.columnColors()
+    val container = colors.tile.compositeOver(MinputElevatedContainer)
+    val shape = RoundedCornerShape(TileCorner)
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+            .width(TileWidth)
+            .height(TileHeight)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(shape)
+            .background(container, shape)
+            .then(tileOutline(container, defined = true, shape = shape)),
+        contentAlignment = Alignment.Center,
+    ) {
+        TileContent(
+            colors = colors,
+            pressType = command.type,
+            output = command.output,
+            label = display.label,
+            outputText = display.text,
+            showDeviceIcon = display.glyph != null,
+        )
+    }
+}
+
+/**
+ * A tile's ring: the family bevel on a command, a hairline outline on the row's "+".
+ *
+ * The "+" used to be strokeless — chrome-less by spec, so it wouldn't compete with the commands
+ * beside it. It went the other way (Dylan, 2026-09-21): with nothing but a glyph, the slot had no
+ * footprint, so neither the size of the thing you were about to create nor the fact that it is a
+ * drop target read at all. The ring is faint enough to keep the hierarchy it was avoiding.
+ */
+@Composable
+private fun tileOutline(container: Color, defined: Boolean, shape: RoundedCornerShape): Modifier =
+    if (defined) {
+        Modifier.border(minputBevelBorder(container, TileCorner), shape)
+    } else {
+        Modifier.border(
+            MinputBoxStroke,
+            MaterialTheme.colorScheme.outline.copy(alpha = EmptyTileOutlineAlpha),
+            shape,
+        )
+    }
+
+/**
+ * What a tile shows — the "+", or a command's press glyph, label and name.
+ *
+ * Shared by the tile in the grid and by the floating copy the stage carries during a move
+ * ([MoveOverlay]), so a tile in flight is the same object the user picked up.
+ *
+ * **The press glyph is positioned, not packed** (Dylan, 2026-09-21). It used to lead a Row, which
+ * made it part of the tile's flex: a Long Press tile centred its name in what was left of the
+ * tile rather than in the tile, so the same command sat at two different x-offsets depending on
+ * its press type. The glyph is now pinned to the start edge and the name block is centred in the
+ * tile, with the glyph's width reserved on BOTH sides so the two can never collide.
+ */
+@Composable
+private fun TileContent(
+    colors: PressTypeColors,
+    pressType: ActivatorType?,
+    output: BindingOutput?,
+    label: String?,
+    outputText: String,
+    showDeviceIcon: Boolean,
+) {
+    if (output == null) {
+        // The row's create affordance. A plus and nothing else: it is a slot, not a command.
+        Icon(
+            Icons.Filled.Add,
+            contentDescription = null,
+            modifier = Modifier.size(EmptyTilePlusSize),
+            // Alpha rides in the palette color itself — no extra .alpha() here, or the
+            // value in Theme.kt would stop being what renders.
+            tint = colors.plus,
+        )
+        return
+    }
+    val pressGlyph = pressType?.pressIcon()
+    Box(modifier = Modifier.fillMaxSize().padding(horizontal = TileContentPadding)) {
+        // The device glyph belongs to the COMMAND line, not to the tile (Dylan, 2026-09-19):
+        // spanning both rows it read as an icon for the label as well, and left the label hanging
+        // off the start of the thing it names. The label now sits centred OVER its command.
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                // Reserved symmetrically, so the name stays centred in the TILE. Regular Press
+                // has no glyph and no gutter, and takes the whole width.
+                .padding(horizontal = if (pressGlyph != null) TilePressGlyphSize + TilePressGlyphGap else 0.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (label != null) {
+                Text(
+                    text = label.uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                if (showDeviceIcon) {
+                    InputGlyphs.outputPainter(output)?.let { painter ->
+                        Icon(
+                            painter,
+                            contentDescription = null,
+                            modifier = Modifier.size(TileOutputGlyphSize),
+                            tint = LocalContentColor.current,
+                        )
+                        Spacer(Modifier.width(MinputGlyphLabelGap))
+                    }
+                }
+                Text(
+                    text = outputText,
+                    style = minputMiniTextStyle(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    // ALWAYS one line, label or no label. A wrapped command pushed the
+                    // glyph off-centre and made a labelled tile and an unlabelled one
+                    // read as different components; ellipsis is the honest overflow.
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (pressGlyph != null) {
+            Icon(
+                pressGlyph,
+                contentDescription = pressType.columnLabel(),
+                modifier = Modifier.align(Alignment.CenterStart).size(TilePressGlyphSize),
+                tint = colors.icon,
+            )
+        }
     }
 }
 
@@ -1925,11 +2141,13 @@ private val ModeLabelCorner = 6.dp
 /** GOVERNING VARIABLE for column width. Every cell, and the header above it, is exactly this
  *  wide — a table whose columns flexed to content would put the same press type at a different
  *  x-offset on every row, destroying the scan the table exists to enable. */
-private val TileWidth = 148.dp
+private val TileWidth = 134.dp
 
 /** Cell height. Taller than the old 38dp command rows because a cell now stacks an overline
- *  label above the output text where the row had a separate label field beside it. */
-private val TileHeight = 40.dp
+ *  label above the output text where the row had a separate label field beside it — and taller
+ *  again on 2026-09-21 (Dylan), narrowing in the same pass: a tile reads as a chunkier key that
+ *  way, and more of them fit across a row. */
+private val TileHeight = 46.dp
 
 /** Horizontal gap between columns, and between the glyph column and the body. */
 private val TileGap = 4.dp
@@ -1954,6 +2172,12 @@ private val GlyphColumnPadding = 11.dp
  *  column too narrow for what it holds. */
 private val GlyphColumnWidth = TableGlyphSize + GlyphColumnPadding * 2
 
+/** The INNER padding of a glyph column on the centre card, where two panes meet: the two glyph
+ *  columns sat a full [GlyphColumnPadding] apart on either side of [CentreSplitGap], which put a
+ *  visible gulf down the middle of the card (Dylan, 2026-09-21). The outer side keeps its full
+ *  padding, so only the meeting edge tightens. */
+private val CentreGlyphInset = 4.dp
+
 /** FULLY rounded (Dylan, 2026-09-18): half the tile's height, so a cell is a capsule. An
  *  absolute radius rather than a percentage, per the minput rule — a percentage turns anything
  *  taller than it is wide into a lozenge. */
@@ -1977,6 +2201,12 @@ private val TypeDialogRowPadding = 8.dp
  *  command. Its COLOR (and opacity) comes from `PressTypePalette`. */
 private val EmptyTilePlusSize = 22.dp
 
+/** How strongly the "+" tile's outline reads. A hairline ring (Dylan, 2026-09-21) that gives the
+ *  create affordance a FOOTPRINT — a bare glyph floating in the row didn't say how big the thing
+ *  you were about to make would be, nor that the slot was a drop target. Deliberately far below
+ *  the bevel the commands wear: it marks an empty slot, not another command. */
+private const val EmptyTileOutlineAlpha = 0.22f
+
 /** How long a displaced tile takes to slide aside during a swap preview. */
 private const val MoveSlideMillis = 200
 
@@ -1991,8 +2221,15 @@ private const val MoveMarkerAlpha = 0.3f
 private val EdgeScrollZone = 28.dp
 private val EdgeScrollStep = 6.dp
 
-/** Vertical breathing room inside the table, above the header row and below the last row. */
-private val TableVerticalPadding = 6.dp
+/**
+ * Vertical breathing room inside the table.
+ *
+ * Split top from bottom on 2026-09-21 (Dylan): the caption above and the first row of tiles sat
+ * too far apart, and the two were one value, so closing the gap under the header also shaved the
+ * air under the last row.
+ */
+private val TableTopPadding = 2.dp
+private val TableBottomPadding = 6.dp
 
 /** Air under the table, so the last row isn't flush with the card's edge. */
 private val TableBottomGap = 4.dp
@@ -2015,7 +2252,7 @@ private val TableScrollbarGap = 3.dp
  */
 internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
     val rows = group.rows.size.coerceAtLeast(MinTableRows)
-    val table = TableVerticalPadding * 2 +
+    val table = TableTopPadding + TableBottomPadding +
         TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
     return EditorHeaderHeight + table +
         TableScrollbarGap + MinputScrollbarThickness + TableBottomGap

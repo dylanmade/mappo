@@ -156,7 +156,13 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
 
     val left = listOf(RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK)
     val right = listOf(RemapSimpleGroup.RIGHT_SHOULDER, RemapSimpleGroup.FACE, RemapSimpleGroup.RIGHT_STICK)
-    val controllerH = columnW * controllerAspect
+    // The image takes its size from the viewport's HEIGHT, exactly as the basic grid's does
+    // (Dylan, 2026-09-21) — it used to be the full width of the centre column, so a wider screen
+    // (or closing the layouts drawer) grew the controller while the basic view's stayed put, and
+    // the same object was two different sizes depending on how much room was going spare. The
+    // COLUMN is still width-derived: it is the scene's layout grid, and it should stretch.
+    val controllerW = (viewportH * ZoomControllerHeightRatio).coerceAtMost(columnW)
+    val controllerH = controllerW * controllerAspect
     // A band is as tall as the tallest thing IN it, counting the centre column: the image in
     // band 1, the utility card in band 2. Both matter.
     //
@@ -226,9 +232,9 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
     // is what stops the zoom from sliding the controller out from under the group you opened
     // (see RemapStage).
     val controller = SceneRect(
-        x = columnW,
+        x = columnW + ((columnW - controllerW) / 2).coerceAtLeast(0.dp),
         y = bandTops[1] + ((bandHeights[1] - controllerH) / 2).coerceAtLeast(0.dp),
-        width = columnW,
+        width = controllerW,
         height = controllerH,
     )
     return SceneGeometry(width = columnW * 3, height = sceneH, cards = cards, controller = controller)
@@ -252,6 +258,17 @@ internal fun cameraAxis(cardStart: Float, cardExtent: Float, viewportExtent: Flo
 /** How much of the viewport one column takes — the group's table, leaving the rest for the
  *  controller beside it (Dylan, 2026-09-17: roughly two thirds / one third). */
 private const val TableColumnFraction = 0.68f
+
+/**
+ * The zoomed controller's width, as a fraction of the viewport's HEIGHT.
+ *
+ * Height, for the same reason the basic grid's `ControllerColumnHeightRatio` is: the height is
+ * the dimension that does NOT change when the screen widens or the layouts drawer closes, so
+ * taking the size from it pins the picture at one size on any device. 1.09 is what the old
+ * `0.68 × width` came to on a 16:10 screen, so nothing moves on the shape this was tuned on; it
+ * clamps to the column on anything narrower.
+ */
+private const val ZoomControllerHeightRatio = 1.09f
 
 /** Inset from the scene's outer edges, so a flush-clamped card doesn't touch the screen. */
 private val SceneMargin = 10.dp

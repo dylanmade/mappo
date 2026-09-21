@@ -40,6 +40,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -166,7 +168,16 @@ internal fun RemapStage(
     }
     val interactions = remember { groups.associateWith { MutableInteractionSource() } }
 
-    BoxWithConstraints(modifier.clipToBounds()) {
+    // Where the stage itself sits in the window. The move state registers cells in WINDOW space
+    // — the one space every card shares — so this is what converts a cell's rect into a position
+    // in the overlay that draws the tile in flight (see [MoveOverlay]).
+    var stageOrigin by remember { mutableStateOf(Offset.Zero) }
+
+    BoxWithConstraints(
+        modifier
+            .clipToBounds()
+            .onGloballyPositioned { stageOrigin = it.positionInWindow() },
+    ) {
         val viewportW = maxWidth
         val viewportH = maxHeight
         val scene = remember(viewportW, viewportH, aspect) { sceneGeometry(viewportW, viewportH, aspect) }
@@ -272,185 +283,207 @@ internal fun RemapStage(
             }
         }
 
-        Layout(contents = slots) { measurables, constraints ->
-            val width = constraints.maxWidth
-            val height = constraints.maxHeight
-            val p = progress().coerceIn(0f, 1f)
-            val camOffset = camera.value
-            val count = groups.size
+        // The cards know the stage draws their tiles in flight for them, and hide the ones the
+        // overlay is standing in for rather than drawing each twice.
+        CompositionLocalProvider(LocalMoveOverlay provides true) {
+            Layout(contents = slots) { measurables, constraints ->
+                val width = constraints.maxWidth
+                val height = constraints.maxHeight
+                val p = progress().coerceIn(0f, 1f)
+                val camOffset = camera.value
+                val count = groups.size
 
-            val plateM = measurables[0].single()
-            val controllerM = measurables[1].single()
-            val chromeM = List(count) { measurables[2 + it].single() }
-            val basicM = List(count) { measurables[2 + count + it].single() }
-            val advancedM: List<Measurable?> = List(count) { measurables[2 + count * 2 + it].firstOrNull() }
+                val plateM = measurables[0].single()
+                val controllerM = measurables[1].single()
+                val chromeM = List(count) { measurables[2 + it].single() }
+                val basicM = List(count) { measurables[2 + count + it].single() }
+                val advancedM: List<Measurable?> = List(count) { measurables[2 + count * 2 + it].firstOrNull() }
 
-            // ── REST: the 3 × 3 grid, inside the plate's inset ────────────────────────────
-            val edgeX = MinputBarEdgePadding.roundToPx()
-            val edgeY = MinputPodGap.roundToPx()
-            val gridW = (width - edgeX * 2).coerceAtLeast(0)
-            val gridH = (height - edgeY * 2).coerceAtLeast(0)
-            val columnGap = GridColumnGap.roundToPx()
-            val rowGap = GridRowGap.roundToPx()
-            val centreW = (gridH * ControllerColumnHeightRatio).roundToInt().coerceAtMost(gridW / 2)
-            val sideW = ((gridW - centreW - columnGap * 2) / 2).coerceAtLeast(0)
+                // ── REST: the 3 × 3 grid, inside the plate's inset ────────────────────────────
+                val edgeX = MinputBarEdgePadding.roundToPx()
+                val edgeY = MinputPodGap.roundToPx()
+                val gridW = (width - edgeX * 2).coerceAtLeast(0)
+                val gridH = (height - edgeY * 2).coerceAtLeast(0)
+                val columnGap = GridColumnGap.roundToPx()
+                val rowGap = GridRowGap.roundToPx()
+                val centreW = (gridH * ControllerColumnHeightRatio).roundToInt().coerceAtMost(gridW / 2)
+                val sideW = ((gridW - centreW - columnGap * 2) / 2).coerceAtLeast(0)
 
-            val restBasic = arrayOfNulls<androidx.compose.ui.layout.Placeable>(count)
-            fun measureBasic(group: RemapSimpleGroup, minWidth: Int, maxWidth: Int) {
-                val index = groups.indexOf(group)
-                restBasic[index] = basicM[index].measure(
-                    Constraints(
-                        minWidth = minWidth.coerceIn(0, maxWidth.coerceAtLeast(0)),
-                        maxWidth = maxWidth.coerceAtLeast(0),
-                        maxHeight = gridH,
-                    ),
+                val restBasic = arrayOfNulls<androidx.compose.ui.layout.Placeable>(count)
+                fun measureBasic(group: RemapSimpleGroup, minWidth: Int, maxWidth: Int) {
+                    val index = groups.indexOf(group)
+                    restBasic[index] = basicM[index].measure(
+                        Constraints(
+                            minWidth = minWidth.coerceIn(0, maxWidth.coerceAtLeast(0)),
+                            maxWidth = maxWidth.coerceAtLeast(0),
+                            maxHeight = gridH,
+                        ),
+                    )
+                }
+                // A FLANK box wraps its content: the column has the whole side of the plate to
+                // spend, and a box that fits its assignments is the point of the grid.
+                val flanks = GridBands.flatMap { listOf(it.left, it.right) }
+                flanks.forEach { measureBasic(it, 0, sideW) }
+                fun restOf(group: RemapSimpleGroup) = restBasic[groups.indexOf(group)]!!
+                // A CENTRE-COLUMN box does NOT (Dylan, 2026-09-18). It is boxed in by the two flanks
+                // and by the controller above it, so growing to fit its content spills it across
+                // the columns either side — which is exactly what the utility box did, being two
+                // mirrored halves that each claimed a full assignment run. It is pinned to the
+                // centre column's width instead, and its rows scroll inside it, cueing the overflow
+                // with the same fades + chevrons every other box uses. The compromise the middle
+                // column costs.
+                measureBasic(RemapSimpleGroup.UTILITY, centreW, centreW)
+
+                    // The image is INSET in its column (Dylan, 2026-09-21): drawn at the column's
+                // full width it ran flush into the gutters either side and, being the tallest
+                // thing in its band, into the band gaps above and below — reading as artwork
+                // jammed against the grid rather than sitting in it. The COLUMN keeps its width
+                // (it also sizes the utility box); only the picture inside it shrinks.
+                val controllerRestW = (centreW * ControllerImageFraction).roundToInt()
+                val controllerRestH = (controllerRestW * aspect).roundToInt()
+                val bandHeights = GridBands.mapIndexed { index, band ->
+                    var tallest = maxOf(restOf(band.left).height, restOf(band.right).height)
+                    if (index == ControllerBand) tallest = maxOf(tallest, controllerRestH)
+                    if (index == UtilityBand) tallest = maxOf(tallest, restOf(RemapSimpleGroup.UTILITY).height)
+                    tallest
+                }
+                // The whole matrix is CENTRED in the plate and its bands are packed: the grid used
+                // to hand every spare pixel to the middle band, which pushed the shoulder row to the
+                // top of the screen and the stick row to the bottom, far from the controller they
+                // belong to.
+                val bandTotal = bandHeights.sum() + rowGap * 2
+                val bandTop = IntArray(3)
+                bandTop[0] = edgeY + ((gridH - bandTotal) / 2).coerceAtLeast(0)
+                for (band in 1..2) bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
+                val centreX = edgeX + sideW + columnGap
+                val rightX = centreX + centreW + columnGap
+
+                // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
+                // bottom band on the CEILING of its own, and the middle band centres on the
+                // controller. With the flanks already hugging their inner edges, that makes each
+                // corner box point at the controller.
+                fun restTop(band: Int, itemHeight: Int): Int = when (band) {
+                    0 -> bandTop[0] + bandHeights[0] - itemHeight
+                    2 -> bandTop[2]
+                    else -> bandTop[band] + (bandHeights[band] - itemHeight) / 2
+                }
+                val restRects = HashMap<RemapSimpleGroup, StageRect>(count)
+                GridBands.forEachIndexed { band, row ->
+                    val left = restOf(row.left)
+                    restRects[row.left] = StageRect(
+                        left = edgeX + sideW - left.width,
+                        top = restTop(band, left.height),
+                        width = left.width,
+                        height = left.height,
+                    )
+                    val right = restOf(row.right)
+                    restRects[row.right] = StageRect(rightX, restTop(band, right.height), right.width, right.height)
+                }
+                val utility = restOf(RemapSimpleGroup.UTILITY)
+                restRects[RemapSimpleGroup.UTILITY] = StageRect(
+                    left = centreX + (centreW - utility.width) / 2,
+                    top = restTop(UtilityBand, utility.height),
+                    width = utility.width,
+                    height = utility.height,
                 )
-            }
-            // A FLANK box wraps its content: the column has the whole side of the plate to
-            // spend, and a box that fits its assignments is the point of the grid.
-            val flanks = GridBands.flatMap { listOf(it.left, it.right) }
-            flanks.forEach { measureBasic(it, 0, sideW) }
-            fun restOf(group: RemapSimpleGroup) = restBasic[groups.indexOf(group)]!!
-            // A CENTRE-COLUMN box does NOT (Dylan, 2026-09-18). It is boxed in by the two flanks
-            // and by the controller above it, so growing to fit its content spills it across
-            // the columns either side — which is exactly what the utility box did, being two
-            // mirrored halves that each claimed a full assignment run. It is pinned to the
-            // centre column's width instead, and its rows scroll inside it, cueing the overflow
-            // with the same fades + chevrons every other box uses. The compromise the middle
-            // column costs.
-            measureBasic(RemapSimpleGroup.UTILITY, centreW, centreW)
-
-            val controllerRestH = (centreW * aspect).roundToInt()
-            val bandHeights = GridBands.mapIndexed { index, band ->
-                var tallest = maxOf(restOf(band.left).height, restOf(band.right).height)
-                if (index == ControllerBand) tallest = maxOf(tallest, controllerRestH)
-                if (index == UtilityBand) tallest = maxOf(tallest, restOf(RemapSimpleGroup.UTILITY).height)
-                tallest
-            }
-            // The whole matrix is CENTRED in the plate and its bands are packed: the grid used
-            // to hand every spare pixel to the middle band, which pushed the shoulder row to the
-            // top of the screen and the stick row to the bottom, far from the controller they
-            // belong to.
-            val bandTotal = bandHeights.sum() + rowGap * 2
-            val bandTop = IntArray(3)
-            bandTop[0] = edgeY + ((gridH - bandTotal) / 2).coerceAtLeast(0)
-            for (band in 1..2) bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
-            val centreX = edgeX + sideW + columnGap
-            val rightX = centreX + centreW + columnGap
-
-            // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
-            // bottom band on the CEILING of its own, and the middle band centres on the
-            // controller. With the flanks already hugging their inner edges, that makes each
-            // corner box point at the controller.
-            fun restTop(band: Int, itemHeight: Int): Int = when (band) {
-                0 -> bandTop[0] + bandHeights[0] - itemHeight
-                2 -> bandTop[2]
-                else -> bandTop[band] + (bandHeights[band] - itemHeight) / 2
-            }
-            val restRects = HashMap<RemapSimpleGroup, StageRect>(count)
-            GridBands.forEachIndexed { band, row ->
-                val left = restOf(row.left)
-                restRects[row.left] = StageRect(
-                    left = edgeX + sideW - left.width,
-                    top = restTop(band, left.height),
-                    width = left.width,
-                    height = left.height,
+                val controllerRest = StageRect(
+                    left = centreX + (centreW - controllerRestW) / 2,
+                    top = restTop(ControllerBand, controllerRestH),
+                    width = controllerRestW,
+                    height = controllerRestH,
                 )
-                val right = restOf(row.right)
-                restRects[row.right] = StageRect(rightX, restTop(band, right.height), right.width, right.height)
-            }
-            val utility = restOf(RemapSimpleGroup.UTILITY)
-            restRects[RemapSimpleGroup.UTILITY] = StageRect(
-                left = centreX + (centreW - utility.width) / 2,
-                top = restTop(UtilityBand, utility.height),
-                width = utility.width,
-                height = utility.height,
-            )
-            val controllerRest = StageRect(
-                left = centreX,
-                top = restTop(ControllerBand, controllerRestH),
-                width = centreW,
-                height = controllerRestH,
-            )
-            val plateRest = StageRect(edgeX, edgeY, gridW, gridH)
+                val plateRest = StageRect(edgeX, edgeY, gridW, gridH)
 
-            // ── ZOOM: the scene under the camera ─────────────────────────────────────────
-            fun sceneRect(rect: SceneRect) = StageRect(
-                left = rect.x.roundToPx() - camOffset.x.roundToInt(),
-                top = rect.y.roundToPx() - camOffset.y.roundToInt(),
-                width = rect.width.roundToPx(),
-                height = rect.height.roundToPx(),
-            )
-            val zoomRects = groups.associateWith { sceneRect(scene.cards.getValue(it)) }
-            val controllerZoom = sceneRect(scene.controller)
-            val plateZoom = StageRect(
-                left = -camOffset.x.roundToInt(),
-                top = -camOffset.y.roundToInt(),
-                width = scene.width.roundToPx(),
-                height = scene.height.roundToPx(),
-            )
-
-            // ── The travel ───────────────────────────────────────────────────────────────
-            val current = groups.associateWith { lerpRect(restRects.getValue(it), zoomRects.getValue(it), p) }
-            val controllerNow = lerpRect(controllerRest, controllerZoom, p)
-            val plateNow = lerpRect(plateRest, plateZoom, p)
-            val fade = ((p - CrossfadeStart) / CrossfadeSpan).coerceIn(0f, 1f)
-
-            val platePlaceable = plateM.measure(Constraints.fixed(plateNow.width, plateNow.height))
-            // Measured at its ZOOM size and scaled down to wherever it is now: one bitmap,
-            // scaled uniformly, rather than a fresh fit on every frame.
-            val controllerPlaceable = controllerM.measure(
-                Constraints.fixed(controllerZoom.width.coerceAtLeast(1), controllerZoom.height.coerceAtLeast(1)),
-            )
-            val chromePlaceables = groups.map { group ->
-                val rect = current.getValue(group)
-                chromeM[groups.indexOf(group)].measure(
-                    Constraints.fixed(rect.width.coerceAtLeast(0), rect.height.coerceAtLeast(0)),
+                // ── ZOOM: the scene under the camera ─────────────────────────────────────────
+                fun sceneRect(rect: SceneRect) = StageRect(
+                    left = rect.x.roundToPx() - camOffset.x.roundToInt(),
+                    top = rect.y.roundToPx() - camOffset.y.roundToInt(),
+                    width = rect.width.roundToPx(),
+                    height = rect.height.roundToPx(),
                 )
-            }
-            val advancedPlaceables = groups.map { group ->
-                val rect = zoomRects.getValue(group)
-                advancedM[groups.indexOf(group)]?.measure(
-                    Constraints.fixed(rect.width.coerceAtLeast(1), rect.height.coerceAtLeast(1)),
+                val zoomRects = groups.associateWith { sceneRect(scene.cards.getValue(it)) }
+                val controllerZoom = sceneRect(scene.controller)
+                val plateZoom = StageRect(
+                    left = -camOffset.x.roundToInt(),
+                    top = -camOffset.y.roundToInt(),
+                    width = scene.width.roundToPx(),
+                    height = scene.height.roundToPx(),
                 )
-            }
 
-            // A card the camera is not on recedes as the zoom takes hold — but every card comes
-            // back up while a command is being CARRIED, since they are all drop targets.
-            val moveActive = moveState.active
-            fun dimOf(group: RemapSimpleGroup): Float =
-                if (group == focus || moveActive) 1f else 1f - (1f - RestingCardAlpha) * p
+                // ── The travel ───────────────────────────────────────────────────────────────
+                val current = groups.associateWith { lerpRect(restRects.getValue(it), zoomRects.getValue(it), p) }
+                val controllerNow = lerpRect(controllerRest, controllerZoom, p)
+                val plateNow = lerpRect(plateRest, plateZoom, p)
+                val fade = ((p - CrossfadeStart) / CrossfadeSpan).coerceIn(0f, 1f)
 
-            layout(width, height) {
-                platePlaceable.place(plateNow.left, plateNow.top)
-                val controllerScale =
-                    if (controllerZoom.width <= 0) 1f else controllerNow.width.toFloat() / controllerZoom.width
-                controllerPlaceable.placeWithLayer(
-                    x = controllerNow.centerX - controllerPlaceable.width / 2,
-                    y = controllerNow.centerY - controllerPlaceable.height / 2,
-                ) {
-                    scaleX = controllerScale
-                    scaleY = controllerScale
+                val platePlaceable = plateM.measure(Constraints.fixed(plateNow.width, plateNow.height))
+                // Measured at its ZOOM size and scaled down to wherever it is now: one bitmap,
+                // scaled uniformly, rather than a fresh fit on every frame.
+                val controllerPlaceable = controllerM.measure(
+                    Constraints.fixed(controllerZoom.width.coerceAtLeast(1), controllerZoom.height.coerceAtLeast(1)),
+                )
+                val chromePlaceables = groups.map { group ->
+                    val rect = current.getValue(group)
+                    chromeM[groups.indexOf(group)].measure(
+                        Constraints.fixed(rect.width.coerceAtLeast(0), rect.height.coerceAtLeast(0)),
+                    )
+                }
+                val advancedPlaceables = groups.map { group ->
+                    val rect = zoomRects.getValue(group)
+                    advancedM[groups.indexOf(group)]?.measure(
+                        Constraints.fixed(rect.width.coerceAtLeast(1), rect.height.coerceAtLeast(1)),
+                    )
                 }
 
-                // The focused card last, so it sits above its neighbours as they close in.
-                val order = groups.sortedBy { if (it == focus) 1 else 0 }
-                order.forEach { group ->
-                    val index = groups.indexOf(group)
-                    val rect = current.getValue(group)
-                    val dim = dimOf(group)
-                    chromePlaceables[index].place(rect.left, rect.top)
+                // A card the camera is not on recedes as the zoom takes hold — but every card comes
+                // back up while a command is being CARRIED, since they are all drop targets.
+                val moveActive = moveState.active
+                fun dimOf(group: RemapSimpleGroup): Float =
+                    if (group == focus || moveActive) 1f else 1f - (1f - RestingCardAlpha) * p
 
-                    val basic = restBasic[index]!!
-                    contentPlacement(basic, rect, containScale(basic.width, basic.height, rect), (1f - fade) * dim)
+                layout(width, height) {
+                    platePlaceable.place(plateNow.left, plateNow.top)
+                    val controllerScale =
+                        if (controllerZoom.width <= 0) 1f else controllerNow.width.toFloat() / controllerZoom.width
+                    controllerPlaceable.placeWithLayer(
+                        x = controllerNow.centerX - controllerPlaceable.width / 2,
+                        y = controllerNow.centerY - controllerPlaceable.height / 2,
+                    ) {
+                        scaleX = controllerScale
+                        scaleY = controllerScale
+                    }
 
-                    val advanced = advancedPlaceables[index] ?: return@forEach
-                    val zoom = zoomRects.getValue(group)
-                    val advancedScale = containScale(zoom.width, zoom.height, rect)
-                    contentPlacement(advanced, rect, advancedScale, fade * dim)
+                    // The focused card last, so it sits above its neighbours as they close in.
+                    val order = groups.sortedBy { if (it == focus) 1 else 0 }
+                    order.forEach { group ->
+                        val index = groups.indexOf(group)
+                        val rect = current.getValue(group)
+                        val dim = dimOf(group)
+                        chromePlaceables[index].place(rect.left, rect.top)
+
+                        val basic = restBasic[index]!!
+                        contentPlacement(basic, rect, containScale(basic.width, basic.height, rect), (1f - fade) * dim)
+
+                        val advanced = advancedPlaceables[index] ?: return@forEach
+                        val zoom = zoomRects.getValue(group)
+                        val advancedScale = containScale(zoom.width, zoom.height, rect)
+                        contentPlacement(advanced, rect, advancedScale, fade * dim)
+                    }
                 }
             }
         }
+
+        // ABOVE everything: the tile being carried, and the one it would displace. Outside every
+        // card on purpose — a card clips, so a tile lifted from a slot at its rim was sliced by
+        // the viewport's edge, and one carried toward another group stopped dead at its own
+        // card's border even though the move itself crossed (Dylan, 2026-09-21).
+        MoveOverlay(
+            moveState = moveState,
+            stageOrigin = stageOrigin,
+            viewingSet = viewingSet,
+            viewingLayer = viewingLayer,
+            config = config,
+        )
     }
 }
 
@@ -687,6 +720,18 @@ private val GridRowGap = 12.dp
  * one device.
  *
  * 0.385 reproduced the weight share it replaced; Dylan widened it to 0.40 on 2026-09-16. **This
- * is the knob for the controller's resting size.**
+ * is the knob for the controller's resting COLUMN** — the picture inside it is
+ * [ControllerImageFraction] of this.
  */
 private const val ControllerColumnHeightRatio = 0.40f
+
+/**
+ * How much of its column the resting controller image fills (Dylan, 2026-09-21).
+ *
+ * Separate from [ControllerColumnHeightRatio] because the two do different jobs: the column's
+ * width also sizes the utility box beneath the image and the gutters the flanks sit against, so
+ * giving the picture breathing room by narrowing the column would have narrowed the box with it.
+ * **This is the knob for the controller's resting size**; the column is the knob for the grid's
+ * proportions.
+ */
+private const val ControllerImageFraction = 0.85f

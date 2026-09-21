@@ -767,6 +767,53 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * A tile's press-type glyph is POSITIONED, not packed (Dylan, 2026-09-21).
+     *
+     * It used to lead a Row, which made it part of the tile's flex: the command name centred in
+     * whatever the glyph left over, so the same command sat at a different x depending on which
+     * press type it fired on. Asserted as "the name is centred in its own tile" on both a
+     * glyphless Regular Press tile and the Long Press tile beside it.
+     */
+    @Test
+    fun groupEditor_pressGlyph_doesNotShiftTheCommandName() {
+        setScreenLocal(
+            seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
+        )
+
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        // Slot 0 is the Regular Press (no glyph), slot 1 the Long Press — the auto-sort's order.
+        val plain = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val glyphed = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:1", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        // By bounds, not by uniqueness: the basic-view box under the card still holds a node
+        // saying the same thing, faded out behind its own table.
+        fun textIn(name: String, tile: androidx.compose.ui.geometry.Rect) =
+            composeRule.onAllNodesWithText(name, substring = true, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.boundsInRoot }
+                .first { tile.contains(it.center) }
+        val plainText = textIn("ENTER", plain)
+        val glyphedText = textIn("SPACE", glyphed)
+
+        // Each name sits at the SAME offset from its own tile's centre, press glyph or not. (The
+        // offset itself isn't zero: the name is the second half of a centred glyph + name pair.)
+        val plainOffset = plainText.center.x - plain.center.x
+        val glyphedOffset = glyphedText.center.x - glyphed.center.x
+        assert(kotlin.math.abs(plainOffset - glyphedOffset) < 2f) {
+            "the press glyph shifted the name: plain $plainOffset vs glyphed $glyphedOffset " +
+                "(tiles $plain / $glyphed, text $plainText / $glyphedText)"
+        }
+        // And the glyph itself is pinned to that tile's start edge rather than riding the text.
+        val pressGlyph = composeRule.onNodeWithContentDescription("Long Press", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(pressGlyph.center.x < glyphed.center.x) {
+            "the press glyph leads the tile: tile $glyphed, glyph $pressGlyph"
+        }
+    }
+
+    /**
      * The CENTRE card splits at its centre line, like the centre BOX does (Dylan, 2026-09-20):
      * the utility glyphs meet in the middle and their commands radiate outward.
      */
