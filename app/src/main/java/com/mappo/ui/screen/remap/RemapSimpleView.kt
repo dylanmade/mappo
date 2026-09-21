@@ -559,6 +559,10 @@ internal fun GroupRows(
 /**
  * Two tables meeting at a centre line: [end] (mirrored) on the left half, [start] on the right.
  *
+ * Shared with the ADVANCED view (2026-09-20): the centre group's card splits the same way its
+ * box does, so the utility glyphs sit on the card's centre line with their commands radiating
+ * outward, and the two views read as the same object at two scales.
+ *
  * A custom layout because the halves must stay EQUAL while the whole wraps its content — a pair
  * of weighted children would fill the box, and a plain Row would put the centre line wherever
  * the left table happened to end. Each half is as wide as the wider of the two tables (each
@@ -566,7 +570,7 @@ internal fun GroupRows(
  * line within its half.
  */
 @Composable
-private fun CentreSplit(
+internal fun CentreSplit(
     end: @Composable () -> Unit,
     start: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -809,7 +813,7 @@ private val AssignmentDividerHeight = 11.dp
 /** Gutter at the centre group's centre line, keeping its two halves' glyphs off each other.
  *  Tightened from 10dp on 2026-09-17 (Dylan): the utility box's two glyphs sat too far apart
  *  for a pair that reads as one cluster. */
-private val CentreSplitGap = 4.dp
+internal val CentreSplitGap = 4.dp
 
 /** Floor on a table's assignment run, in characters, so a sparse box doesn't shrink to a
  *  sliver. Started as the width of the fixed column it replaced (14 chars, 2026-09-16);

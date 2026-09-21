@@ -745,6 +745,56 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * A LEFT-flank card's body sits at its RIGHT edge (Dylan, 2026-09-20).
+     *
+     * The card reads toward its glyph column, which mirroring pins to the right; left-aligning
+     * the body left the gap on the side the eye starts from and the content floating away from
+     * the controller it belongs to.
+     */
+    @Test
+    fun zoomScene_rightAlignsTheLeftFlanksBody() {
+        setScreenLocal(seedShapedConfig())
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        val card = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val tile = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(tile.left > card.center.x) {
+            "a mirrored card's body should hug its right edge: card $card, tile $tile"
+        }
+    }
+
+    /**
+     * The CENTRE card splits at its centre line, like the centre BOX does (Dylan, 2026-09-20):
+     * the utility glyphs meet in the middle and their commands radiate outward.
+     */
+    @Test
+    fun zoomScene_centreCardsRowsRadiateFromItsCentreLine() {
+        setScreenLocal(seedShapedConfig())
+
+        composeRule.onNodeWithTag("simple-group:UTILITY").performClick()
+        composeRule.waitForIdle()
+        val card = composeRule.onNodeWithTag("zoom-card:UTILITY", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val select = composeRule.onNodeWithTag("cell:UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val start = composeRule.onNodeWithTag("cell:UTILITY:SWITCH_START:click:0", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(select.right <= card.center.x) {
+            "Select's commands run LEFT out of the centre: card $card, select $select"
+        }
+        assert(start.left >= card.center.x) {
+            "Start's commands run RIGHT out of the centre: card $card, start $start"
+        }
+        // Both on one line, as in the box: the glyphs are neighbours, not stacked rows.
+        assert(kotlin.math.abs(select.top - start.top) < 1f) {
+            "the two halves should sit level: $select / $start"
+        }
+    }
+
+    /**
      * The basic view is a 3 × 3 grid (Dylan, 2026-09-17), and the point of rebuilding it that way
      * was this: the utility box belongs in the stick BAND, between the two stick boxes, not at
      * the bottom of the plate below them — which is where three independently-laid-out columns

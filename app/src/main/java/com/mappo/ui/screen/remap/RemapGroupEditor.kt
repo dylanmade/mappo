@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,7 +56,6 @@ import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -127,7 +127,6 @@ import com.mappo.ui.minput.MinputElevatedContainer
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputOverflowScroll
-import com.mappo.ui.minput.MinputPanelDividerInset
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputScrollbar
@@ -461,7 +460,9 @@ internal fun RemapGroupEditor(
                 )
             }
         }
-        HorizontalDivider(Modifier.padding(horizontal = MinputPanelDividerInset))
+        // No rule under the header (Dylan, 2026-09-20): the card's own edge already separates
+        // it from the view, and the tiles below carry enough weight of their own that a line
+        // between them and the caption was only more ink.
 
         AdvancedTable(
             group = group,
@@ -511,6 +512,20 @@ private data class RowCommands(
 /** What the "Type" verb is editing: one command, and the press type it currently fires on. */
 private data class TypeEdit(val bindingId: Long, val current: ActivatorType)
 
+/**
+ * One pane of a card's body: the rows it draws, which side its frozen glyph column sits on,
+ * and the horizontal scroller it reads through.
+ *
+ * Most cards are ONE pane. The centre group is two (2026-09-20), meeting at the card's centre
+ * line — see [CentreSplit], which its basic-view box uses for the same reason.
+ */
+private data class Pane(
+    val rows: List<RowCommands>,
+    val mirrored: Boolean,
+    val scroll: ScrollState,
+    val onViewport: (Rect) -> Unit,
+)
+
 @Composable
 private fun AdvancedTable(
     group: RemapSimpleGroup,
@@ -536,9 +551,7 @@ private fun AdvancedTable(
     // outward from the glyph, so everything keyed on it (stepping, scroll offsets) is untouched
     // by mirroring.
     val mirrored = group.editorMirrored()
-    val columnDirection = if (mirrored) -1 else 1
     val order = LocalCommandOrder.current
-    val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -563,6 +576,30 @@ private fun AdvancedTable(
             commands = (layerGroupInput ?: baseGroupInput).rowCommands(order),
         )
     }
+    // The CENTRE group's card SPLITS like its basic-view box (Dylan, 2026-09-20): rows
+    // anchored END draw on the left half reading outward, rows anchored START on the right
+    // half, and their glyph columns meet on the card's centre line. Every other card is one
+    // pane, mirrored or not as its flank dictates — so this reads the same [anchorFor] the
+    // basic view does rather than special-casing the utility group.
+    val endRows = rows.filter { group.anchorFor(it.spec) == RowAnchor.END }
+    val startRows = rows.filter { group.anchorFor(it.spec) == RowAnchor.START }
+    val split = endRows.isNotEmpty() && startRows.isNotEmpty()
+    val endScroll = rememberScrollState()
+    val startScroll = rememberScrollState()
+    var endViewport by remember { mutableStateOf<Rect?>(null) }
+    var startViewport by remember { mutableStateOf<Rect?>(null) }
+    val endPane = Pane(endRows, mirrored = true, scroll = endScroll) { endViewport = it }
+    val startPane = Pane(
+        rows = if (split) startRows else rows,
+        mirrored = if (split) false else mirrored,
+        scroll = startScroll,
+    ) { startViewport = it }
+    /** Which way a row's slots run on screen: outward from its own pane's glyph column. */
+    fun paneMirroredFor(spec: SimpleRowSpec): Boolean =
+        if (split) group.anchorFor(spec) == RowAnchor.END else mirrored
+    fun scrollFor(spec: SimpleRowSpec): ScrollState =
+        if (split && group.anchorFor(spec) == RowAnchor.END) endScroll else startScroll
+
     fun rowAt(spec: SimpleRowSpec): RowCommands? = rows.firstOrNull { it.spec == spec }
     /** The command a cell holds, or null for the row's trailing "+" slot. */
     fun commandAt(key: CellKey): RowCommand? =
@@ -617,10 +654,6 @@ private fun AdvancedTable(
         // destination — nothing to move, and nothing that could lag a frame behind the data.
     }
 
-    // Viewport of the horizontally scrolling body, in window space — the frame the pointer's
-    // position is compared against for edge-scrolling.
-    var hViewport by remember { mutableStateOf<Rect?>(null) }
-
     // GREEN marks where the lifted tile will land, BLUE where it was picked up from; green wins
     // when they're the same cell, which is how "put it back where I found it" reads as a real
     // destination rather than an absence of one.
@@ -643,9 +676,11 @@ private fun AdvancedTable(
         val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
         val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
         val (row, col) = cellAt(key) ?: return DpOffset.Zero
-        // Mirrored tables lay their slots out right-to-left, so a step toward a higher slot
-        // index moves a tile the other way on screen.
-        val stepX = (TileWidth + TileGap) * columnDirection
+        // A mirrored pane lays its slots out right-to-left, so a step toward a higher slot
+        // index moves a tile the other way on screen. Taken from the LIFTED tile's pane: a
+        // carry between the centre card's two halves crosses panes, and the preview follows
+        // the tile being carried.
+        val stepX = (TileWidth + TileGap) * if (paneMirroredFor(origin.row)) -1 else 1
         val stepY = TileHeight + TileRowGap
         return when (key) {
             // The lifted tile rides to the target. On the POINTER path it follows the finger
@@ -671,6 +706,7 @@ private fun AdvancedTable(
         val target = moveState.target.takeIf { moveState.active && it?.group == group }
             ?: return@LaunchedEffect
         val (row, col) = cellAt(target) ?: return@LaunchedEffect
+        val hScroll = scrollFor(target.row)
         val stepX = with(density) { (TileWidth + TileGap).toPx() }
         val stepY = with(density) { (TileHeight + TileRowGap).toPx() }
         val cellW = with(density) { TileWidth.toPx() }
@@ -704,44 +740,245 @@ private fun AdvancedTable(
         val step = with(density) { EdgeScrollStep.toPx() }
         while (isActive && moveState.pointerDriven) {
             withFrameNanos { }
-            val viewport = hViewport ?: continue
             val x = moveState.pointerWindow.x
-            // Scroll VALUE runs from the glyph outward either way (the mirrored scroller is
-            // reversed), so the edge that increases it is the outward one — right normally,
-            // left when the table is mirrored.
-            val delta = when {
-                x > viewport.right - zone -> step * columnDirection
-                x < viewport.left + zone -> -step * columnDirection
-                else -> 0f
+            // Each pane scrolls on its own, so the finger's x picks which one it is reaching
+            // out of — on the centre card the two halves run in opposite directions.
+            val panes = if (split) {
+                listOf(endViewport to endPane, startViewport to startPane)
+            } else {
+                listOf(startViewport to startPane)
             }
-            if (delta != 0f) {
-                hScroll.scrollBy(delta)
-                moveState.refreshTargetAtPointer()
+            panes.forEach { (viewport, p) ->
+                if (viewport == null) return@forEach
+                if (x < viewport.left - zone || x > viewport.right + zone) return@forEach
+                // Scroll VALUE runs from the glyph outward either way (a mirrored pane's
+                // scroller is reversed), so the edge that increases it is the outward one —
+                // right normally, left when the pane is mirrored.
+                val direction = if (p.mirrored) -1 else 1
+                val delta = when {
+                    x > viewport.right - zone -> step * direction
+                    x < viewport.left + zone -> -step * direction
+                    else -> 0f
+                }
+                if (delta != 0f) {
+                    p.scroll.scrollBy(delta)
+                    moveState.refreshTargetAtPointer()
+                }
             }
         }
     }
 
     /** The slot indices of a row, laid out in the order they are DRAWN. */
-    fun slotOrder(row: RowCommands): List<Int> {
+    fun slotOrder(row: RowCommands, paneMirrored: Boolean): List<Int> {
         val slots = (0 until rowSlotCount(row.commands.size)).toList()
-        return if (mirrored) slots.reversed() else slots
+        return if (paneMirrored) slots.reversed() else slots
     }
 
-    // The frozen glyph column ("column zero"). A lambda because a MIRRORED table places it on
-    // the other side of the body — see [mirrored].
-    val glyphColumn: @Composable () -> Unit = {
-        Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-            group.rows.forEach { spec ->
-                Box(
-                    modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    InputGlyphs.SubInputGlyph(
-                        source = spec.source,
-                        subInputKey = spec.subInputKey,
-                        size = TableGlyphSize,
-                    )
+    // ONE PANE of the card: a frozen glyph column plus the tiles reading outward from it.
+    //
+    // A card normally has one. The CENTRE group has TWO (2026-09-20), meeting at the card's
+    // centre line — its glyphs in the middle with their commands radiating outward, exactly as
+    // its basic-view box reads ([CentreSplit]). Which side a pane's glyphs sit on is its own
+    // [Pane.mirrored], not the card's: the centre card's left pane is mirrored and its right
+    // pane is not.
+    val pane: @Composable (Pane, Modifier) -> Unit = { p, paneModifier ->
+        val glyphColumn: @Composable () -> Unit = {
+            Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                p.rows.forEach { row ->
+                    Box(
+                        modifier = Modifier.width(GlyphColumnWidth).height(TileHeight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        InputGlyphs.SubInputGlyph(
+                            source = row.spec.source,
+                            subInputKey = row.spec.subInputKey,
+                            size = TableGlyphSize,
+                        )
+                    }
                 }
+            }
+        }
+        Row(
+            modifier = paneModifier,
+            // A mirrored pane reads toward its glyphs, so it sits at the card's END edge
+            // rather than leaving its gap there (Dylan, 2026-09-20).
+            horizontalArrangement = if (p.mirrored) Arrangement.End else Arrangement.Start,
+        ) {
+            if (!p.mirrored) {
+                glyphColumn()
+                Spacer(Modifier.width(TileGap))
+            }
+            MinputOverflowScroll(
+                state = p.scroll,
+                orientation = Orientation.Horizontal,
+                // A mirrored pane reads outward from a glyph pinned to its right edge, so its
+                // resting position is the scroller's far end — same bargain the basic view's
+                // mirrored rows strike.
+                reverseScrolling = p.mirrored,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .onGloballyPositioned { p.onViewport(it.boundsInWindow()) },
+            ) {
+                // LAYER 0 — the move markers, drawn beneath EVERY tile.
+                //
+                // They live in their own layer rather than on the cells because z-order
+                // between tiles is per-Row (zIndex only orders siblings), so a marker drawn on
+                // the origin CELL sat above the tile sliding into it. Down here nothing can get
+                // underneath a tile.
+                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                    p.rows.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                            slotOrder(row, p.mirrored).forEach { slot ->
+                                val marker = moveMarkerFor(CellKey(group, row.spec, slot))
+                                Box(
+                                    modifier = Modifier
+                                        .width(TileWidth)
+                                        .height(TileHeight)
+                                        .then(
+                                            if (marker != null) {
+                                                Modifier
+                                                    .clip(RoundedCornerShape(TileCorner))
+                                                    .background(marker)
+                                            } else Modifier,
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // LAYER 1 — the tiles themselves.
+                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                    p.rows.forEach { row ->
+                        val spec = row.spec
+                        val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
+                        val groupId = bindingGroupIdFor(spec)
+                        val topRow = spec == group.rows.first()
+
+                        Row(
+                            modifier = Modifier.zIndex(
+                                when (spec) {
+                                    previewOrigin?.row -> 10f
+                                    previewTarget?.row -> 5f
+                                    else -> 0f
+                                },
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(TileGap),
+                        ) {
+                            slotOrder(row, p.mirrored).forEach { slot ->
+                                val cellKey = CellKey(group, spec, slot)
+                                val command = row.commands.getOrNull(slot)
+                                // How this command prints — the SAME resolution the basic
+                                // view's rows use, so one binding reads the same way in
+                                // both (see [commandDisplay]).
+                                val display = command?.let {
+                                    commandDisplay(it.binding, listOf(it.output), config)
+                                }
+                                val type = command?.type ?: ActivatorType.FULL_PRESS
+                                val title = "$subLabel · ${type.activatorDisplayLabel()}"
+
+                                CommandTile(
+                                    colors = type.columnColors(),
+                                    // The "+" slot wears no press type: it isn't a command
+                                    // yet, and colouring it would claim one.
+                                    pressType = type.takeIf { command != null },
+                                    output = command?.output,
+                                    label = display?.label,
+                                    outputText = display?.text.orEmpty(),
+                                    showDeviceIcon = display?.glyph != null,
+                                    enabled = editable && groupId != null,
+                                    cellKey = cellKey,
+                                    moveState = moveState,
+                                    displacement = displacementFor(cellKey),
+                                    previewOrigin = previewOrigin,
+                                    onCommitMove = { commitMove(it) },
+                                    onControllerLift = { liftHeld = true },
+                                    actions = {
+                                        if (!editable) {
+                                            // Layer view is read-only here: editing routes to
+                                            // the full-screen editor (which materializes the
+                                            // override onto the layer), and an input the layer
+                                            // actually overrides can be handed back to base.
+                                            layerTileActions(
+                                                overridden = row.overridden,
+                                                onEdit = {
+                                                    callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
+                                                },
+                                                onClearOverride = {
+                                                    callbacks.onClearOverride(spec.source, spec.subInputKey)
+                                                },
+                                            )
+                                        } else {
+                                            tileActions(
+                                                defined = command != null,
+                                                clipboardOccupied = callbacks.clipboardOccupied,
+                                                onEdit = {
+                                                    if (command != null) {
+                                                        callbacks.onEditCommand(command.id, command.output, title)
+                                                    } else if (groupId != null) {
+                                                        // The "+" makes the command first, then
+                                                        // opens the picker on it — a new command
+                                                        // starts as a Regular Press and is
+                                                        // retyped from the same menu.
+                                                        callbacks.onAddCommand(
+                                                            groupId,
+                                                            spec.subInputKey,
+                                                            ActivatorType.FULL_PRESS,
+                                                            title,
+                                                        )
+                                                    }
+                                                },
+                                                onLabel = {
+                                                    command?.let {
+                                                        labelTarget = LabelEdit(
+                                                            bindingId = it.id,
+                                                            label = it.binding.label.orEmpty(),
+                                                            outputs = listOf(it.output),
+                                                            showDeviceIcon = it.binding.showDeviceIcon,
+                                                            showDeviceInitials = it.binding.showDeviceInitials,
+                                                        )
+                                                    }
+                                                },
+                                                onType = {
+                                                    command?.let { typeTarget = TypeEdit(it.id, it.type) }
+                                                },
+                                                onSettings = {
+                                                    command?.let { callbacks.onConfigure(it.activator.id, title) }
+                                                },
+                                                onCopy = { command?.let { callbacks.onCopyCommand(it.id) } },
+                                                onPaste = {
+                                                    if (groupId != null) {
+                                                        callbacks.onPasteCommand(command?.id, groupId, spec.subInputKey)
+                                                    }
+                                                },
+                                                onMove = { moveState.pickUp(cellKey, byPointer = false) },
+                                                onClear = { command?.let { callbacks.onDeleteCommand(it.id) } },
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(focusHandle(cellKey))
+                                        .then(
+                                            // Top row escapes UP to the header; every other
+                                            // row steps normally.
+                                            if (topRow) {
+                                                Modifier.focusProperties { up = upTarget }
+                                            } else Modifier,
+                                        )
+                                        .then(
+                                            if (focusRequester != null && topRow && slot == 0) {
+                                                Modifier.focusRequester(focusRequester)
+                                            } else Modifier,
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (p.mirrored) {
+                Spacer(Modifier.width(TileGap))
+                glyphColumn()
             }
         }
     }
@@ -808,191 +1045,21 @@ private fun AdvancedTable(
                 scrollModifier = Modifier.testTag(editorTableTestTag(group)),
                 modifier = Modifier.fillMaxSize(),
             ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
-            ) {
-                if (!mirrored) {
-                    glyphColumn()
-                    Spacer(Modifier.width(TileGap))
-                }
-
-                // ── Scrolling body ────────────────────────────────────────
-                MinputOverflowScroll(
-                    state = hScroll,
-                    orientation = Orientation.Horizontal,
-                    // A mirrored table reads outward from a glyph pinned to its right edge, so
-                    // its resting position is the scroller's far end — same bargain the basic
-                    // view's mirrored rows strike.
-                    reverseScrolling = mirrored,
+                Box(
                     modifier = Modifier
-                        .weight(1f, fill = false)
-                        .onGloballyPositioned { hViewport = it.boundsInWindow() },
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = TableVerticalPadding),
                 ) {
-                    // LAYER 0 — the move markers, drawn beneath EVERY tile.
-                    //
-                    // They live in their own layer rather than on the cells because z-order
-                    // between tiles is per-Row (zIndex only orders siblings), so a marker drawn
-                    // on the origin CELL sat above the tile sliding into it. Down here nothing
-                    // can get underneath a tile.
-                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                        rows.forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                                slotOrder(row).forEach { slot ->
-                                    val marker = moveMarkerFor(CellKey(group, row.spec, slot))
-                                    Box(
-                                        modifier = Modifier
-                                            .width(TileWidth)
-                                            .height(TileHeight)
-                                            .then(
-                                                if (marker != null) {
-                                                    Modifier
-                                                        .clip(RoundedCornerShape(TileCorner))
-                                                        .background(marker)
-                                                } else Modifier,
-                                            ),
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // LAYER 1 — the tiles themselves.
-                    Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                        rows.forEachIndexed { rowIndex, row ->
-                            val spec = row.spec
-                            val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
-                            val groupId = bindingGroupIdFor(spec)
-
-                            Row(
-                                modifier = Modifier.zIndex(
-                                    when (spec) {
-                                        previewOrigin?.row -> 10f
-                                        previewTarget?.row -> 5f
-                                        else -> 0f
-                                    },
-                                ),
-                                horizontalArrangement = Arrangement.spacedBy(TileGap),
-                            ) {
-                                slotOrder(row).forEach { slot ->
-                                    val cellKey = CellKey(group, spec, slot)
-                                    val command = row.commands.getOrNull(slot)
-                                    // How this command prints — the SAME resolution the basic
-                                    // view's rows use, so one binding reads the same way in
-                                    // both (see [commandDisplay]).
-                                    val display = command?.let {
-                                        commandDisplay(it.binding, listOf(it.output), config)
-                                    }
-                                    val type = command?.type ?: ActivatorType.FULL_PRESS
-                                    val title = "$subLabel · ${type.activatorDisplayLabel()}"
-
-                                    CommandTile(
-                                        colors = type.columnColors(),
-                                        // The "+" slot wears no press type: it isn't a command
-                                        // yet, and colouring it would claim one.
-                                        pressType = type.takeIf { command != null },
-                                        output = command?.output,
-                                        label = display?.label,
-                                        outputText = display?.text.orEmpty(),
-                                        showDeviceIcon = display?.glyph != null,
-                                        enabled = editable && groupId != null,
-                                        cellKey = cellKey,
-                                        moveState = moveState,
-                                        displacement = displacementFor(cellKey),
-                                        previewOrigin = previewOrigin,
-                                        onCommitMove = { commitMove(it) },
-                                        onControllerLift = { liftHeld = true },
-                                        actions = {
-                                            if (!editable) {
-                                                // Layer view is read-only here: editing routes to
-                                                // the full-screen editor (which materializes the
-                                                // override onto the layer), and an input the layer
-                                                // actually overrides can be handed back to base.
-                                                layerTileActions(
-                                                    overridden = row.overridden,
-                                                    onEdit = {
-                                                        callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
-                                                    },
-                                                    onClearOverride = {
-                                                        callbacks.onClearOverride(spec.source, spec.subInputKey)
-                                                    },
-                                                )
-                                            } else {
-                                                tileActions(
-                                                    defined = command != null,
-                                                    clipboardOccupied = callbacks.clipboardOccupied,
-                                                    onEdit = {
-                                                        if (command != null) {
-                                                            callbacks.onEditCommand(command.id, command.output, title)
-                                                        } else if (groupId != null) {
-                                                            // The "+" makes the command first, then
-                                                            // opens the picker on it — a new command
-                                                            // starts as a Regular Press and is
-                                                            // retyped from the same menu.
-                                                            callbacks.onAddCommand(
-                                                                groupId,
-                                                                spec.subInputKey,
-                                                                ActivatorType.FULL_PRESS,
-                                                                title,
-                                                            )
-                                                        }
-                                                    },
-                                                    onLabel = {
-                                                        command?.let {
-                                                            labelTarget = LabelEdit(
-                                                                bindingId = it.id,
-                                                                label = it.binding.label.orEmpty(),
-                                                                outputs = listOf(it.output),
-                                                                showDeviceIcon = it.binding.showDeviceIcon,
-                                                                showDeviceInitials = it.binding.showDeviceInitials,
-                                                            )
-                                                        }
-                                                    },
-                                                    onType = {
-                                                        command?.let {
-                                                            typeTarget = TypeEdit(it.id, it.type)
-                                                        }
-                                                    },
-                                                    onSettings = {
-                                                        command?.let { callbacks.onConfigure(it.activator.id, title) }
-                                                    },
-                                                    onCopy = { command?.let { callbacks.onCopyCommand(it.id) } },
-                                                    onPaste = {
-                                                        if (groupId != null) {
-                                                            callbacks.onPasteCommand(command?.id, groupId, spec.subInputKey)
-                                                        }
-                                                    },
-                                                    onMove = { moveState.pickUp(cellKey, byPointer = false) },
-                                                    onClear = { command?.let { callbacks.onDeleteCommand(it.id) } },
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .focusRequester(focusHandle(cellKey))
-                                            .then(
-                                                // Top row escapes UP to the header; every other
-                                                // row steps normally.
-                                                if (rowIndex == 0) {
-                                                    Modifier.focusProperties { up = upTarget }
-                                                } else Modifier,
-                                            )
-                                            .then(
-                                                if (focusRequester != null && rowIndex == 0 && slot == 0) {
-                                                    Modifier.focusRequester(focusRequester)
-                                                } else Modifier,
-                                            ),
-                                    )
-                                }
-                            }
-                        }
+                    if (split) {
+                        CentreSplit(
+                            modifier = Modifier.fillMaxWidth(),
+                            end = { pane(endPane, Modifier) },
+                            start = { pane(startPane, Modifier) },
+                        )
+                    } else {
+                        pane(startPane, Modifier.fillMaxWidth())
                     }
                 }
-                if (mirrored) {
-                    Spacer(Modifier.width(TileGap))
-                    glyphColumn()
-                }
-            }
             }
             // Scrollbars ALONGSIDE the fades and chevrons (Dylan, 2026-09-18) rather than
             // instead of them: a card is a dense grid inside a viewport that usually can't show
@@ -1004,16 +1071,29 @@ private fun AdvancedTable(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(vertical = TableVerticalPadding),
             )
         }
-        MinputScrollbar(
-            state = hScroll,
-            orientation = Orientation.Horizontal,
-            // Value 0 is the RIGHT end on a mirrored table, so its thumb starts there too.
-            reverse = mirrored,
-            // Under the body, inset to the table's own margin. It sits outside the vertical
-            // scroller so it stays put at the card's floor instead of scrolling away with the
-            // rows it describes.
+        // Under the body, inset to the table's own margin. Outside the vertical scroller so it
+        // stays at the card's floor instead of scrolling away with the rows it describes — and
+        // one bar PER PANE, since the centre card's halves scroll independently.
+        Row(
             modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = TableScrollbarGap),
-        )
+            horizontalArrangement = Arrangement.spacedBy(CentreSplitGap),
+        ) {
+            if (split) {
+                MinputScrollbar(
+                    state = endPane.scroll,
+                    orientation = Orientation.Horizontal,
+                    reverse = true,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            MinputScrollbar(
+                state = startPane.scroll,
+                orientation = Orientation.Horizontal,
+                // Value 0 is the RIGHT end on a mirrored pane, so its thumb starts there too.
+                reverse = startPane.mirrored,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Spacer(Modifier.height(TableBottomGap))
 
         labelTarget?.let { target ->
@@ -1937,12 +2017,10 @@ internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
     val rows = group.rows.size.coerceAtLeast(MinTableRows)
     val table = TableVerticalPadding * 2 +
         TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
-    return EditorHeaderHeight + EditorDividerHeight + table +
+    return EditorHeaderHeight + table +
         TableScrollbarGap + MinputScrollbarThickness + TableBottomGap
 }
 
 /** The shortest a card may be, in tile rows. See [advancedEditorHeight]. */
 private const val MinTableRows = 2
 
-/** The inset divider under the header is a hairline; counted so the height math is exact. */
-private val EditorDividerHeight = 1.dp
