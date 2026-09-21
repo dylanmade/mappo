@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasTestTag
@@ -194,7 +195,7 @@ class RemapControlsScreenTest {
 
         // The view zooms into the scene, with the camera on the group that was activated.
         composeRule.onNodeWithTag("group-editor").assertExists()
-        composeRule.onNodeWithContentDescription("Close").assertExists()
+        inOpenCard(hasContentDescription("Close")).assertCountEquals(1)
     }
 
 
@@ -696,7 +697,7 @@ class RemapControlsScreenTest {
         assert(face.right >= viewport.right - 20f) { "face card should reach the right edge: $face" }
         assert(face.left > viewport.width * 0.2f) { "face card should leave room for the controller: $face" }
 
-        composeRule.onNodeWithContentDescription("Close").performClick()
+        inOpenCard(hasContentDescription("Close")).onFirst().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         composeRule.waitForIdle()
@@ -731,7 +732,7 @@ class RemapControlsScreenTest {
             "slot 1 should sit LEFT of slot 0 on a mirrored table: $first / $second"
         }
 
-        composeRule.onNodeWithContentDescription("Close").performClick()
+        inOpenCard(hasContentDescription("Close")).onFirst().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
@@ -1162,13 +1163,12 @@ class RemapControlsScreenTest {
         for (group in RemapSimpleGroup.entries) {
             composeRule.onNodeWithTag("simple-group:${group.name}").performClick()
             composeRule.waitForIdle()
-            val pills = composeRule.onAllNodes(modePillMatcher, useUnmergedTree = true)
-                .fetchSemanticsNodes().size
+            val pills = inOpenCard(modePillMatcher).fetchSemanticsNodes().size
             assert(pills == 1) {
                 "${group.name}: expected one enabled mode pill, found $pills — the header fell " +
                     "back to its dead \"DEFAULT\" label, so the group's preset didn't resolve."
             }
-            composeRule.onNodeWithContentDescription("Close").performClick()
+            inOpenCard(hasContentDescription("Close")).onFirst().performClick()
             composeRule.waitForIdle()
         }
     }
@@ -1191,8 +1191,7 @@ class RemapControlsScreenTest {
         }
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodes(modePillMatcher, useUnmergedTree = true).onFirst()
-            .performSemanticsAction(SemanticsActions.OnClick)
+        inOpenCard(modePillMatcher).onFirst().performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
         // Menu rows live in a Popup, whose bounds come back negated under Robolectric — drive
         // the row through semantics rather than a coordinate click.
@@ -1234,6 +1233,17 @@ class RemapControlsScreenTest {
     private val modePillMatcher = androidx.compose.ui.test.SemanticsMatcher("mode pill") { node ->
         node.config.getOrElseNullable(SemanticsActions.OnClick) { null }?.label == "Change input mode"
     }
+
+    /**
+     * Scope a matcher to the card the camera is ON.
+     *
+     * Every card in the zoomed scene carries the full header from 2026-09-21 (Dylan: the scene
+     * is a canvas the user roams, so "the card the camera is on" stopped meaning "the card being
+     * worked on"). "The Close button" is therefore seven nodes, and a test that means the open
+     * one has to say so — the open card is the one tagged `group-editor`.
+     */
+    private fun inOpenCard(matcher: androidx.compose.ui.test.SemanticsMatcher) =
+        composeRule.onAllNodes(matcher and hasAnyAncestor(hasTestTag("group-editor")), useUnmergedTree = true)
 
     /**
      * Put two bound commands — a Regular and a Long press — on one row of [source], for tests

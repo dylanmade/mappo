@@ -176,6 +176,13 @@ import kotlinx.coroutines.delay
  * so everything keyed on it (scroll offsets, d-pad stepping) is untouched by mirroring; only
  * the rendered order and the sign of a column step flip.
  *
+ * **Every card in the scene carries the full header** (Dylan, 2026-09-21). Only the card the
+ * camera was parked on used to, on the reasoning that seven live mode pills, cogs, kebabs and
+ * Close buttons are seven of everything. But with the scene now a canvas the user roams — by
+ * finger as much as by d-pad — "the card the camera is on" stopped meaning "the card being
+ * worked on", and a card you could see, scroll and edit tiles in but not change the mode of read
+ * as broken rather than restful.
+ *
  * Base-set view edits inline; layer view resolves override→base, renders read-only, and routes
  * cell taps to the full-screen editor (which materializes the override).
  */
@@ -319,13 +326,6 @@ internal fun RemapGroupEditor(
     callbacks: RemapGroupEditorCallbacks,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
-    // Whether this editor is the one being USED. The zoomed scene (2026-09-17) holds every
-    // group's editor at once, and only the group the camera is on wears the interactive header:
-    // seven live mode pills, cogs, kebabs and Close buttons would be seven of everything for a
-    // screen reader, and the chrome of a card you are only seeing the edge of is noise. A
-    // resting card keeps its identity and its mode, as text, and its table stays focusable —
-    // that is how the d-pad walks into it and makes it the live one.
-    chrome: Boolean = true,
     // ── Moves (2026-09-17) ──
     // A host showing SEVERAL editors at once (the zoomed scene) owns the move: one state
     // spanning every table, stepping that can cross from one to the next, a commit that knows
@@ -412,59 +412,56 @@ internal fun RemapGroupEditor(
                 currentMode = primaryGroup?.mode.takeIf { validModes.isNotEmpty() },
                 validModes = validModes,
                 identity = group.headerLabel(),
-                // A resting card states its mode; only the live one lets you change it.
-                enabled = chrome && editable && primaryGroup != null && validModes.size > 1,
+                enabled = editable && primaryGroup != null && validModes.size > 1,
                 onPick = { mode -> primaryGroup?.let { callbacks.onSetBindingGroupMode(it.id, mode) } },
                 modifier = Modifier.focusRequester(headerModePillFocus),
             )
             Spacer(Modifier.weight(1f))
-            if (chrome) {
-                MinputIconButton(
-                    icon = Icons.Filled.Settings,
-                    contentDescription = "Configure $modeName",
-                    onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
-                    enabled = headerCogFocusable,
+            MinputIconButton(
+                icon = Icons.Filled.Settings,
+                contentDescription = "Configure $modeName",
+                onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
+                enabled = headerCogFocusable,
+            )
+            Box {
+                RowKebab(
+                    onClick = { headerMore = true },
+                    contentDescription = "Group options",
+                    modifier = Modifier.focusRequester(headerKebabFocus),
                 )
-                Box {
-                    RowKebab(
-                        onClick = { headerMore = true },
-                        contentDescription = "Group options",
-                        modifier = Modifier.focusRequester(headerKebabFocus),
+                DropdownMenu(expanded = headerMore, onDismissRequest = { headerMore = false }) {
+                    RichMenuItem(
+                        title = "Import $modeName",
+                        helper = "Bring in a mode and inputs from another layout.",
+                        icon = Icons.Filled.Download,
+                        // Future: layout import. Inert while the acquisition flow lands.
+                        onClick = { headerMore = false },
                     )
-                    DropdownMenu(expanded = headerMore, onDismissRequest = { headerMore = false }) {
-                        RichMenuItem(
-                            title = "Import $modeName",
-                            helper = "Bring in a mode and inputs from another layout.",
-                            icon = Icons.Filled.Download,
-                            // Future: layout import. Inert while the acquisition flow lands.
-                            onClick = { headerMore = false },
-                        )
-                        RichMenuItem(
-                            title = "Reset $modeName",
-                            helper = "Return this group to its defaults.",
-                            icon = Icons.Filled.RestartAlt,
-                            enabled = editable && primaryGroup != null,
-                            onClick = {
-                                headerMore = false
-                                primaryGroup?.let { callbacks.onResetGroup(it.id) }
-                            },
-                        )
-                    }
+                    RichMenuItem(
+                        title = "Reset $modeName",
+                        helper = "Return this group to its defaults.",
+                        icon = Icons.Filled.RestartAlt,
+                        enabled = editable && primaryGroup != null,
+                        onClick = {
+                            headerMore = false
+                            primaryGroup?.let { callbacks.onResetGroup(it.id) }
+                        },
+                    )
                 }
-                // No spacer: cog·kebab·close sit adjacent at one rhythm.
-                MinputIconButton(
-                    icon = Icons.Filled.Close,
-                    contentDescription = "Close",
-                    onClick = onClose,
-                    modifier = Modifier
-                        .focusRequester(headerCloseFocus)
-                        .then(
-                            if (focusRequester != null && !editable) {
-                                Modifier.focusRequester(focusRequester)
-                            } else Modifier,
-                        ),
-                )
             }
+            // No spacer: cog·kebab·close sit adjacent at one rhythm.
+            MinputIconButton(
+                icon = Icons.Filled.Close,
+                contentDescription = "Close",
+                onClick = onClose,
+                modifier = Modifier
+                    .focusRequester(headerCloseFocus)
+                    .then(
+                        if (focusRequester != null && !editable) {
+                            Modifier.focusRequester(focusRequester)
+                        } else Modifier,
+                    ),
+            )
         }
         // No rule under the header (Dylan, 2026-09-20): the card's own edge already separates
         // it from the view, and the tiles below carry enough weight of their own that a line
@@ -479,7 +476,7 @@ internal fun RemapGroupEditor(
             editable = editable,
             // A resting card has no header controls to route UP into, and an unattached
             // requester would throw the moment focus searched that way.
-            upTarget = if (chrome) tableUpTarget else FocusRequester.Default,
+            upTarget = tableUpTarget,
             focusRequester = focusRequester.takeIf { editable },
             moveState = moveState,
             stepTarget = stepper,

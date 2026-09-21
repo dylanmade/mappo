@@ -282,5 +282,3 @@ private val BandGap = 14.dp
 /** A pan between groups. Matches the editor's own open/close motion. */
 internal const val CameraMillis = 260
 
-/** Opacity of the cards the camera is not on. */
-internal const val RestingCardAlpha = 0.45f

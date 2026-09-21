@@ -38,6 +38,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -203,12 +206,32 @@ internal fun RemapStage(
                 )
             }
         }
+        /**
+         * **Has the user taken the camera into their own hands?**
+         *
+         * The camera parks on a group, which is right for a d-pad and wrong for a finger: a
+         * canvas that keeps re-centring itself on the nearest group fights every drag (Dylan,
+         * 2026-09-21). So parking is a GAMEPAD behaviour. A pan hands the camera to the user and
+         * it stays theirs — the view is a free canvas, and each drag leaves it exactly where they
+         * let go — until the gamepad is used again, at which point the camera is handed back and
+         * resumes following focus.
+         *
+         * Note it is the PAN that flips this, not touch in general: tapping a tile, opening a
+         * menu, scrolling a table all leave the camera doing what it was doing.
+         */
+        var touchNavigating by remember { mutableStateOf(false) }
         LaunchedEffect(cameraTarget) {
-            val target = cameraTarget ?: run { cameraSeated = false; return@LaunchedEffect }
+            val target = cameraTarget ?: run {
+                cameraSeated = false
+                touchNavigating = false
+                return@LaunchedEffect
+            }
+            // Seating the camera on open is not "following focus" — it is where the zoom lands —
+            // so it happens either way.
             if (!cameraSeated) {
                 cameraSeated = true
                 camera.snapTo(target)
-            } else {
+            } else if (!touchNavigating) {
                 camera.animateTo(target, tween(CameraMillis, easing = FastOutSlowInEasing))
             }
         }
@@ -233,17 +256,18 @@ internal fun RemapStage(
         fun pan(delta: Offset): Offset {
             val from = camera.value
             val to = clampCamera(from - delta)
+            if (from == to) return Offset.Zero
+            touchNavigating = true
             panScope.launch { camera.snapTo(to) }
             return from - to
         }
         /**
          * Adopt whichever group the viewport has come to rest over.
          *
-         * Only when it CHANGES: re-parking the camera on the group it is already on would yank a
-         * deliberate off-centre view back to centre every time the finger lifted. A new group
-         * animates in the ordinary way, so a pan that crosses the scene ends framed like a
-         * d-pad walk would leave it — and the header chrome, the entry focus and the resting-card
-         * dimming all follow, since they key off the focused group.
+         * The camera does NOT move for this — [touchNavigating] is set by then, so the view stays
+         * exactly where the finger left it. What it does is keep the SCENE's idea of where the
+         * user is looking in step with the picture, so that handing back to the gamepad lands
+         * somewhere sensible rather than wherever the cursor was left before the pan began.
          */
         fun settleOnNearestGroup() {
             val centre = with(density) {
@@ -383,6 +407,30 @@ internal fun RemapStage(
         Box(
             Modifier
                 .fillMaxSize()
+                /*
+                 * Handing the camera back to the gamepad.
+                 *
+                 * Any hardware key means the user has put the screen down and picked the pad up,
+                 * so the camera resumes following focus. But focus is still on whatever tile it
+                 * was on before the panning started — possibly a screen away from what the user
+                 * is now looking at — and left alone, the first d-pad press would yank the
+                 * camera back there. So the cursor is seated into the group the pan came to rest
+                 * over FIRST, in the preview pass, before the focus system sees the key: the
+                 * press then steps from where the user is looking.
+                 *
+                 * Nothing is consumed — this only observes.
+                 */
+                .onPreviewKeyEvent { event ->
+                    if (touchNavigating && event.type == KeyEventType.KeyDown) {
+                        touchNavigating = false
+                        focus?.let { group ->
+                            runCatching {
+                                focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus()
+                            }
+                        }
+                    }
+                    false
+                }
                 // Watch for a finger past touch slop, consuming nothing. See [dragging].
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
@@ -569,14 +617,12 @@ internal fun RemapStage(
                     )
                 }
 
-                // A card the camera is not on recedes as the zoom takes hold — but every card
-                // comes back up while a command is being CARRIED (they are all drop
-                // targets) and while the scene is being DRAGGED (they are all where the finger
-                // might be heading). Dimming what the user is actively reaching for reads as the
-                // view resisting them.
-                val allLit = moveState.active || dragging
-                fun dimOf(group: RemapSimpleGroup): Float =
-                    if (group == focus || allLit) 1f else 1f - (1f - RestingCardAlpha) * p
+                // NO card recedes (Dylan, 2026-09-21). Cards the camera was not on used to fade
+                // back to mark the one being edited; with the scene now a canvas the user roams
+                // freely — by finger as much as by d-pad — every card is somewhere they may be
+                // heading, and dimming what someone is reaching for reads as the view resisting
+                // them. The exceptions that had already accumulated (all lit while a command is
+                // being carried, all lit while the scene is dragged) were most of the time.
 
                 layout(width, height) {
                     platePlaceable.place(plateNow.left, plateNow.top)
@@ -590,21 +636,23 @@ internal fun RemapStage(
                         scaleY = controllerScale
                     }
 
-                    // The focused card last, so it sits above its neighbours as they close in.
+                    // The focused card last. Cards don't overlap once the zoom has landed, but
+                    // they pass through each other on the way — the rest grid and the scene put
+                    // them in different places — and the one being opened should travel over its
+                    // neighbours rather than under them.
                     val order = groups.sortedBy { if (it == focus) 1 else 0 }
                     order.forEach { group ->
                         val index = groups.indexOf(group)
                         val rect = current.getValue(group)
-                        val dim = dimOf(group)
                         chromePlaceables[index].place(rect.left, rect.top)
 
                         val basic = restBasic[index]!!
-                        contentPlacement(basic, rect, containScale(basic.width, basic.height, rect), (1f - fade) * dim)
+                        contentPlacement(basic, rect, containScale(basic.width, basic.height, rect), 1f - fade)
 
                         val advanced = advancedPlaceables[index] ?: return@forEach
                         val zoom = zoomRects.getValue(group)
                         val advancedScale = containScale(zoom.width, zoom.height, rect)
-                        contentPlacement(advanced, rect, advancedScale, fade * dim)
+                        contentPlacement(advanced, rect, advancedScale, fade)
                     }
                 }
             }
@@ -753,11 +801,19 @@ private fun StageAdvancedContent(
     focusHandle: (CellKey) -> FocusRequester,
     focusRequester: FocusRequester?,
 ) {
+    // Does the CONTROLLER cursor sit in this card? That — not which group the camera is parked
+    // on — is what the right stick should scroll (Dylan, 2026-09-21): the stick is a reach of the
+    // same hand that moved the cursor here, so the card holding the cursor is the one it means.
+    // Under a finger nothing holds focus and no card answers the stick, which is correct.
+    var holdsCursor by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
             // Focus LEADS the camera: stepping the d-pad into this card's table pans to it.
-            .onFocusChanged { if (it.hasFocus) onLookAt() }
+            .onFocusChanged {
+                holdsCursor = it.hasFocus
+                if (it.hasFocus) onLookAt()
+            }
             // The touch equivalent, observed in the Initial pass and never consumed: a finger
             // reaching into a half-visible card brings it over without taking the press away
             // from whatever tile it landed on.
@@ -786,7 +842,7 @@ private fun StageAdvancedContent(
             .then(if (focused) Modifier.testTag("group-editor") else Modifier),
     ) {
         Box(Modifier.fillMaxSize().testTag(zoomCardTestTag(group))) {
-            CompositionLocalProvider(LocalStickScroll provides focused) {
+            CompositionLocalProvider(LocalStickScroll provides holdsCursor) {
                 RemapGroupEditor(
                     group = group,
                     viewingSet = viewingSet,
@@ -795,7 +851,6 @@ private fun StageAdvancedContent(
                     callbacks = callbacks,
                     onClose = onClose,
                     modifier = Modifier.fillMaxSize(),
-                    chrome = focused,
                     moveState = moveState,
                     stepTarget = stepTarget,
                     onMoveCommitted = onMoveCommitted,
