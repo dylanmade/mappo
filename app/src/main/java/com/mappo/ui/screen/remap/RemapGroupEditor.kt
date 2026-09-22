@@ -493,7 +493,7 @@ internal fun RemapGroupEditor(
 
 /** What the label editor is editing: the command's label, the name it falls back to, and how
  *  it prints. */
-private data class LabelEdit(
+internal data class LabelEdit(
     val bindingId: Long,
     val label: String,
     val outputs: List<BindingOutput>,
@@ -518,7 +518,7 @@ private data class RowCommands(
 )
 
 /** What the "Type" verb is editing: one command, and the press type it currently fires on. */
-private data class TypeEdit(val bindingId: Long, val current: ActivatorType)
+internal data class TypeEdit(val bindingId: Long, val current: ActivatorType)
 
 /**
  * One pane of a card's body: the rows it draws, which side its frozen glyph column sits on,
@@ -622,23 +622,16 @@ private fun AdvancedTable(
         return r to key.slot
     }
 
-    fun stepMoveTarget(dRow: Int, dCol: Int) {
-        val current = moveState.target ?: return
-        // Whichever table holds the drop target does the stepping; the others keep out of it.
-        if (current.group != group) return
-        val next = stepTarget(current, dRow, dCol) ?: return
-        if (next == current) return
-        // A tick per cell crossed: with no finger on the screen the haptic is the only
-        // confirmation that the drop target actually moved.
-        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        moveState.moveTargetTo(next)
-        // Focus FOLLOWS the drop target. Focus is cell-anchored, so this keeps the ring on
-        // the cell being aimed at instead of stranding it on the one the tile was lifted
-        // from — and it means the tile the user then activates IS the destination, so the
-        // confirm needs no focus change of its own. The handle comes from the host, so a
-        // destination in ANOTHER group is reachable the same way.
-        runCatching { focusHandle(next).requestFocus() }
-    }
+    // Whichever table holds the drop target does the stepping; the others keep out of it.
+    fun stepMoveTarget(dRow: Int, dCol: Int) = stepMoveTargetBy(
+        moveState = moveState,
+        stepTarget = stepTarget,
+        focusHandle = focusHandle,
+        haptic = haptic,
+        dRow = dRow,
+        dCol = dCol,
+        owns = { it.group == group },
+    )
 
     // Resolve the binding group that owns a row's source. Rows in a multi-source group
     // (shoulder = trigger + bumper) resolve independently.
@@ -655,13 +648,8 @@ private fun AdvancedTable(
     // (see [LocalMoveOverlay]). A move that has been CALLED OFF still counts — its tiles are
     // flying home, and they would flash back into their slots the instant the state cleared.
     val overlayHosted = LocalMoveOverlay.current
-    val flightOrigin = moveState.origin ?: moveState.returning?.first.takeIf { overlayHosted }
-    val flightHovered = moveState.target ?: moveState.returning?.second.takeIf { overlayHosted }
-    val overlayInFlight = overlayHosted && flightOrigin != null
-    fun carriedByOverlay(key: CellKey, command: RowCommand?): Boolean = overlayInFlight && (
-        key == flightOrigin ||
-            (command != null && key == flightHovered && flightHovered != flightOrigin)
-        )
+    val overlayInFlight = overlayHosted &&
+        (moveState.origin ?: moveState.returning?.first) != null
 
     // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
     // because a held activate button auto-repeats while focus moves, so the release can arrive
@@ -929,73 +917,29 @@ private fun AdvancedTable(
                                     enabled = editable && groupId != null,
                                     cellKey = cellKey,
                                     moveState = moveState,
-                                    carried = carriedByOverlay(cellKey, command),
+                                    carried = moveState.carriedByOverlay(
+                                        key = cellKey,
+                                        hasCommand = command != null,
+                                        hosted = overlayHosted,
+                                    ),
                                     displacement = displacementFor(cellKey),
                                     previewOrigin = previewOrigin,
                                     onCommitMove = { commitMove(it) },
                                     onControllerLift = { liftHeld = true },
                                     actions = {
-                                        if (!editable) {
-                                            // Layer view is read-only here: editing routes to
-                                            // the full-screen editor (which materializes the
-                                            // override onto the layer), and an input the layer
-                                            // actually overrides can be handed back to base.
-                                            layerTileActions(
-                                                overridden = row.overridden,
-                                                onEdit = {
-                                                    callbacks.onOpenInputEditor(spec.source, spec.subInputKey, subLabel)
-                                                },
-                                                onClearOverride = {
-                                                    callbacks.onClearOverride(spec.source, spec.subInputKey)
-                                                },
-                                            )
-                                        } else {
-                                            tileActions(
-                                                defined = command != null,
-                                                clipboardOccupied = callbacks.clipboardOccupied,
-                                                onEdit = {
-                                                    if (command != null) {
-                                                        callbacks.onEditCommand(command.id, command.output, title)
-                                                    } else if (groupId != null) {
-                                                        // The "+" makes the command first, then
-                                                        // opens the picker on it — a new command
-                                                        // starts as a Regular Press and is
-                                                        // retyped from the same menu.
-                                                        callbacks.onAddCommand(
-                                                            groupId,
-                                                            spec.subInputKey,
-                                                            ActivatorType.FULL_PRESS,
-                                                            title,
-                                                        )
-                                                    }
-                                                },
-                                                onLabel = {
-                                                    command?.let {
-                                                        labelTarget = LabelEdit(
-                                                            bindingId = it.id,
-                                                            label = it.binding.label.orEmpty(),
-                                                            outputs = listOf(it.output),
-                                                            showDeviceIcon = it.binding.showDeviceIcon,
-                                                            showDeviceInitials = it.binding.showDeviceInitials,
-                                                        )
-                                                    }
-                                                },
-                                                onType = {
-                                                    command?.let { typeTarget = TypeEdit(it.id, it.type) }
-                                                },
-                                                onSettings = {
-                                                    command?.let { callbacks.onConfigure(it.activator.id, title) }
-                                                },
-                                                onCopy = { command?.let { callbacks.onCopyCommand(it.id) } },
-                                                onPaste = {
-                                                    if (groupId != null) {
-                                                        callbacks.onPasteCommand(command?.id, groupId, spec.subInputKey)
-                                                    }
-                                                },
-                                                onMove = { moveState.pickUp(cellKey, byPointer = false) },
-                                                onClear = { command?.let { callbacks.onDeleteCommand(it.id) } },
-                                            )
-                                        }
+                                        commandCellActions(
+                                            cellKey = cellKey,
+                                            command = command,
+                                            subLabel = subLabel,
+                                            title = title,
+                                            bindingGroupId = groupId,
+                                            overridden = row.overridden,
+                                            editable = editable,
+                                            callbacks = callbacks,
+                                            moveState = moveState,
+                                            onLabel = { labelTarget = it },
+                                            onType = { typeTarget = it },
+                                        )
                                     },
                                     modifier = Modifier
                                         .focusRequester(focusHandle(cellKey))
@@ -1036,45 +980,17 @@ private fun AdvancedTable(
                 // different tiles — no single tile sees both ends of the gesture. Pointer-driven
                 // moves don't take this path; the finger is already saying where to land.
                 .onKeyEvent { event ->
-                    if (!moveState.active || moveState.pointerDriven) return@onKeyEvent false
-                    // The target may have been carried into another group's table, which then
-                    // owns the keys (focus followed it there).
-                    if (moveState.target?.group != group) return@onKeyEvent false
-
-                    // Activate FIRST, and on the key's release — which is why this sits above
-                    // the key-down filter below.
-                    if (event.key in TileActivateKeys) {
-                        if (event.type == KeyEventType.KeyUp) {
-                            val wasLiftingPress = liftHeld
-                            liftHeld = false
-                            // Releasing the button that LIFTED the tile confirms, provided the
-                            // target moved while it was held — ordinary drag-and-drop. Released
-                            // without having moved, it reads as the user taking their thumb off
-                            // a tile they've picked up to look around with, so the move stays
-                            // live and a later press confirms.
-                            val movedWhileHeld = moveState.target != moveState.origin
-                            if (!wasLiftingPress || movedWhileHeld) {
-                                commitMove(moveState.commit())
-                            }
-                        }
-                        return@onKeyEvent true
-                    }
-
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent true
-                    when (event.key) {
-                        // Consuming the arrows is what stops normal focus traversal — focus
-                        // tracks the drop target instead (see stepMoveTarget).
-                        Key.DirectionUp -> { stepMoveTarget(-1, 0); true }
-                        Key.DirectionDown -> { stepMoveTarget(1, 0); true }
-                        Key.DirectionLeft -> { stepMoveTarget(0, -1); true }
-                        Key.DirectionRight -> { stepMoveTarget(0, 1); true }
-                        Key.Back, Key.Escape, Key.ButtonB -> {
-                            moveState.cancel()
-                            liftHeld = false
-                            true
-                        }
-                        else -> true // swallow the rest so focus can't wander mid-move
-                    }
+                    moveModeKeyEvent(
+                        event = event,
+                        moveState = moveState,
+                        // The target may have been carried into another group's table, which
+                        // then owns the keys (focus followed it there).
+                        owns = { it.group == group },
+                        liftHeld = liftHeld,
+                        onLiftHeld = { liftHeld = it },
+                        onStep = { dRow, dCol -> stepMoveTarget(dRow, dCol) },
+                        onCommit = { commitMove(it) },
+                    )
                 },
         ) {
             MinputOverflowScroll(
@@ -1144,26 +1060,121 @@ private fun AdvancedTable(
         }
         Spacer(Modifier.height(TableBottomGap))
 
-        labelTarget?.let { target ->
-            CommandLabelDialog(
-                label = target.label,
-                outputs = target.outputs,
-                config = config,
-                showDeviceIcon = target.showDeviceIcon,
-                showDeviceInitials = target.showDeviceInitials,
-                onCommit = { text, icons, initials ->
-                    callbacks.onSetLabel(target.bindingId, text, icons, initials)
-                },
-                onClose = { labelTarget = null },
-            )
-        }
-        typeTarget?.let { target ->
-            PressTypeDialog(
-                current = target.current,
-                onPick = { type -> callbacks.onSetPressType(target.bindingId, type) },
-                onClose = { typeTarget = null },
-            )
-        }
+        CommandTileDialogs(
+            labelTarget = labelTarget,
+            typeTarget = typeTarget,
+            config = config,
+            callbacks = callbacks,
+            onCloseLabel = { labelTarget = null },
+            onCloseType = { typeTarget = null },
+        )
+    }
+}
+
+/**
+ * The verbs one tile's menu offers, wired to the callbacks that carry them out.
+ *
+ * Shared by the advanced table and the basic view's EDIT MODE (Dylan, 2026-09-22): a tile is the
+ * same object in both, so its menu has to be the same menu. One that differed by where the tile
+ * happened to be drawn would be a different control wearing the same face.
+ *
+ * [onLabel] / [onType] hand back what the two dialog verbs want to edit, because the dialogs
+ * outlive the menu that summoned them (and the tile, once it moves) — they belong to whoever
+ * hosts the tiles. See [CommandTileDialogs], the other half.
+ */
+internal fun commandCellActions(
+    cellKey: CellKey,
+    command: RowCommand?,
+    /** The sub-input's own name ("A Button"), for the editors this opens. */
+    subLabel: String,
+    /** That name qualified by the press type — what an editor opened from here is titled. */
+    title: String,
+    bindingGroupId: Long?,
+    /** Does the viewed LAYER override this row? Only meaningful in layer view. */
+    overridden: Boolean,
+    editable: Boolean,
+    callbacks: RemapGroupEditorCallbacks,
+    moveState: MoveModeState<CellKey>,
+    onLabel: (LabelEdit) -> Unit,
+    onType: (TypeEdit) -> Unit,
+): List<MinputAction> = if (!editable) {
+    // Layer view is read-only here: editing routes to the full-screen editor (which materializes
+    // the override onto the layer), and an input the layer actually overrides can be handed back
+    // to base.
+    layerTileActions(
+        overridden = overridden,
+        onEdit = { callbacks.onOpenInputEditor(cellKey.source, cellKey.inputKey, subLabel) },
+        onClearOverride = { callbacks.onClearOverride(cellKey.source, cellKey.inputKey) },
+    )
+} else {
+    tileActions(
+        defined = command != null,
+        clipboardOccupied = callbacks.clipboardOccupied,
+        onEdit = {
+            if (command != null) {
+                callbacks.onEditCommand(command.id, command.output, title)
+            } else if (bindingGroupId != null) {
+                // The "+" makes the command first, then opens the picker on it — a new command
+                // starts as a Regular Press and is retyped from the same menu.
+                callbacks.onAddCommand(bindingGroupId, cellKey.inputKey, ActivatorType.FULL_PRESS, title)
+            }
+        },
+        onLabel = {
+            command?.let {
+                onLabel(
+                    LabelEdit(
+                        bindingId = it.id,
+                        label = it.binding.label.orEmpty(),
+                        outputs = listOf(it.output),
+                        showDeviceIcon = it.binding.showDeviceIcon,
+                        showDeviceInitials = it.binding.showDeviceInitials,
+                    ),
+                )
+            }
+        },
+        onType = { command?.let { onType(TypeEdit(it.id, it.type)) } },
+        onSettings = { command?.let { callbacks.onConfigure(it.activator.id, title) } },
+        onCopy = { command?.let { callbacks.onCopyCommand(it.id) } },
+        onPaste = {
+            if (bindingGroupId != null) {
+                callbacks.onPasteCommand(command?.id, bindingGroupId, cellKey.inputKey)
+            }
+        },
+        onMove = { moveState.pickUp(cellKey, byPointer = false) },
+        onClear = { command?.let { callbacks.onDeleteCommand(it.id) } },
+    )
+}
+
+/** The two dialogs a tile's menu can summon. Hosted by whoever draws the tiles, not by the tile:
+ *  both outlive the menu, and one of them outlives a tile that has just been moved. */
+@Composable
+internal fun CommandTileDialogs(
+    labelTarget: LabelEdit?,
+    typeTarget: TypeEdit?,
+    config: ControllerConfig?,
+    callbacks: RemapGroupEditorCallbacks,
+    onCloseLabel: () -> Unit,
+    onCloseType: () -> Unit,
+) {
+    labelTarget?.let { target ->
+        CommandLabelDialog(
+            label = target.label,
+            outputs = target.outputs,
+            config = config,
+            showDeviceIcon = target.showDeviceIcon,
+            showDeviceInitials = target.showDeviceInitials,
+            onCommit = { text, icons, initials ->
+                callbacks.onSetLabel(target.bindingId, text, icons, initials)
+            },
+            onClose = onCloseLabel,
+        )
+    }
+    typeTarget?.let { target ->
+        PressTypeDialog(
+            current = target.current,
+            onPick = { type -> callbacks.onSetPressType(target.bindingId, type) },
+            onClose = onCloseType,
+        )
     }
 }
 
@@ -1268,7 +1279,7 @@ private fun PressTypeDialog(
  * tint, the press glyph and the "+" carry it.
  */
 @Composable
-private fun CommandTile(
+internal fun CommandTile(
     colors: PressTypeColors,
     /** The press type whose glyph leads the tile, or null for Regular Press and the "+". */
     pressType: ActivatorType?,
@@ -1297,6 +1308,8 @@ private fun CommandTile(
     onControllerLift: () -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
+    /** How big this tile is and how much it says — the table's, or the basic view's row tile. */
+    look: TileLook = TableTileLook,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // TWO interaction sources, deliberately.
@@ -1343,7 +1356,7 @@ private fun CommandTile(
     // The tint's own alpha IS the strength (see PressTypePalette); a fully transparent tint
     // leaves the plain elevated container, which is exactly what the Press column wants.
     val container = if (output == null) Color.Transparent else colors.tile.compositeOver(MinputElevatedContainer)
-    val shape = RoundedCornerShape(TileCorner)
+    val shape = RoundedCornerShape(look.corner)
 
     // Controller hold-to-move: a key-down starts a timer; crossing the long-press threshold
     // while still held lifts the tile instead of opening the menu. Hardware auto-repeat
@@ -1404,8 +1417,8 @@ private fun CommandTile(
     Box(
         modifier = modifier
             .testTag(cellTestTag(cellKey))
-            .width(TileWidth)
-            .height(TileHeight)
+            .width(look.width)
+            .height(look.height)
             // Lifted tiles ride above their neighbours. zIndex orders SIBLINGS only, so the
             // owning Row carries one too (see AdvancedTable).
             .zIndex(if (isPreviewOrigin) 10f else if (isTarget) 5f else 0f)
@@ -1504,7 +1517,7 @@ private fun CommandTile(
             .minputInteractiveMotion(pressInteraction)
             .clip(shape)
             .background(container, shape)
-            .then(tileOutline(container, output != null, shape))
+            .then(tileOutline(container, output != null, shape, look.corner))
             .focusProperties { canFocus = false }
             .clickable(
                 interactionSource = pressInteraction,
@@ -1521,6 +1534,7 @@ private fun CommandTile(
             label = label,
             outputText = outputText,
             showDeviceIcon = showDeviceIcon,
+            look = look,
         )
 
         // Beside the tile, not over it: the cell IS the thing being acted on, and a menu
@@ -1599,6 +1613,8 @@ internal fun MoveOverlay(
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
+    /** The size the tiles in flight are drawn at — whichever tile the user actually picked up. */
+    look: TileLook = TableTileLook,
 ) {
     val live = moveState.origin
     // A move that has been called off is still on screen: its tiles fly home rather than
@@ -1683,6 +1699,7 @@ internal fun MoveOverlay(
                 config = config,
                 position = lerp(hoveredHome, originHome, swap.value),
                 scale = 1f,
+                look = look,
             )
         }
         FloatingTile(
@@ -1691,6 +1708,7 @@ internal fun MoveOverlay(
             position = aimHome + carriedResidual.value,
             // The swell goes as the move does: a tile flying home has already been put down.
             scale = if (live != null) MoveLiftScale else 1f,
+            look = look,
         )
     }
 }
@@ -1702,23 +1720,24 @@ private fun FloatingTile(
     config: ControllerConfig?,
     position: Offset,
     scale: Float,
+    look: TileLook = TableTileLook,
 ) {
     val display = commandDisplay(command.binding, listOf(command.output), config)
     val colors = command.type.columnColors()
     val container = colors.tile.compositeOver(MinputElevatedContainer)
-    val shape = RoundedCornerShape(TileCorner)
+    val shape = RoundedCornerShape(look.corner)
     Box(
         modifier = Modifier
             .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
-            .width(TileWidth)
-            .height(TileHeight)
+            .width(look.width)
+            .height(look.height)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .clip(shape)
             .background(container, shape)
-            .then(tileOutline(container, defined = true, shape = shape)),
+            .then(tileOutline(container, defined = true, shape = shape, corner = look.corner)),
         contentAlignment = Alignment.Center,
     ) {
         TileContent(
@@ -1728,6 +1747,7 @@ private fun FloatingTile(
             label = display.label,
             outputText = display.text,
             showDeviceIcon = display.glyph != null,
+            look = look,
         )
     }
 }
@@ -1741,9 +1761,14 @@ private fun FloatingTile(
  * drop target read at all. The ring is faint enough to keep the hierarchy it was avoiding.
  */
 @Composable
-private fun tileOutline(container: Color, defined: Boolean, shape: RoundedCornerShape): Modifier =
+private fun tileOutline(
+    container: Color,
+    defined: Boolean,
+    shape: RoundedCornerShape,
+    corner: Dp = TileCorner,
+): Modifier =
     if (defined) {
-        Modifier.border(minputBevelBorder(container, TileCorner), shape)
+        Modifier.border(minputBevelBorder(container, corner), shape)
     } else {
         Modifier.border(
             MinputBoxStroke,
@@ -1772,16 +1797,28 @@ private fun TileContent(
     label: String?,
     outputText: String,
     showDeviceIcon: Boolean,
+    look: TileLook = TableTileLook,
 ) {
     if (output == null) {
         // The row's create affordance. A plus and nothing else: it is a slot, not a command.
         Icon(
             Icons.Filled.Add,
             contentDescription = null,
-            modifier = Modifier.size(EmptyTilePlusSize),
+            modifier = Modifier.size(if (look.compact) RowTilePlusSize else EmptyTilePlusSize),
             // Alpha rides in the palette color itself — no extra .alpha() here, or the
             // value in Theme.kt would stop being what renders.
             tint = colors.plus,
+        )
+        return
+    }
+    if (look.compact) {
+        RowTileContent(
+            colors = colors,
+            pressType = pressType,
+            output = output,
+            label = label,
+            outputText = outputText,
+            showDeviceIcon = showDeviceIcon,
         )
         return
     }
@@ -1846,6 +1883,59 @@ private fun TileContent(
                 tint = colors.icon,
             )
         }
+    }
+}
+
+/**
+ * A tile's face at ROW scale — the basic view's edit mode (Dylan, 2026-09-22).
+ *
+ * Deliberately says less than the table's tile, in two ways:
+ *
+ *  - **One line, not a stack.** A labelled command shows its label INSTEAD of its output name
+ *    rather than above it, which is exactly what the resting row it replaces already showed
+ *    ([CommandDisplay.line]) — so entering edit mode puts a capsule around the row's own words
+ *    instead of rewriting them. The device glyph follows the same rule it does at rest: it
+ *    qualifies an output NAME, so a command the user has named goes bare
+ *    ([CommandDisplay.lineGlyph]).
+ *  - **No press-type glyph.** With this little tile to spend, the colour carries the press type
+ *    on its own, and the text goes white to hold against it ([RowTileTintedText]).
+ */
+@Composable
+private fun RowTileContent(
+    colors: PressTypeColors,
+    pressType: ActivatorType?,
+    output: BindingOutput,
+    label: String?,
+    outputText: String,
+    showDeviceIcon: Boolean,
+) {
+    // Regular Press has no tint — its tile IS the ordinary container — so it keeps the resting
+    // view's own content colour rather than shouting in white.
+    val tinted = pressType != null && pressType != ActivatorType.FULL_PRESS
+    val content = if (tinted) RowTileTintedText else MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = Modifier.fillMaxSize().padding(horizontal = RowTileContentPadding),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (label == null && showDeviceIcon) {
+            InputGlyphs.outputPainter(output)?.let { painter ->
+                Icon(
+                    painter,
+                    contentDescription = null,
+                    modifier = Modifier.size(TileOutputGlyphSize),
+                    tint = content,
+                )
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+            }
+        }
+        Text(
+            text = label ?: outputText,
+            style = minputMiniTextStyle(),
+            color = content,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1945,6 +2035,115 @@ internal fun stepCellWithinGroup(
     val spec = rows[nextRow]
     val lastSlot = (slots(from.group, spec) - 1).coerceAtLeast(0)
     return CellKey(from.group, spec, (from.slot + dCol).coerceIn(0, lastSlot))
+}
+
+/**
+ * Walk a controller-driven move's drop target one step, taking focus with it.
+ *
+ * Focus FOLLOWS the target because focus is cell-anchored: leaving the ring on the cell the tile
+ * was lifted from strands it behind the move, and it means the tile the user then activates IS
+ * the destination, so confirming needs no focus change of its own. The handle comes from the
+ * host, so a destination in ANOTHER group is reachable the same way.
+ *
+ * [owns] lets a handler that only speaks for part of the view (one table in the zoomed scene)
+ * keep out of a move whose target has been carried elsewhere.
+ */
+internal fun stepMoveTargetBy(
+    moveState: MoveModeState<CellKey>,
+    stepTarget: (CellKey, Int, Int) -> CellKey?,
+    focusHandle: (CellKey) -> FocusRequester,
+    haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
+    dRow: Int,
+    dCol: Int,
+    owns: (CellKey) -> Boolean = { true },
+) {
+    val current = moveState.target ?: return
+    if (!owns(current)) return
+    val next = stepTarget(current, dRow, dCol) ?: return
+    if (next == current) return
+    // A tick per cell crossed: with no finger on the screen the haptic is the only confirmation
+    // that the drop target actually moved.
+    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    moveState.moveTargetTo(next)
+    runCatching { focusHandle(next).requestFocus() }
+}
+
+/**
+ * The keyboard while a CONTROLLER move is in flight: arrows walk the drop target, B / Escape
+ * calls it off, the activate keys confirm.
+ *
+ * It belongs to whoever HOSTS the tiles rather than to the focused tile, because a held button
+ * auto-repeats while focus moves — a press and its release can land on different tiles, so no
+ * single tile sees both ends of the gesture. Pointer-driven moves never take this path; the
+ * finger is already saying where to land.
+ *
+ * Returns whether the event was consumed. Consuming the arrows is what stops ordinary focus
+ * traversal, leaving focus to track the drop target instead.
+ */
+internal fun moveModeKeyEvent(
+    event: androidx.compose.ui.input.key.KeyEvent,
+    moveState: MoveModeState<CellKey>,
+    /** Is the current drop target one this handler speaks for? */
+    owns: (CellKey) -> Boolean,
+    /** Is the button that LIFTED the tile still held? */
+    liftHeld: Boolean,
+    onLiftHeld: (Boolean) -> Unit,
+    onStep: (dRow: Int, dCol: Int) -> Unit,
+    onCommit: (Pair<CellKey, CellKey>?) -> Unit,
+): Boolean {
+    if (!moveState.active || moveState.pointerDriven) return false
+    val target = moveState.target ?: return false
+    if (!owns(target)) return false
+
+    // Activate FIRST, and on the key's RELEASE — which is why this sits above the key-down
+    // filter below.
+    if (event.key in TileActivateKeys) {
+        if (event.type == KeyEventType.KeyUp) {
+            val wasLiftingPress = liftHeld
+            onLiftHeld(false)
+            // Releasing the button that LIFTED the tile confirms, provided the target moved
+            // while it was held — ordinary drag-and-drop. Released without having moved, it
+            // reads as the user taking their thumb off a tile they've picked up to look around
+            // with, so the move stays live and a later press confirms.
+            val movedWhileHeld = moveState.target != moveState.origin
+            if (!wasLiftingPress || movedWhileHeld) onCommit(moveState.commit())
+        }
+        return true
+    }
+
+    if (event.type != KeyEventType.KeyDown) return true
+    return when (event.key) {
+        Key.DirectionUp -> { onStep(-1, 0); true }
+        Key.DirectionDown -> { onStep(1, 0); true }
+        Key.DirectionLeft -> { onStep(0, -1); true }
+        Key.DirectionRight -> { onStep(0, 1); true }
+        Key.Back, Key.Escape, Key.ButtonB -> {
+            moveState.cancel()
+            onLiftHeld(false)
+            true
+        }
+        else -> true // swallow the rest so focus can't wander mid-move
+    }
+}
+
+/**
+ * Is the stage's [MoveOverlay] standing in for the tile at [key] — and should the one in the
+ * grid therefore go invisible?
+ *
+ * Two tiles are ever in flight: the one being carried, and the one it would displace. A move
+ * that has been CALLED OFF still counts — its tiles are flying home, and they would flash back
+ * into their slots the instant the state cleared.
+ */
+internal fun MoveModeState<CellKey>.carriedByOverlay(
+    key: CellKey,
+    hasCommand: Boolean,
+    hosted: Boolean,
+): Boolean {
+    if (!hosted) return false
+    val flightOrigin = origin ?: returning?.first ?: return false
+    val flightHovered = target ?: returning?.second
+    return key == flightOrigin ||
+        (hasCommand && key == flightHovered && flightHovered != flightOrigin)
 }
 
 /** The scrolling table of [group]'s editor — one per group in the scene. */
@@ -2300,7 +2499,7 @@ private const val MoveSlideMillis = 200
 private const val MoveLiftScale = 1.06f
 /** How strongly the origin / landing markers wash their cell. Low enough to read as a marked
  *  SLOT rather than a filled tile. */
-private const val MoveMarkerAlpha = 0.3f
+internal const val MoveMarkerAlpha = 0.3f
 
 /** How close to the viewport edge a dragging finger must get before the table scrolls under
  *  it, and how far it scrolls per frame while it stays there. */
@@ -2346,4 +2545,68 @@ internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
 
 /** The shortest a card may be, in tile rows. See [advancedEditorHeight]. */
 private const val MinTableRows = 2
+
+// ── The basic view's tiles (edit mode, 2026-09-22) ───────────────────────────────────────────
+
+/**
+ * A row tile's width. Every tile in the view is this wide, exactly as the table's are: equal
+ * widths are what let a column of commands be scanned rather than read.
+ *
+ * Sized to carry the same run of text the resting rows were floored at (`AssignmentMinChars`)
+ * plus a device glyph, so entering edit mode widens a box but doesn't transform it.
+ */
+private val RowTileWidth = 88.dp
+
+/**
+ * A row tile's height — the RESTING row height, unchanged (Dylan, 2026-09-22): edit mode was
+ * asked to put a capsule around what a row already says without first buying the rows the
+ * padding a button would normally want. The rhythm of the view is therefore identical in both
+ * modes, and this is the constant to raise if the tiles read as cramped.
+ */
+private val RowTileHeight = SummaryRowHeight
+
+/** Gap between tiles on a row. The table's gap, not the resting rows' divider run. */
+internal val RowTileGap = TileGap
+
+/** A row tile's text inset. Tighter than the table's: less tile to inset into. */
+private val RowTileContentPadding = 6.dp
+
+/** The "+" on a row tile, scaled to it the way [EmptyTilePlusSize] is to the table's. */
+private val RowTilePlusSize = 14.dp
+
+/**
+ * The text on a TINTED row tile (Dylan, 2026-09-22).
+ *
+ * Edit mode drops the press-type glyph and lets the tile's own colour say which press type it
+ * is, so the text has to hold against six saturated fills rather than one neutral surface —
+ * hence white, explicitly, rather than a content token that tracks the surface underneath.
+ * Regular Press keeps `onSurface`: its tile is the ordinary container, and white there would
+ * make the commonest command the loudest thing on the view.
+ */
+private val RowTileTintedText = Color.White
+
+/**
+ * **How big a tile is, and how much it says.**
+ *
+ * The basic view's edit mode renders the SAME [CommandTile] the advanced table does (Dylan,
+ * 2026-09-22) — same menu, same move, same press-type palette — at a smaller size and with less
+ * on its face. That parity is the point of the experiment: if a tile in a row behaves like a
+ * tile in a table, the table stops being a place you have to go.
+ *
+ * [compact] is the "less on its face" half: ONE line (the user's label if there is one, else the
+ * command's name — [CommandDisplay.line], which is what the resting row already showed) and no
+ * press-type glyph, the press type being carried by the tile's colour alone.
+ */
+internal class TileLook(
+    val width: Dp,
+    val height: Dp,
+    val corner: Dp,
+    val compact: Boolean,
+)
+
+/** The advanced table's tile: two lines, a press-type glyph, room for both. */
+internal val TableTileLook = TileLook(TileWidth, TileHeight, TileCorner, compact = false)
+
+/** The basic view's tile: one line, at row height. */
+internal val RowTileLook = TileLook(RowTileWidth, RowTileHeight, RowTileHeight / 2, compact = true)
 

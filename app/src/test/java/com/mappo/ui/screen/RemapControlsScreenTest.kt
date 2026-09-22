@@ -27,6 +27,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
@@ -186,7 +188,7 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun tappingDpadBox_morphsIntoGroupEditor() {
+    fun holdingDpadBox_morphsIntoGroupEditor() {
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -200,10 +202,10 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        openAdvanced("DPAD")
         composeRule.waitForIdle()
 
-        // The view zooms into the scene, with the camera on the group that was activated.
+        // The view zooms into the scene, with the camera on the group that was held.
         composeRule.onNodeWithTag("group-editor").assertExists()
         inOpenCard(hasContentDescription("Close")).assertCountEquals(1)
     }
@@ -698,7 +700,7 @@ class RemapControlsScreenTest {
         setScreenLocal(seedShapedConfig())
         val viewport = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
 
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         val face = composeRule.onNodeWithTag("zoom-card:FACE", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -709,7 +711,7 @@ class RemapControlsScreenTest {
 
         inOpenCard(hasContentDescription("Close")).onFirst().performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        openAdvanced("DPAD")
         composeRule.waitForIdle()
         val dpad = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -732,7 +734,7 @@ class RemapControlsScreenTest {
                 .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
         )
 
-        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        openAdvanced("DPAD")
         composeRule.waitForIdle()
         val first = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -744,7 +746,7 @@ class RemapControlsScreenTest {
 
         inOpenCard(hasContentDescription("Close")).onFirst().performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         val faceFirst = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -766,7 +768,7 @@ class RemapControlsScreenTest {
     fun zoomScene_rightAlignsTheLeftFlanksBody() {
         setScreenLocal(seedShapedConfig())
 
-        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        openAdvanced("DPAD")
         composeRule.waitForIdle()
         val card = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -791,7 +793,7 @@ class RemapControlsScreenTest {
             seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
         )
 
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         // Slot 0 is the Regular Press (no glyph), slot 1 the Long Press — the auto-sort's order.
         val plain = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
@@ -832,7 +834,7 @@ class RemapControlsScreenTest {
     fun zoomScene_centreCardsRowsRadiateFromItsCentreLine() {
         setScreenLocal(seedShapedConfig())
 
-        composeRule.onNodeWithTag("simple-group:UTILITY").performClick()
+        openAdvanced("UTILITY")
         composeRule.waitForIdle()
         val card = composeRule.onNodeWithTag("zoom-card:UTILITY", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
@@ -941,7 +943,7 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("KB: ENTER", useUnmergedTree = true).assertCountEquals(0)
         // The override affordance now lives on the cell itself: the advanced view is a table,
         // and button_a's Press cell carries the layer menu.
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
             .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
@@ -972,7 +974,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("group-editor-table:FACE")
             .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
@@ -1005,7 +1007,7 @@ class RemapControlsScreenTest {
                 }
             }
         }
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Only overrides").assertCountEquals(0)
         composeRule.onAllNodesWithText("Show all").assertCountEquals(0)
@@ -1173,7 +1175,7 @@ class RemapControlsScreenTest {
         // UTILITY is exempt by design (Dylan, 2026-09-21): Start and Select have no mode to
         // pick — theirs follows from whether they are bound — so their card states its name.
         for (group in RemapSimpleGroup.entries - RemapSimpleGroup.UTILITY) {
-            composeRule.onNodeWithTag("simple-group:${group.name}").performClick()
+            openAdvanced(group.name)
             composeRule.waitForIdle()
             val pills = inOpenCard(modePillMatcher).fetchSemanticsNodes().size
             assert(pills == 1) {
@@ -1201,7 +1203,7 @@ class RemapControlsScreenTest {
                 }
             }
         }
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         inOpenCard(modePillMatcher).onFirst().performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
@@ -1227,7 +1229,7 @@ class RemapControlsScreenTest {
                 }
             }
         }
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        openAdvanced("FACE")
         composeRule.waitForIdle()
         // A fresh layout seeds one command per row (its own self-mapping), so the row's "+"
         // is SLOT 1 — slot 0 holds a real command and offers Edit, not New. A new command
@@ -1239,6 +1241,64 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
         assert(added == Triple(1L, "button_a", ActivatorType.FULL_PRESS)) {
             "Expected New to add (1, button_a, FULL_PRESS); got $added"
+        }
+    }
+
+    /**
+     * EDIT MODE is view-WIDE (Dylan, 2026-09-22): selecting one group tiles EVERY group's rows,
+     * so the whole controller stays legible and a command can be carried from any group to any
+     * other. And it does not travel — the advanced card is not opened.
+     */
+    @Test
+    fun simpleView_selectingAGroup_tilesEveryGroupsRows_withoutZooming() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertExists()
+        // A group the user did NOT select, tiled all the same.
+        composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0").assertExists()
+        // Every row ends in its "+", exactly as the table's rows do.
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").assertExists()
+        composeRule.onAllNodesWithTag("group-editor").assertCountEquals(0)
+    }
+
+    /**
+     * A row tile is the table's tile: same menu, same verbs. If it weren't, edit mode would be a
+     * second implementation of the same control wearing the same face.
+     */
+    @Test
+    fun editMode_tile_offersTheSameMenuAsTheTable() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").performClick()
+        composeRule.waitForIdle()
+
+        listOf("Edit", "Label", "Type", "Move", "Clear").forEach { verb ->
+            composeRule.onNodeWithText(verb).assertExists()
         }
     }
 
@@ -1255,6 +1315,18 @@ class RemapControlsScreenTest {
      * worked on"). "The Close button" is therefore seven nodes, and a test that means the open
      * one has to say so — the open card is the one tagged `group-editor`.
      */
+    /**
+     * Open a group's ADVANCED card.
+     *
+     * A HOLD on its basic-view box since 2026-09-22: an ordinary tap now means "edit this
+     * group's rows in place" (see RemapSimpleView's edit mode), and holding is what still
+     * travels to the separate view.
+     */
+    private fun openAdvanced(group: String) {
+        composeRule.onNodeWithTag("simple-group:$group").performTouchInput { longClick() }
+        composeRule.waitForIdle()
+    }
+
     private fun inOpenCard(matcher: androidx.compose.ui.test.SemanticsMatcher) =
         composeRule.onAllNodes(matcher and hasAnyAncestor(hasTestTag("group-editor")), useUnmergedTree = true)
 

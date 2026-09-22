@@ -7,7 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.paint
@@ -38,7 +40,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -52,6 +58,8 @@ import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Constraints
@@ -71,6 +79,7 @@ import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -124,10 +133,24 @@ internal fun RemapStage(
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     callbacks: RemapGroupEditorCallbacks,
+    /** A group box was activated — in the experiment's wiring, enter EDIT MODE on it. */
     onOpenGroup: (RemapSimpleGroup) -> Unit,
+    /** A group box was HELD — zoom into its advanced card. The way into the separate view while
+     *  edit mode is being tried out against it (Dylan, 2026-09-22). */
+    onOpenAdvanced: (RemapSimpleGroup) -> Unit,
     onLookAt: (RemapSimpleGroup) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * The group EDIT MODE was entered from, or null for the plain basic view (Dylan,
+     * 2026-09-22). Non-null turns every group's rows into command tiles in place — see
+     * [RowEditHost]. It decides only where the cursor lands; the mode itself is view-wide,
+     * because the experiment is to keep the whole controller in view while editing one part
+     * of it.
+     */
+    editGroup: RemapSimpleGroup? = null,
+    /** Bumped when the view loses focus in edit mode, to re-seat the cursor on a tile. */
+    editFocusTick: Int = 0,
     // One-shot: the basic box that should reclaim controller focus (the zoom just collapsed
     // back into it, or the screen is being seated for the first time).
     focusSeatGroup: RemapSimpleGroup? = null,
@@ -137,6 +160,7 @@ internal fun RemapStage(
 ) {
     val groups = remember { RemapSimpleGroup.values().toList() }
     val zoomed = focus != null
+    val editing = editGroup != null
 
     // ONE move state for every table: a command lifted in any of them can be carried to any
     // other. Every cell registers its window bounds here, so a finger crossing from one card to
@@ -166,6 +190,44 @@ internal fun RemapStage(
             // A null landing command means the row's "+": an ADD, not a swap.
             callbacks.onMoveCommand(lifted.id, toId, to.inputKey, landedOn?.id)
         }
+    }
+
+    // ── EDIT MODE (2026-09-22) ───────────────────────────────────────────────────────────────
+    //
+    // The basic view's rows become the same tiles the advanced tables are made of, everywhere at
+    // once. Everything they need already exists on the stage — one move state spanning every
+    // group, one focus handle per cell, one stepper that crosses between groups — because the
+    // zoomed scene needed exactly the same things. What is new here is only the part a card
+    // normally owns: the two dialogs a tile's menu summons, and the keyboard while a carried
+    // tile is in flight.
+    var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
+    var typeTarget by remember { mutableStateOf<TypeEdit?>(null) }
+    var liftHeld by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    val commitMove: (Pair<CellKey, CellKey>?) -> Unit = { pair ->
+        liftHeld = false
+        pair?.let { (from, to) -> onMoveCommitted(from, to) }
+    }
+    val editHost = editGroup?.let {
+        RowEditHost(
+            moveState = moveState,
+            focusHandle = focusHandle,
+            onCommitMove = commitMove,
+            onControllerLift = { liftHeld = true },
+            callbacks = callbacks,
+            editable = viewingLayer == null,
+            onLabel = { labelTarget = it },
+            onType = { typeTarget = it },
+        )
+    }
+    // Seat the cursor on the group the user selected — without it, entering edit mode leaves
+    // focus on the box that is no longer a focus target. Re-run on [editFocusTick] too: a tap
+    // clears Compose focus wholesale, and in edit mode there is no box left to recover onto.
+    LaunchedEffect(editGroup, editFocusTick) {
+        val group = editGroup ?: return@LaunchedEffect
+        // The tiles compose on this frame; their requesters attach with them.
+        withFrameNanos { }
+        runCatching { focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus() }
     }
 
     val painter = painterResource(R.drawable.controller_placeholder)
@@ -373,11 +435,16 @@ internal fun RemapStage(
                         config = config,
                         interaction = interactions.getValue(group),
                         // A zoomed-out box is the control; a zoomed-in one is just the ghost
-                        // under its own table, and must not answer to taps or hold focus.
-                        interactive = !zoomed,
+                        // under its own table, and must not answer to taps or hold focus. In
+                        // EDIT MODE the tiles inside it are the controls, so the box steps back
+                        // the same way — otherwise it would swallow taps meant for a tile and
+                        // sit in the d-pad's path between them.
+                        interactive = !zoomed && !editing,
                         seatFocus = focusSeatGroup == group,
                         onFocusSeated = onFocusSeated,
                         onOpenGroup = onOpenGroup,
+                        onOpenAdvanced = onOpenAdvanced,
+                        edit = editHost,
                     )
                 }
             }
@@ -430,6 +497,25 @@ internal fun RemapStage(
                         }
                     }
                     false
+                }
+                // While a CONTROLLER move is in flight in EDIT MODE, the stage owns the whole
+                // keyboard: arrows walk the drop target, B/Escape calls it off, the activate
+                // keys confirm. It sits at the stage rather than on a group because a carried
+                // tile crosses groups freely — there is no card here to hand the keys to, which
+                // is the point of the experiment.
+                .onKeyEvent { event ->
+                    if (!editing) return@onKeyEvent false
+                    moveModeKeyEvent(
+                        event = event,
+                        moveState = moveState,
+                        owns = { true },
+                        liftHeld = liftHeld,
+                        onLiftHeld = { liftHeld = it },
+                        onStep = { dRow, dCol ->
+                            stepMoveTargetBy(moveState, stepTarget, focusHandle, haptic, dRow, dCol)
+                        },
+                        onCommit = commitMove,
+                    )
                 }
                 // Watch for a finger past touch slop, consuming nothing. See [dragging].
                 .pointerInput(Unit) {
@@ -668,6 +754,20 @@ internal fun RemapStage(
             viewingSet = viewingSet,
             viewingLayer = viewingLayer,
             config = config,
+            // Whichever tile the user actually picked up: a row's in edit mode, a table's
+            // otherwise. The two modes never run at once.
+            look = if (editing) RowTileLook else TableTileLook,
+        )
+
+        // Edit mode's tiles have no card to host the dialogs their menus summon, so the stage
+        // does. Both outlive the menu, and the label editor outlives a tile that has just moved.
+        CommandTileDialogs(
+            labelTarget = labelTarget,
+            typeTarget = typeTarget,
+            config = config,
+            callbacks = callbacks,
+            onCloseLabel = { labelTarget = null },
+            onCloseType = { typeTarget = null },
         )
         }
     }
@@ -738,10 +838,14 @@ private fun StageBasicContent(
     seatFocus: Boolean,
     onFocusSeated: () -> Unit,
     onOpenGroup: (RemapSimpleGroup) -> Unit,
+    onOpenAdvanced: (RemapSimpleGroup) -> Unit,
+    /** Non-null in edit mode: this box's rows are command tiles. */
+    edit: RowEditHost?,
 ) {
     val focusRequester = remember { FocusRequester() }
     // The box is one focus target, so "this box has focus" is exactly "the stick should scroll
-    // this box's rows".
+    // this box's rows". In edit mode the box itself can't be focused — its tiles can — so the
+    // question becomes whether the cursor is anywhere INSIDE it, which is the same question.
     var focused by remember { mutableStateOf(false) }
     if (seatFocus && interactive) {
         LaunchedEffect(Unit) {
@@ -755,15 +859,29 @@ private fun StageBasicContent(
             // Clipped so the tap ripple takes the card's shape: the fill and the bevel belong to
             // the chrome sibling, but the indication is drawn here.
             .clip(RoundedCornerShape(GroupCorner))
+            .onFocusChanged { focused = if (edit != null) it.hasFocus else it.isFocused }
             .then(
                 if (interactive) {
                     Modifier
                         .focusRequester(focusRequester)
-                        .onFocusChanged { focused = it.isFocused }
-                        .clickable(
+                        // HOLD opens the advanced view, TAP edits in place (Dylan, 2026-09-22 —
+                        // the experiment). A hold going one level deeper is the gesture this
+                        // view already teaches on its tiles, where holding lifts one.
+                        .combinedClickable(
                             interactionSource = interaction,
                             indication = LocalIndication.current,
-                        ) { onOpenGroup(group) }
+                            onLongClick = { onOpenAdvanced(group) },
+                            onClick = { onOpenGroup(group) },
+                        )
+                        // The gamepad's half of the same gesture. `clickable` has no notion of a
+                        // held KEY — it fires on release — so the hold is timed here, and both
+                        // ends of the press are consumed so the release can't also count as a
+                        // tap. Sits AFTER the clickable in the chain, which makes it the inner
+                        // node and so the first to see a key.
+                        .holdToOpen(
+                            onHold = { onOpenAdvanced(group) },
+                            onTap = { onOpenGroup(group) },
+                        )
                 } else Modifier,
             )
             .testTag("simple-group:${group.name}")
@@ -779,7 +897,56 @@ private fun StageBasicContent(
         // sitting as they do INSIDE the focusable. Published, not passed: every scroller in the
         // subtree reads it, however deeply the rows get rearranged.
         CompositionLocalProvider(LocalStickScroll provides focused) {
-            GroupRows(group, viewingSet, viewingLayer, config)
+            GroupRows(group, viewingSet, viewingLayer, config, edit = edit)
+        }
+    }
+}
+
+/**
+ * Hold the activate button to go one level deeper; release it without holding to act normally.
+ *
+ * The gamepad counterpart to `combinedClickable`'s `onLongClick`, which only knows about
+ * fingers. Modelled on the tile's own hold-to-lift, down to arming only on the INITIAL key-down
+ * (hardware auto-repeat re-delivers it) and to disarming on any other key — a half-committed
+ * hold is the worst state this control can be in, so the gesture survives holding still and
+ * nothing else.
+ */
+private fun Modifier.holdToOpen(onHold: () -> Unit, onTap: () -> Unit): Modifier = composed {
+    val viewConfiguration = LocalViewConfiguration.current
+    val haptic = LocalHapticFeedback.current
+    var downAt by remember { mutableLongStateOf(0L) }
+    var held by remember { mutableStateOf(false) }
+    LaunchedEffect(downAt) {
+        if (downAt == 0L) return@LaunchedEffect
+        delay(viewConfiguration.longPressTimeoutMillis)
+        if (downAt != 0L) {
+            held = true
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onHold()
+        }
+    }
+    onKeyEvent { event ->
+        if (event.key !in TileActivateKeys) {
+            downAt = 0L
+            held = false
+            return@onKeyEvent false
+        }
+        when (event.type) {
+            KeyEventType.KeyDown -> {
+                if (event.nativeKeyEvent.repeatCount == 0) {
+                    downAt = System.currentTimeMillis()
+                    held = false
+                }
+                true
+            }
+            KeyEventType.KeyUp -> {
+                downAt = 0L
+                // A hold has already acted; the release that ends it is not also a tap.
+                if (!held) onTap()
+                held = false
+                true
+            }
+            else -> false
         }
     }
 }
