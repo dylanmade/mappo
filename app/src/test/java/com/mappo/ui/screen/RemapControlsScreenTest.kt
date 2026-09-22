@@ -71,7 +71,7 @@ class RemapControlsScreenTest {
 
 
     @Test
-    fun simpleView_rendersDefaultLabels_forUnconfiguredGroups() {
+    fun simpleView_restingRows_nameTheMode_notTheHardware() {
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -85,14 +85,18 @@ class RemapControlsScreenTest {
             }
         }
 
-        // Face glyphs are graphical button prompts now (no letter text); unconfigured inputs
-        // summarize as their own resting names (individualized defaults, not "Default").
-        composeRule.onNodeWithText("A Button", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("D-Pad Up", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("L-Stick Click", useUnmergedTree = true).assertExists()
-        // "Start", not "Start Button" (Dylan, 2026-09-17): it is the name printed on the
-        // hardware, and the noun added nothing.
-        composeRule.onNodeWithText("Start", useUnmergedTree = true).assertExists()
+        // sampleConfig populates only the face buttons, so every other source resolves to no
+        // group at all — which is device default, and now SAYS so. It used to print a hardcoded
+        // physical name per sub-input ("A Button", "L-Stick Click"), which looked like an
+        // assignment, corresponded to no binding the advanced view could show, and was the
+        // visible half of layouts seeding nothing (Dylan, 2026-09-21).
+        composeRule.onAllNodesWithText("(Device default)", useUnmergedTree = true)
+            .fetchSemanticsNodes().isNotEmpty().let {
+                assert(it) { "a source with no group should say it is at the device default" }
+            }
+        for (fake in listOf("A Button", "D-Pad Up", "L-Stick Click", "L-Stick Move")) {
+            composeRule.onAllNodesWithText(fake, useUnmergedTree = true).assertCountEquals(0)
+        }
     }
 
     /**
@@ -132,7 +136,7 @@ class RemapControlsScreenTest {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
-                        config = sampleConfig(),
+                        config = seedShapedConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
@@ -142,9 +146,10 @@ class RemapControlsScreenTest {
         }
 
         val box = composeRule.onNodeWithTag("simple-group:UTILITY").fetchSemanticsNode().boundsInRoot
-        val start = composeRule.onNodeWithText("Start", useUnmergedTree = true)
+        // Their seeded self-mappings, which is what a fresh layout actually shows.
+        val start = composeRule.onNodeWithText("Start / Menu", substring = true, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val select = composeRule.onNodeWithText("Select", useUnmergedTree = true)
+        val select = composeRule.onNodeWithText("Select / View", substring = true, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
         // The two halves meet at the box's centre line, so their own span centres on it.
         val clusterCentre = (minOf(start.left, select.left) + maxOf(start.right, select.right)) / 2f
@@ -160,7 +165,7 @@ class RemapControlsScreenTest {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
-                        config = sampleConfig(),
+                        config = seedShapedConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
@@ -169,8 +174,13 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("L-Stick Move", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("R-Stick Move", useUnmergedTree = true).assertExists()
+        // ONE movement row per stick, and it names the stick's MODE — movement IS the mode, so
+        // there is no binding to name and the mode's own word is the honest label.
+        composeRule.onAllNodesWithText("Joystick", useUnmergedTree = true).assertCountEquals(2)
+        // The click rows show their seeded self-mappings beside it.
+        composeRule.onNodeWithText("L3", substring = true, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("R3", substring = true, useUnmergedTree = true).assertExists()
+        // And the four cardinal rows stay out of the box.
         composeRule.onAllNodesWithText("L-Stick Up", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onAllNodesWithText("R-Stick Left", useUnmergedTree = true).assertCountEquals(0)
     }
@@ -1160,7 +1170,9 @@ class RemapControlsScreenTest {
     @Test
     fun groupEditor_everyGroup_offersAnEnabledModePill() {
         setScreenLocal(seedShapedConfig())
-        for (group in RemapSimpleGroup.entries) {
+        // UTILITY is exempt by design (Dylan, 2026-09-21): Start and Select have no mode to
+        // pick — theirs follows from whether they are bound — so their card states its name.
+        for (group in RemapSimpleGroup.entries - RemapSimpleGroup.UTILITY) {
             composeRule.onNodeWithTag("simple-group:${group.name}").performClick()
             composeRule.waitForIdle()
             val pills = inOpenCard(modePillMatcher).fetchSemanticsNodes().size
@@ -1217,11 +1229,12 @@ class RemapControlsScreenTest {
         }
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        // Nothing is bound in this fixture, so every row is just its "+" — slot 0. A new
-        // command starts as a Regular Press and is retyped from the same menu.
+        // A fresh layout seeds one command per row (its own self-mapping), so the row's "+"
+        // is SLOT 1 — slot 0 holds a real command and offers Edit, not New. A new command
+        // starts as a Regular Press and is retyped from the same menu.
         composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
-        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").performClick()
+            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:1"))
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
         assert(added == Triple(1L, "button_a", ActivatorType.FULL_PRESS)) {
@@ -1302,7 +1315,12 @@ class RemapControlsScreenTest {
      */
     private fun seedShapedConfig(): ControllerConfig {
         var nextId = 1L
-        fun entry(source: InputSource, keys: List<String>, mode: BindingMode): PresetEntry {
+        fun entry(
+            source: InputSource,
+            keys: List<String>,
+            mode: BindingMode,
+            defaults: Map<String, String> = emptyMap(),
+        ): PresetEntry {
             val groupId = nextId++
             return PresetEntry(
                 source, "active",
@@ -1311,11 +1329,30 @@ class RemapControlsScreenTest {
                         id = groupId, actionSetId = 1L, name = source.name.lowercase(), mode = mode,
                     ),
                     inputs = keys.mapIndexed { index, key ->
+                        val inputId = nextId++
+                        val activator = Activator(
+                            id = inputId + 500L, groupInputId = inputId,
+                            type = ActivatorType.FULL_PRESS, orderIndex = 0,
+                        )
+                        val (type, args) = defaults[key]
+                            ?.let { BindingOutput.XInputButton(it) as BindingOutput }
+                            .let { it ?: BindingOutput.Unbound }
+                            .toEntity()
                         GroupInputGraph(
                             input = GroupInput(
-                                id = nextId++, bindingGroupId = groupId, inputKey = key, orderIndex = index,
+                                id = inputId, bindingGroupId = groupId, inputKey = key, orderIndex = index,
                             ),
-                            activators = emptyList(),
+                            activators = listOf(
+                                ActivatorGraph(
+                                    activator,
+                                    listOf(
+                                        Binding(
+                                            id = inputId + 900L, activatorId = activator.id,
+                                            outputType = type, args = args, orderIndex = 0,
+                                        ),
+                                    ),
+                                ),
+                            ),
                         )
                     },
                 ),
@@ -1331,16 +1368,32 @@ class RemapControlsScreenTest {
                     actionSet = ActionSet(id = 1L, controllerProfileId = 1L, name = "default", title = "Default"),
                     layers = emptyList(),
                     preset = listOf(
-                        entry(InputSource.BUTTON_DIAMOND, listOf("button_a", "button_b", "button_x", "button_y"), BindingMode.BUTTON_PAD),
-                        entry(InputSource.DPAD, listOf("dpad_up", "dpad_down", "dpad_left", "dpad_right"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.LEFT_BUMPER, listOf("click"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.RIGHT_BUMPER, listOf("click"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.LEFT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.RIGHT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.LEFT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.RIGHT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.SWITCH_START, listOf("click"), BindingMode.DEVICE_DEFAULT),
-                        entry(InputSource.SWITCH_SELECT, listOf("click"), BindingMode.DEVICE_DEFAULT),
+                        entry(
+                            InputSource.BUTTON_DIAMOND,
+                            listOf("button_a", "button_b", "button_x", "button_y"),
+                            BindingMode.BUTTON_PAD,
+                            mapOf(
+                                "button_a" to "BUTTON_A", "button_b" to "BUTTON_B",
+                                "button_x" to "BUTTON_X", "button_y" to "BUTTON_Y",
+                            ),
+                        ),
+                        entry(
+                            InputSource.DPAD,
+                            listOf("dpad_up", "dpad_down", "dpad_left", "dpad_right"),
+                            BindingMode.DPAD,
+                            mapOf(
+                                "dpad_up" to "DPAD_UP", "dpad_down" to "DPAD_DOWN",
+                                "dpad_left" to "DPAD_LEFT", "dpad_right" to "DPAD_RIGHT",
+                            ),
+                        ),
+                        entry(InputSource.LEFT_BUMPER, listOf("click"), BindingMode.SINGLE_BUTTON, mapOf("click" to "BUTTON_L1")),
+                        entry(InputSource.RIGHT_BUMPER, listOf("click"), BindingMode.SINGLE_BUTTON, mapOf("click" to "BUTTON_R1")),
+                        entry(InputSource.LEFT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.SINGLE_BUTTON, mapOf("full_pull" to "AXIS_L2")),
+                        entry(InputSource.RIGHT_TRIGGER, listOf("full_pull", "soft_pull"), BindingMode.SINGLE_BUTTON, mapOf("full_pull" to "AXIS_R2")),
+                        entry(InputSource.LEFT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.JOYSTICK_MOVE, mapOf("click" to "BUTTON_THUMBL")),
+                        entry(InputSource.RIGHT_JOYSTICK, listOf("click", "outer_ring"), BindingMode.JOYSTICK_MOVE, mapOf("click" to "BUTTON_THUMBR")),
+                        entry(InputSource.SWITCH_START, listOf("click"), BindingMode.SINGLE_BUTTON, mapOf("click" to "BUTTON_START")),
+                        entry(InputSource.SWITCH_SELECT, listOf("click"), BindingMode.SINGLE_BUTTON, mapOf("click" to "BUTTON_SELECT")),
                         entry(InputSource.GYRO, emptyList(), BindingMode.DEVICE_DEFAULT),
                     ),
                 ),

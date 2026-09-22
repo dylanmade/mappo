@@ -303,6 +303,18 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
      * holds, so it always shows its RESTING label ([rowRestingLabel]): the stick's own name at
      * device default, otherwise the name of the mode it's in.
      */
+    /**
+     * Does this group's card header state a MODE, or just its own name?
+     *
+     * Every group but one picks a mode: Button Pad, Directional Pad, Joystick, Trigger. The
+     * utility buttons don't (Dylan, 2026-09-21) — Start and Select are single buttons whose
+     * intercept mode the repository manages from whether they are bound at all
+     * (`syncAuxButtonMode`), so there is nothing there for a user to choose and a caption
+     * reading "MODE: SINGLE BUTTON" named an internal state as though it were a decision. The
+     * header keeps its glyph, its treatment and its inset either way.
+     */
+    val headerShowsMode: Boolean get() = this != UTILITY
+
     val summaryRows: List<SimpleRowSpec>
         get() = when (this) {
             LEFT_STICK, RIGHT_STICK -> {
@@ -369,9 +381,22 @@ internal fun rowAssignments(
 }
 
 /**
- * What a row with NO assignments says: `None` mode → "None"; an active mode that has no
- * bindable row for this sub-input at all (the analog modes) → the mode's own name; anything
- * else — device default, or a seeded-but-unbound row — → the input's physical name.
+ * What a row with NO assignments says.
+ *
+ * **Every string here comes from the unified vocabulary** — a mode's own `displayNameFor`, or
+ * the one constant below (Dylan, 2026-09-21). It used to answer with a hardcoded physical name
+ * per sub-input ("A Button", "L-Stick Click", "D-Pad Up"), which was the visible half of a
+ * bigger problem: a fresh layout seeded nothing, so those names WERE the basic view, and they
+ * corresponded to no binding the advanced view could show. Layouts now seed real bindings for
+ * every input (`ControllerConfigRepository.DEFAULT_INPUT_SOURCE_SEEDS`), so a row printing its
+ * own hardware name is no longer the normal case — it is the exception, and it should say which
+ * exception it is:
+ *
+ *  - the source passes through untouched → the device-default string;
+ *  - the source is intercepted and silenced → "None";
+ *  - the mode doesn't bind this sub-input at all (a stick's movement row, which IS the mode) →
+ *    the mode's own name, which is what the user picked;
+ *  - a real row the user has emptied → [UnassignedLabel].
  */
 internal fun rowRestingLabel(
     viewingSet: ActionSetGraph?,
@@ -380,59 +405,22 @@ internal fun rowRestingLabel(
 ): String {
     val layerGroup: BindingGroupGraph? = viewingLayer?.presetFor(spec.source)?.group
     val baseGroup: BindingGroupGraph? = viewingSet?.presetFor(spec.source)?.group
-    val effective = layerGroup ?: baseGroup ?: return defaultRowLabel(spec)
+    val effective = layerGroup ?: baseGroup
+        ?: return BindingMode.DEVICE_DEFAULT.displayNameFor(spec.source)
     val hasRow = layerGroup?.inputByKey(spec.subInputKey) != null ||
         baseGroup?.inputByKey(spec.subInputKey) != null
+    val mode = effective.group.mode
     return when {
-        effective.group.mode == BindingMode.NONE -> "None"
-        effective.group.mode == BindingMode.DEVICE_DEFAULT || hasRow -> defaultRowLabel(spec)
-        else -> effective.group.mode.displayNameFor(spec.source)
+        mode == BindingMode.NONE || mode == BindingMode.DEVICE_DEFAULT -> mode.displayNameFor(spec.source)
+        // A row that EXISTS and is empty is the user's own doing; the mode is beside the point.
+        hasRow -> UnassignedLabel
+        else -> mode.displayNameFor(spec.source)
     }
 }
 
-/**
- * The resting label for an unchanged/unlabeled input — its own physical name rather than a
- * generic "Default". User-specified wording; Title Case button names are a deliberate
- * exception to the sentence-case doctrine (they read as proper nouns).
- */
-internal fun defaultRowLabel(spec: SimpleRowSpec): String = when (spec.source) {
-    InputSource.LEFT_TRIGGER -> "Left Trigger"
-    InputSource.RIGHT_TRIGGER -> "Right Trigger"
-    InputSource.LEFT_BUMPER -> "Left Bumper"
-    InputSource.RIGHT_BUMPER -> "Right Bumper"
-    // No "Button" suffix on these two (Dylan, 2026-09-17): every other default here names a
-    // control whose word needs the noun ("Left Trigger", "A Button"), but Start and Select are
-    // the names printed on the hardware.
-    InputSource.SWITCH_START -> "Start"
-    InputSource.SWITCH_SELECT -> "Select"
-    InputSource.DPAD -> when (spec.subInputKey) {
-        "dpad_up" -> "D-Pad Up"
-        "dpad_left" -> "D-Pad Left"
-        "dpad_right" -> "D-Pad Right"
-        "dpad_down" -> "D-Pad Down"
-        else -> "D-Pad"
-    }
-    InputSource.LEFT_JOYSTICK, InputSource.RIGHT_JOYSTICK -> {
-        val stick = if (spec.source == InputSource.LEFT_JOYSTICK) "L-Stick" else "R-Stick"
-        when (spec.subInputKey) {
-            "dpad_up" -> "$stick Up"
-            "dpad_left" -> "$stick Left"
-            "dpad_right" -> "$stick Right"
-            "dpad_down" -> "$stick Down"
-            "click" -> "$stick Click"
-            StickMoveKey -> "$stick Move"
-            else -> stick
-        }
-    }
-    InputSource.BUTTON_DIAMOND -> when (spec.subInputKey) {
-        "button_y" -> "Y Button"
-        "button_x" -> "X Button"
-        "button_b" -> "B Button"
-        "button_a" -> "A Button"
-        else -> "Button"
-    }
-    else -> "Default"
-}
+/** What an existing but empty row says. The one string on the basic view that names no mode and
+ *  no output, because there is neither. */
+internal const val UnassignedLabel = "Unassigned"
 
 /** Which edge of its box a row's glyph anchors to — and so which way its assignments extend. */
 internal enum class RowAnchor { START, END }

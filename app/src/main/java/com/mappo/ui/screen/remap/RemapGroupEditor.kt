@@ -409,10 +409,15 @@ internal fun RemapGroupEditor(
             // the rest.
             ModeDropdownLabel(
                 source = primarySource,
-                currentMode = primaryGroup?.mode.takeIf { validModes.isNotEmpty() },
+                // The utility group states its NAME, not a mode (Dylan, 2026-09-21). Start and
+                // Select have no mode to pick — theirs is auto-managed by the repository's
+                // bound/cleared rule — so a caption reading "MODE: SINGLE BUTTON" was naming an
+                // internal state as though it were a choice.
+                currentMode = primaryGroup?.mode.takeIf { group.headerShowsMode && validModes.isNotEmpty() },
                 validModes = validModes,
                 identity = group.headerLabel(),
-                enabled = editable && primaryGroup != null && validModes.size > 1,
+                statesMode = group.headerShowsMode,
+                enabled = group.headerShowsMode && editable && primaryGroup != null && validModes.size > 1,
                 onPick = { mode -> primaryGroup?.let { callbacks.onSetBindingGroupMode(it.id, mode) } },
                 modifier = Modifier.focusRequester(headerModePillFocus),
             )
@@ -1995,8 +2000,13 @@ private fun ModeDropdownLabel(
     // caption then states the device default and opens nothing.
     currentMode: BindingMode?,
     validModes: List<BindingMode>,
-    /** The group's own name, for a screen reader — the glyph is all that states it on screen. */
+    /** The group's own name. Normally only a screen reader sees it — the glyph states the
+     *  group on screen — but a group with no mode to offer prints it as the caption. */
     identity: String,
+    /** Does this caption say what MODE the group is in? False for a group whose mode is not the
+     *  user's to pick (the utility buttons), which prints its own name instead. It keeps the
+     *  same glyph, treatment and inset either way, so the captions line up across the scene. */
+    statesMode: Boolean,
     enabled: Boolean,
     onPick: (BindingMode) -> Unit,
     modifier: Modifier = Modifier,
@@ -2004,7 +2014,11 @@ private fun ModeDropdownLabel(
     var open by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    val label = currentMode?.displayNameFor(source) ?: ModeLabelDefault
+    val caption = if (statesMode) {
+        "$ModeLabelPrefix ${(currentMode?.displayNameFor(source) ?: ModeLabelDefault).uppercase()}"
+    } else {
+        identity.uppercase()
+    }
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -2031,7 +2045,7 @@ private fun ModeDropdownLabel(
             )
             Spacer(Modifier.width(MinputGlyphLabelGap))
             Text(
-                text = "$ModeLabelPrefix ${label.uppercase()}",
+                text = caption,
                 style = minputOverlineTextStyle(),
                 color = color,
                 maxLines = 1,

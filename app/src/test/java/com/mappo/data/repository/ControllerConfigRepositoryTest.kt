@@ -115,7 +115,7 @@ class ControllerConfigRepositoryTest {
         val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val sets = actionSetDao.getByControllerProfile(cpId)
         assertEquals(1, sets.size)
-        assertEquals("Default", sets[0].title)
+        assertEquals("Default Map", sets[0].title)
         assertTrue(sets[0].legacy)
     }
 
@@ -154,28 +154,42 @@ class ControllerConfigRepositoryTest {
     }
 
     @Test
-    fun seedDefaultConfig_dpadGroup_defaultsToUnboundWithDirectionSubInputsAvailable() = runTest {
-        // Per the post-Brick-4 follow-up: analog-capable sources (dpad, triggers,
-        // sticks) default to UNBOUND on a fresh layout so Mappo doesn't intercept
-        // and the motion-capture overlay stays detached. The four direction
-        // sub-inputs are still seeded so picking a non-UNBOUND mode later doesn't
-        // need to backfill the rows — they're already present, the mode flip
-        // just changes how compile interprets them.
+    fun seedDefaultConfig_dpadGroup_isADirectionalPadMappedToItself() = runTest {
+        // A fresh layout is Mappo-handled from the start (Dylan, 2026-09-21): each source sits
+        // in the mode that source is FOR, and each sub-input fires its own hardware equivalent,
+        // so the pad behaves as it always did but every key of it is a real, editable binding.
+        // It used to seed DEVICE_DEFAULT + Unbound, from a time when layouts were auto-created
+        // for every app that came to the foreground and taking over by default was presumptuous.
         subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
         val dpad = cfg.activeActionSet!!.presetFor(InputSource.DPAD)!!.group
 
-        assertEquals(BindingMode.DEVICE_DEFAULT, dpad.group.mode)
+        assertEquals(BindingMode.DPAD, dpad.group.mode)
         assertEquals(
             setOf("dpad_up", "dpad_down", "dpad_right", "dpad_left"),
             dpad.inputs.map { it.input.inputKey }.toSet(),
         )
+        val outputs = dpad.inputs.associate { input ->
+            input.input.inputKey to input.activators[0].bindings[0].let {
+                BindingOutput.fromEntity(it.outputType, it.args)
+            }
+        }
+        assertEquals(BindingOutput.XInputButton("DPAD_UP"), outputs["dpad_up"])
+        assertEquals(BindingOutput.XInputButton("DPAD_DOWN"), outputs["dpad_down"])
+        assertEquals(BindingOutput.XInputButton("DPAD_LEFT"), outputs["dpad_left"])
+        assertEquals(BindingOutput.XInputButton("DPAD_RIGHT"), outputs["dpad_right"])
+        // And the mode's own tuned settings, not an empty object.
+        assertTrue("A seeded mode carries its own defaults", dpad.group.settingsJson.length > 2)
     }
 
     @Test
-    fun seedDefaultConfig_everyInputHasFullPressActivatorWithUnboundBinding() = runTest {
+    fun seedDefaultConfig_everyInputHasOneFullPressActivator_mappedToItselfWhereItCanBe() = runTest {
         subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!
+
+        // The two rows that stay EMPTY on purpose: the trigger's analog soft pull (it needs
+        // Shizuku to ever fire) and a stick's outer ring (no hardware equivalent to map to).
+        val deliberatelyUnbound = setOf("soft_pull", "outer_ring")
 
         for (preset in cfg.activeActionSet!!.preset) {
             for (input in preset.group.inputs) {
@@ -187,7 +201,18 @@ class ControllerConfigRepositoryTest {
 
                 val bindings = input.activators[0].bindings
                 assertEquals(1, bindings.size)
-                assertEquals(BindingOutputType.UNBOUND, bindings[0].outputType)
+                val key = input.input.inputKey
+                if (key in deliberatelyUnbound) {
+                    assertEquals(
+                        "$key is seeded as a real but empty row",
+                        BindingOutputType.UNBOUND, bindings[0].outputType,
+                    )
+                } else {
+                    assertEquals(
+                        "${preset.inputSource}/$key should fire its own hardware equivalent",
+                        BindingOutputType.XINPUT_BUTTON, bindings[0].outputType,
+                    )
+                }
             }
         }
     }
@@ -434,7 +459,9 @@ class ControllerConfigRepositoryTest {
             .presetFor(InputSource.BUTTON_DIAMOND)!!.group
             .inputByKey("button_a")!!
             .activators[0].primaryOutput
-        assertEquals(BindingOutput.Unbound, sourceAOutput)
+        // The source is untouched — which since 2026-09-21 means it still holds the seeded
+        // self-mapping, not an empty binding.
+        assertEquals(BindingOutput.XInputButton("BUTTON_A"), sourceAOutput)
     }
 
     @Test
@@ -454,8 +481,9 @@ class ControllerConfigRepositoryTest {
             BindingOutput.KeyPress("ENTER"),
             updated.inputByKey("button_a")!!.activators[0].primaryOutput,
         )
+        // B is untouched: still its own seeded self-mapping, not A's new output.
         assertEquals(
-            BindingOutput.Unbound,
+            BindingOutput.XInputButton("BUTTON_B"),
             updated.inputByKey("button_b")!!.activators[0].primaryOutput,
         )
     }
@@ -891,7 +919,10 @@ class ControllerConfigRepositoryTest {
         subject.replaceRowCells(dpadId, "dpad_up", row)
 
         assertEquals("A_LONG", cellOutput(dpadId, "dpad_up", ActivatorType.LONG_PRESS))
-        assertNull(cellOutput(dpadId, "dpad_up", ActivatorType.FULL_PRESS))
+        // WHOLESALE: the destination's own FULL_PRESS is not merged with or kept beside the
+        // source's — it IS the source's now. (Both rows carry one since layouts seed a
+        // self-mapping per input; the face row's is BUTTON_A, the dpad's was OLD_PRESS.)
+        assertEquals("BUTTON_A", cellOutput(dpadId, "dpad_up", ActivatorType.FULL_PRESS))
     }
 
     @Test

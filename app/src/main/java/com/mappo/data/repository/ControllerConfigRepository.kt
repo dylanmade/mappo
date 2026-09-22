@@ -36,6 +36,7 @@ import com.mappo.data.model.steam.LayerPresetBinding
 import com.mappo.data.model.steam.PresetBinding
 import com.mappo.data.model.steam.PresetEntry
 import com.mappo.data.model.steam.SourceModeShift
+import com.mappo.service.input.modes.handler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -152,16 +153,44 @@ class ControllerConfigRepository @Inject constructor(
                 actionLayerId = null,
                 name = spec.groupName,
                 mode = spec.mode,
-                settingsJson = "{}",
+                // The MODE's own defaults, not an empty object: a seeded layout now starts in a
+                // real mode (see DEFAULT_INPUT_SOURCE_SEEDS), and a real mode with `{}` settings
+                // is a mode running on whatever its reader falls back to rather than on the
+                // values its author tuned — the d-pad's deadzone and overlap, the trigger's
+                // thresholds, the stick's response curve.
+                settingsJson = spec.mode.handler().defaultSettingsJson(),
             )
         )
 
-        for ((idx, inputKey) in spec.inputKeys.withIndex()) {
+        seedGroupRows(groupId, spec)
+
+        presetBindingDao.insert(
+            PresetBinding(
+                actionSetId = actionSetId,
+                inputSource = inputSource,
+                state = "active",
+                bindingGroupId = groupId,
+            )
+        )
+    }
+
+    /**
+     * Lay a binding group's rows out as [spec] describes them: one GroupInput per sub-input,
+     * each with a FULL_PRESS activator holding one binding — the sub-input's own hardware
+     * equivalent where the seed names one, Unbound where it doesn't.
+     *
+     * Shared by the seeder and by [resetBindingGroup], which is the whole point: "reset this
+     * group to its defaults" has to mean the SAME defaults a new layout gets, and the two used
+     * to be separate copies of this loop that had already drifted apart (the reset rebuilt every
+     * row Unbound).
+     */
+    private suspend fun seedGroupRows(bindingGroupId: Long, spec: InputSourceSeed) {
+        spec.inputKeys.forEachIndexed { index, inputKey ->
             val groupInputId = groupInputDao.insert(
                 GroupInput(
-                    bindingGroupId = groupId,
+                    bindingGroupId = bindingGroupId,
                     inputKey = inputKey,
-                    orderIndex = idx,
+                    orderIndex = index,
                 )
             )
             val activatorId = activatorDao.insert(
@@ -172,24 +201,16 @@ class ControllerConfigRepository @Inject constructor(
                     orderIndex = 0,
                 )
             )
+            val (outputType, args) = (spec.defaults[inputKey] ?: BindingOutput.Unbound).toEntity()
             bindingDao.insert(
                 Binding(
                     activatorId = activatorId,
-                    outputType = BindingOutputType.UNBOUND,
-                    args = "",
+                    outputType = outputType,
+                    args = args,
                     orderIndex = 0,
                 )
             )
         }
-
-        presetBindingDao.insert(
-            PresetBinding(
-                actionSetId = actionSetId,
-                inputSource = inputSource,
-                state = "active",
-                bindingGroupId = groupId,
-            )
-        )
     }
 
     // ── VDF import persistence (Phase 8a) ────────────────────────────────────
@@ -452,54 +473,10 @@ class ControllerConfigRepository @Inject constructor(
             }
             retrofittedAny = true
         }
-        val flippedAny = migrateBumperSwitchToDeviceDefault()
-        if (retrofittedAny || flippedAny) {
+        if (retrofittedAny) {
             // Bump the dirty tick so any live config subscriber refreshes.
             configDirtyTick.value = configDirtyTick.value + 1
         }
-    }
-
-    /**
-     * 2026-06-01 destructive migration — flip every bumper / switch
-     * binding_group in `SINGLE_BUTTON` mode to `DEVICE_DEFAULT`. The seed
-     * defaults moved from SINGLE_BUTTON+UNBOUND-click to DEVICE_DEFAULT,
-     * and pre-release users who hit the old seed shouldn't be left with
-     * silent bumpers/Start/Select under EVIOCGRAB.
-     *
-     * **Destructive note:** if a user had bound the click sub-input to
-     * something useful (e.g., L1 → ENTER remap), this migration drops
-     * back to DEVICE_DEFAULT and the binding becomes inert until they
-     * switch the source back to SINGLE_BUTTON in the picker. Sanctioned
-     * by the user under pre-release tolerance + the explicit "feel free
-     * to destructively transition" instruction.
-     *
-     * Idempotent — re-runs are no-ops because there's nothing left in
-     * SINGLE_BUTTON mode after the first sweep.
-     */
-    private suspend fun migrateBumperSwitchToDeviceDefault(): Boolean {
-        val targetSources = setOf(
-            InputSource.LEFT_BUMPER,
-            InputSource.RIGHT_BUMPER,
-            InputSource.SWITCH_START,
-            InputSource.SWITCH_SELECT,
-        )
-        val sets = actionSetDao.getAll()
-        if (sets.isEmpty()) return false
-        val presets = presetBindingDao.getByActionSets(sets.map { it.id })
-            .filter { it.state == "active" && it.inputSource in targetSources }
-        var flipped = false
-        for (preset in presets) {
-            val group = bindingGroupDao.getById(preset.bindingGroupId) ?: continue
-            if (group.mode != BindingMode.SINGLE_BUTTON) continue
-            bindingGroupDao.update(group.copy(mode = BindingMode.DEVICE_DEFAULT))
-            flipped = true
-            android.util.Log.i(
-                "ControllerConfigRepo",
-                "migrateBumperSwitchToDeviceDefault: flipped group ${group.id} " +
-                    "(${preset.inputSource}) from SINGLE_BUTTON → DEVICE_DEFAULT",
-            )
-        }
-        return flipped
     }
 
     /**
@@ -1789,18 +1766,10 @@ class ControllerConfigRepository @Inject constructor(
             }
             groupInputDao.deleteById(input.id)
         }
-        bindingGroupDao.update(group.copy(mode = seed.mode, settingsJson = "{}"))
-        seed.inputKeys.forEachIndexed { index, inputKey ->
-            val groupInputId = groupInputDao.insert(
-                GroupInput(bindingGroupId = bindingGroupId, inputKey = inputKey, orderIndex = index)
-            )
-            val activatorId = activatorDao.insert(
-                Activator(groupInputId = groupInputId, type = ActivatorType.FULL_PRESS, settingsJson = "{}", orderIndex = 0)
-            )
-            bindingDao.insert(
-                Binding(activatorId = activatorId, outputType = BindingOutputType.UNBOUND, args = "", orderIndex = 0)
-            )
-        }
+        bindingGroupDao.update(
+            group.copy(mode = seed.mode, settingsJson = seed.mode.handler().defaultSettingsJson()),
+        )
+        seedGroupRows(bindingGroupId, seed)
         configDirtyTick.value = configDirtyTick.value + 1
     }
 
@@ -2058,26 +2027,19 @@ class ControllerConfigRepository @Inject constructor(
         val groupName: String,
         val mode: BindingMode,
         val inputKeys: List<String>,
+        /**
+         * What each sub-input FIRES on a fresh layout, keyed by sub-input. A key absent here is
+         * seeded Unbound — a real row the user can fill, which is what the trigger's analog
+         * soft-pull and a stick's outer ring are.
+         */
+        val defaults: Map<String, BindingOutput> = emptyMap(),
     )
 
     companion object {
         /**
-         * Default seed table for Generic Android. Trackpads and back paddles are
-         * intentionally excluded — they're in the schema for VDF import
-         * compatibility but the AYN Thor (and most Android pads) don't expose
-         * them, so we'd be seeding configurable-but-never-fireable groups.
-         *
-         * Gyro is included as of D.3: most target handhelds (Thor, Odin 2 Mini,
-         * Retroid) ship with a real gyro, and the runtime needs a BindingGroup
-         * on the GYRO source for the picker to surface its mode dropdown.
-         * Devices that lack a gyro will see the row but the
-         * [com.mappo.service.input.GyroLifecycleCoordinator] short-circuits at
-         * the hardware-presence check, so the group is inert there.
-         */
-        /**
-         * Single-button "other" sources whose intercept mode is auto-managed by [syncAuxButtonMode]
-         * (bound → SINGLE_BUTTON, unbound → DEVICE_DEFAULT) so the UI can show them as plain rows
-         * with no passthrough toggle.
+         * Single-button "other" sources whose intercept mode is auto-managed by
+         * [syncAuxButtonMode] (bound → SINGLE_BUTTON, cleared → DEVICE_DEFAULT) so the UI can
+         * show them as plain rows with no mode picker of their own.
          */
         private val AUX_BUTTON_SOURCES: Set<InputSource> = setOf(
             InputSource.LEFT_BUMPER,
@@ -2086,67 +2048,95 @@ class ControllerConfigRepository @Inject constructor(
             InputSource.SWITCH_SELECT,
         )
 
+        /**
+         * **A fresh layout is Mappo-handled, and every input starts mapped to itself**
+         * (Dylan, 2026-09-21).
+         *
+         * It used to seed almost everything to [BindingMode.DEVICE_DEFAULT] with Unbound
+         * bindings, and the basic view papered over the emptiness with hardcoded physical names
+         * ("A Button", "L-Stick Click") that corresponded to no binding at all — so opening the
+         * advanced view on a new layout showed a grid of nothing, and the two views disagreed.
+         *
+         * That caution had a reason and the reason expired. Mappo used to auto-generate a layout
+         * for every application that came to the foreground, so a layout appearing was not a
+         * statement of intent and taking over the pad by default would have been presumptuous
+         * (and it needs Shizuku). Layouts are now created deliberately, by the user, for an
+         * application they have chosen — and "active application with no layout" is a
+         * first-class state that means exactly "don't touch this one". A layout that exists is
+         * consent.
+         *
+         * So each source starts in the mode that source is FOR, and each sub-input fires its own
+         * hardware equivalent: the pad behaves exactly as it did before, but every key of it is
+         * now a real binding sitting in a real mode, visible and editable in both views and
+         * ready to be re-pointed at anything.
+         */
         private val DEFAULT_INPUT_SOURCE_SEEDS: Map<InputSource, InputSourceSeed> = linkedMapOf(
             InputSource.BUTTON_DIAMOND to InputSourceSeed(
                 "face_buttons", BindingMode.BUTTON_PAD,
                 listOf("button_a", "button_b", "button_x", "button_y"),
+                defaults = mapOf(
+                    "button_a" to BindingOutput.XInputButton("BUTTON_A"),
+                    "button_b" to BindingOutput.XInputButton("BUTTON_B"),
+                    "button_x" to BindingOutput.XInputButton("BUTTON_X"),
+                    "button_y" to BindingOutput.XInputButton("BUTTON_Y"),
+                ),
             ),
-            // Analog-capable sources default to DEVICE_DEFAULT: Mappo does not
-            // intercept until the user explicitly opts into a Mappo-managed mode
-            // (which is also what gates the Shizuku motion-capture pipeline).
             InputSource.DPAD to InputSourceSeed(
-                "dpad", BindingMode.DEVICE_DEFAULT,
+                "dpad", BindingMode.DPAD,
                 listOf("dpad_up", "dpad_down", "dpad_left", "dpad_right"),
+                defaults = mapOf(
+                    "dpad_up" to BindingOutput.XInputButton("DPAD_UP"),
+                    "dpad_down" to BindingOutput.XInputButton("DPAD_DOWN"),
+                    "dpad_left" to BindingOutput.XInputButton("DPAD_LEFT"),
+                    "dpad_right" to BindingOutput.XInputButton("DPAD_RIGHT"),
+                ),
             ),
-            // 2026-06-01: bumpers default to DEVICE_DEFAULT — out of the box
-            // Mappo doesn't intercept, so a pristine install behaves like a
-            // normal hardware controller (the OS dispatches BTN_TL / BTN_TR
-            // directly, and under EVIOCGRAB the passthrough path forwards
-            // them through the virtual gamepad). Users who want a remap pick
-            // SINGLE_BUTTON in the source picker, which re-surfaces the
-            // "click" sub-input row for binding. Pre-2026-06-01 the seed
-            // shipped SINGLE_BUTTON + UNBOUND click, which made bumpers
-            // silent under grab — a real UX gotcha.
+            // Bumpers and switches keep their mode AUTO-MANAGED by [syncAuxButtonMode] (bound →
+            // SINGLE_BUTTON, cleared → DEVICE_DEFAULT), which is why they have no mode dropdown
+            // of their own. Seeding them bound means they simply start on the bound side of that
+            // rule rather than being switched there by the user's first edit.
             InputSource.LEFT_BUMPER to InputSourceSeed(
-                "left_bumper", BindingMode.DEVICE_DEFAULT, listOf("click"),
+                "left_bumper", BindingMode.SINGLE_BUTTON, listOf("click"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_L1")),
             ),
             InputSource.RIGHT_BUMPER to InputSourceSeed(
-                "right_bumper", BindingMode.DEVICE_DEFAULT, listOf("click"),
+                "right_bumper", BindingMode.SINGLE_BUTTON, listOf("click"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_R1")),
             ),
-            // Triggers carry two sub-inputs: "full_pull" (hardware threshold —
-            // KEYCODE_BUTTON_L2 / R2) and "soft_pull" (analog soft-pull,
-            // fired via TriggerMode.evaluate's hysteresis on the Shizuku
-            // motion stream). The mode defaults to DEVICE_DEFAULT on a fresh
-            // layout; switching to TRIGGER mode is what activates both rows.
+            // Triggers start DIGITAL (Dylan): "full_pull" is the hardware threshold every pad
+            // reports without help, so the digital mode is the one that works on any install.
+            // The analog "soft_pull" row is still seeded — switching to Trigger (Analog) reveals
+            // it already there — but it stays unbound, because it needs Shizuku to ever fire.
             InputSource.LEFT_TRIGGER to InputSourceSeed(
-                "left_trigger", BindingMode.DEVICE_DEFAULT, listOf("full_pull", "soft_pull"),
+                "left_trigger", BindingMode.SINGLE_BUTTON, listOf("full_pull", "soft_pull"),
+                defaults = mapOf("full_pull" to BindingOutput.XInputButton("AXIS_L2")),
             ),
             InputSource.RIGHT_TRIGGER to InputSourceSeed(
-                "right_trigger", BindingMode.DEVICE_DEFAULT, listOf("full_pull", "soft_pull"),
+                "right_trigger", BindingMode.SINGLE_BUTTON, listOf("full_pull", "soft_pull"),
+                defaults = mapOf("full_pull" to BindingOutput.XInputButton("AXIS_R2")),
             ),
+            // A stick's MOVEMENT is its mode, not a binding — Joystick mode is what makes the
+            // stick a stick. Only the click is a bindable sub-input; the outer ring is a real
+            // row left empty.
             InputSource.LEFT_JOYSTICK to InputSourceSeed(
-                "left_joystick", BindingMode.DEVICE_DEFAULT, listOf("click", "outer_ring"),
+                "left_joystick", BindingMode.JOYSTICK_MOVE, listOf("click", "outer_ring"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_THUMBL")),
             ),
             InputSource.RIGHT_JOYSTICK to InputSourceSeed(
-                "right_joystick", BindingMode.DEVICE_DEFAULT, listOf("click", "outer_ring"),
+                "right_joystick", BindingMode.JOYSTICK_MOVE, listOf("click", "outer_ring"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_THUMBR")),
             ),
-            // 2026-06-01: switches default to DEVICE_DEFAULT for the same
-            // reason as bumpers — Start / Select should "just work" out of
-            // the box. The SourceModeCatalog gained a dropdown for these
-            // sources at the same time so users can opt into SINGLE_BUTTON
-            // mode if they want a remap. Steam-parity divergence
-            // intentional: Steam hides the switch picker entirely, but
-            // Steam doesn't EVIOCGRAB the controller either, so users
-            // there get OS pass-through for free.
             InputSource.SWITCH_START to InputSourceSeed(
-                "switch_start", BindingMode.DEVICE_DEFAULT, listOf("click"),
+                "switch_start", BindingMode.SINGLE_BUTTON, listOf("click"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_START")),
             ),
             InputSource.SWITCH_SELECT to InputSourceSeed(
-                "switch_select", BindingMode.DEVICE_DEFAULT, listOf("click"),
+                "switch_select", BindingMode.SINGLE_BUTTON, listOf("click"),
+                defaults = mapOf("click" to BindingOutput.XInputButton("BUTTON_SELECT")),
             ),
-            // Gyro: no sub-inputs (gyro modes emit continuous output, not
-            // bindable directional rows). Picker on the subheader is what the
-            // user interacts with; settings live in the Cog menu.
+            // Gyro: no sub-inputs (gyro modes emit continuous output, not bindable directional
+            // rows) and no default mode — a gyro that started steering something would be a
+            // genuine surprise, and half the target devices don't have one. The user opts in.
             InputSource.GYRO to InputSourceSeed(
                 "gyro", BindingMode.DEVICE_DEFAULT, emptyList(),
             ),
