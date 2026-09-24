@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -621,6 +622,9 @@ internal fun RemapStage(
                 // scroll modifier is, which is what a test drives the body through.
                 scrollModifier = Modifier.testTag(ControlsBodyTestTag),
                 modifier = Modifier.fillMaxSize(),
+                // The morph moves the content without moving the scroller; say so, or the
+                // fade and chevron describe a view that isn't on screen.
+                contentShift = { editMorph.shift.floatValue },
             ) {
             Layout(contents = slots) { measurables, _ ->
                 // The VIEWPORT, not the incoming constraints: the stage now sits inside a
@@ -905,6 +909,7 @@ internal fun RemapStage(
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = MinputBarEdgePadding)
                 .graphicsLayer { alpha = 1f - crossfadeAt(progress()) },
+            contentShift = { editMorph.shift.floatValue },
         )
 
         // ABOVE everything: the tile being carried, and the one it would displace. Outside every
@@ -1382,7 +1387,8 @@ private fun editScrollTarget(
  * nothing reads a value it also influences.
  *
  * Plain fields, not snapshot state: it is written and read entirely inside the layout phase,
- * where the correction has to come from the same numbers in the same pass.
+ * where the correction has to come from the same numbers in the same pass. The one exception
+ * is [shift], which the scroll CUES read — see below.
  */
 private class EditMorphPlan {
     var restWidths: IntArray? = null
@@ -1394,6 +1400,21 @@ private class EditMorphPlan {
     private var scrollsKnown = false
     private var pending: Int? = null
     private var target: Int? = null
+
+    /**
+     * The displacement being applied right now, published for the scroll cues.
+     *
+     * The scroller's own value stays where it was for the whole travel — the shift is what
+     * moves the content, and only at the hand-off does the scroller take it over. So the
+     * chevron, the edge fade and the bar, which all ask the scroller where it is, spent the
+     * animation believing nothing had moved: open a right-hand group, watch the view slide
+     * right, and the left-hand "there's more this way" cues only appeared once the scroller
+     * was let in on it (Dylan, 2026-09-24). This is snapshot state precisely because it
+     * crosses out of the layout phase; it is read in draw (the bar) and inside a
+     * derivedStateOf that yields a Boolean (the fade and chevron), so a frame of travel
+     * costs a redraw, never a recomposition.
+     */
+    val shift = mutableFloatStateOf(0f)
 
     /** True on the one frame a travel begins, when the other end still needs capturing. */
     fun begin(settled: Boolean, travel: Float, measured: IntArray): Boolean {
@@ -1443,7 +1464,10 @@ private class EditMorphPlan {
         // Dylan saw on the way out of edit mode from a mid-scrolled view. What this guarantees
         // is that `wanted` — a pure function of the travel — is what ends up on screen.
         val effective = scroll.coerceIn(0, max)
-        return (wanted - effective).roundToInt().also { pending = it }
+        return (wanted - effective).roundToInt().also {
+            pending = it
+            shift.floatValue = it.toFloat()
+        }
     }
 
     /**
@@ -1462,6 +1486,9 @@ private class EditMorphPlan {
         val landed = target ?: return null
         target = null
         pending = null
+        // The scroller is about to hold exactly what the shift was holding, so the cues must
+        // stop counting it — they'd double it otherwise, for one frame, at both ends at once.
+        shift.floatValue = 0f
         restWidths = null
         editWidths = null
         scrollsKnown = false

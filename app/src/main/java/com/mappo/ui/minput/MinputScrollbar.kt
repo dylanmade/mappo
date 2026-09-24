@@ -40,6 +40,15 @@ import androidx.compose.ui.unit.dp
  * nothing at all (it still occupies its thickness, so a container's layout doesn't jump the
  * moment content grows past the viewport). The track is always faint; the thumb brightens
  * while a scroll is actually in progress and settles back afterwards.
+ *
+ * [contentShift] reports a displacement some OTHER mechanism is applying to the content, in
+ * pixels, signed the way [ScrollState.value] is: positive means the content has been pushed
+ * the same way a scroll of that many pixels would push it. An indicator answers "where am I
+ * in this content", and the scroller's own value is only the whole answer while the scroller
+ * is the only thing moving things. Mappo's remap stage animates between two layouts by
+ * displacing the content itself and folding the result into the scroller at the end (see
+ * `EditMorphPlan`); without this the bar sat pinned at one end for the length of the
+ * animation and then jumped (Dylan, 2026-09-24).
  */
 @Composable
 fun MinputScrollbar(
@@ -48,6 +57,7 @@ fun MinputScrollbar(
     modifier: Modifier = Modifier,
     thickness: androidx.compose.ui.unit.Dp = MinputScrollbarThickness,
     reverse: Boolean = false,
+    contentShift: (() -> Float)? = null,
 ) {
     val scrollable = state.maxValue > 0 && state.maxValue != Int.MAX_VALUE
     val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = MinputScrollbarTrackAlpha)
@@ -88,7 +98,8 @@ fun MinputScrollbar(
         }
         val thumbLength = lengthPx * thumbFraction
         val travel = lengthPx - thumbLength
-        val progress = if (state.maxValue > 0) state.value.toFloat() / state.maxValue else 0f
+        val at = state.value + (contentShift?.invoke() ?: 0f)
+        val progress = if (state.maxValue > 0) at / state.maxValue else 0f
         val travelled = progress.coerceIn(0f, 1f).let { if (reverse) 1f - it else it }
         val thumbStart = travel * travelled
 

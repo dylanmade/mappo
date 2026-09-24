@@ -65,6 +65,9 @@ import com.mappo.ui.component.rightStickScroll
  * scroller's own bounds allow. The chevron is decorative — no semantics, no touch target; the
  * enclosing control owns focus and clicks.
  *
+ * [contentShift] is for the case where something OTHER than the scroller is displacing the
+ * content — see [MinputScrollbar], which takes the same thing for the same reason.
+ *
  * Horizontal cues are VISUAL left/right; Mappo is LTR-only today.
  */
 @Composable
@@ -85,16 +88,18 @@ fun MinputOverflowScroll(
     // modifier is belong here: scroll-to-node and the accessibility scroll actions both read
     // the semantics of the node that owns the scroll, and the container isn't it.
     scrollModifier: Modifier = Modifier,
+    contentShift: (() -> Float)? = null,
     content: @Composable () -> Unit,
 ) {
     // "Leading" = left / top, "trailing" = right / bottom, whichever way the scroller runs.
-    // ScrollState's canScroll* are snapshot-backed, so these track the position without
-    // recomposing on every pixel of travel.
-    val moreLeading by remember(state, reverseScrolling) {
-        derivedStateOf { if (reverseScrolling) state.canScrollForward else state.canScrollBackward }
+    // Snapshot-backed reads inside a derivedStateOf, so these track the position without
+    // recomposing on every pixel of travel — only when an edge's answer actually changes.
+    fun at(): Float = state.value + (contentShift?.invoke() ?: 0f)
+    val moreLeading by remember(state, reverseScrolling, contentShift) {
+        derivedStateOf { if (reverseScrolling) at() < state.maxValue else at() > 0f }
     }
-    val moreTrailing by remember(state, reverseScrolling) {
-        derivedStateOf { if (reverseScrolling) state.canScrollBackward else state.canScrollForward }
+    val moreTrailing by remember(state, reverseScrolling, contentShift) {
+        derivedStateOf { if (reverseScrolling) at() > 0f else at() < state.maxValue }
     }
     val leadingCue by animateFloatAsState(
         targetValue = if (moreLeading) 1f else 0f,
