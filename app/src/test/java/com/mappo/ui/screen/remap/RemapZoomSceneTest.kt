@@ -9,6 +9,7 @@ import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.BindingOutputType
 import com.mappo.data.model.steam.GroupInput
 import com.mappo.data.model.steam.GroupInputGraph
+import com.mappo.data.model.steam.InputSource
 import kotlin.math.abs
 import org.junit.Test
 
@@ -67,17 +68,61 @@ class RemapZoomSceneTest {
 
     @Test
     fun steppingOffTheLastColumn_crossesToTheOppositeFlank_atItsFirstColumn() {
-        val lastSlot = Slots - 1
-        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = lastSlot)
+        // The LEFT flank reads outward from a glyph on its right, so its slot 0 is the tile
+        // nearest the controller — the one you step right OUT of.
+        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = 0)
         val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
         assert(next == cell(RemapSimpleGroup.FACE, row = 1, slot = 0)) { "got $next" }
+    }
+
+    /**
+     * **A step is a SCREEN direction, whichever way the row's slots happen to run.**
+     *
+     * A mirrored row's indices climb leftward, so this used to invert on the whole left flank:
+     * pressing right carried a tile left, and pressing left did nothing at all because slot 0
+     * was already the end of the row (Dylan, 2026-09-23). Ordinary focus navigation was always
+     * fine — Compose's spatial search reads real positions — which is exactly why it only ever
+     * showed up while carrying a tile.
+     */
+    @Test
+    fun steppingLeftOnAMirroredRow_movesLeftOnScreen() {
+        val from = cell(RemapSimpleGroup.DPAD, row = 0, slot = 0)
+        // LEFT, away from the controller: outward along the row, so UP an index.
+        val left = stepCellAcrossGroups(from, dRow = 0, dCol = -1, slots = slots)
+        assert(left == cell(RemapSimpleGroup.DPAD, row = 0, slot = 1)) { "got $left" }
+        // And RIGHT off slot 0 leaves the group entirely rather than walking the row backwards.
+        val right = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
+        assert(right?.group == RemapSimpleGroup.FACE) { "got $right" }
+    }
+
+    @Test
+    fun steppingIntoAMirroredGroup_landsOnTheTileNearestTheEdgeYouCameFrom() {
+        // Travelling LEFT out of the face buttons enters the d-pad from its right-hand side,
+        // which on a mirrored row is slot 0.
+        val from = cell(RemapSimpleGroup.FACE, row = 1, slot = 0)
+        val next = stepCellAcrossGroups(from, dRow = 0, dCol = -1, slots = slots)
+        assert(next == cell(RemapSimpleGroup.DPAD, row = 1, slot = 0)) { "got $next" }
+    }
+
+    @Test
+    fun theCentreGroupMirrorsPerRow_notAsAWhole() {
+        // Select sits on the utility card's LEFT half, mirrored; Start on its right, normal.
+        val select = RemapSimpleGroup.UTILITY.rows.first { it.source == InputSource.SWITCH_SELECT }
+        val start = RemapSimpleGroup.UTILITY.rows.first { it.source == InputSource.SWITCH_START }
+        assert(RemapSimpleGroup.UTILITY.slotsRunLeftward(select)) { "Select's row should mirror" }
+        assert(!RemapSimpleGroup.UTILITY.slotsRunLeftward(start)) { "Start's row should not" }
+
+        val fromSelect = CellKey(RemapSimpleGroup.UTILITY, select, 0)
+        val outward = stepCellAcrossGroups(fromSelect, dRow = 0, dCol = -1, slots = slots)
+        assert(outward == CellKey(RemapSimpleGroup.UTILITY, select, 1)) { "got $outward" }
     }
 
     @Test
     fun theUtilityGroupSitsBetweenTheSticks() {
         val lastSlot = Slots - 1
         val outOfLeftStick = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = lastSlot),
+            // Mirrored: slot 0 is its rightmost tile, the one facing utility.
+            cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 0),
             dRow = 0,
             dCol = 1,
             slots = slots,
@@ -105,9 +150,10 @@ class RemapZoomSceneTest {
     @Test
     fun aRowWithFewerRows_clampsWhenCrossedInto() {
         // Utility has two rows (Start, Select), a stick one (its click): stepping right out of
-        // utility's BOTTOM row must land on a row the stick actually has.
+        // utility's BOTTOM row must land on a row the stick actually has. That row is Select's,
+        // which mirrors — so its rightmost tile, the one you leave from, is slot 0.
         val last = RemapSimpleGroup.UTILITY.rows.lastIndex
-        val from = cell(RemapSimpleGroup.UTILITY, row = last, slot = Slots - 1)
+        val from = cell(RemapSimpleGroup.UTILITY, row = last, slot = 0)
         val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
         assert(next?.group == RemapSimpleGroup.RIGHT_STICK) { "got $next" }
         assert(next!!.inputKey in RemapSimpleGroup.RIGHT_STICK.rows.map { it.subInputKey }) { "got $next" }
@@ -127,15 +173,17 @@ class RemapZoomSceneTest {
         // Nothing above the shoulders, nothing below the sticks, nothing outboard of a flank.
         val topLeft = cell(RemapSimpleGroup.LEFT_SHOULDER, row = 0, slot = 0)
         assert(stepCellAcrossGroups(topLeft, dRow = -1, dCol = 0, slots = slots) == null)
-        assert(stepCellAcrossGroups(topLeft, dRow = 0, dCol = -1, slots = slots) == null)
+        // Outboard of the left flank is its LAST slot — the row reads leftward from its glyph.
+        val outboard = cell(RemapSimpleGroup.LEFT_SHOULDER, row = 0, slot = Slots - 1)
+        assert(stepCellAcrossGroups(outboard, dRow = 0, dCol = -1, slots = slots) == null)
         val bottomLeft = cell(RemapSimpleGroup.LEFT_STICK, row = RemapSimpleGroup.LEFT_STICK.rows.lastIndex, slot = 0)
         assert(stepCellAcrossGroups(bottomLeft, dRow = 1, dCol = 0, slots = slots) == null)
     }
 
     @Test
     fun theStandaloneEditorsStepper_neverLeavesItsGroup() {
-        val lastSlot = Slots - 1
-        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = lastSlot)
+        // Slot 0 is the d-pad's inboard edge, and right is off the group entirely.
+        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = 0)
         val next = stepCellWithinGroup(from, dRow = 0, dCol = 1, slots = slots)
         assert(next == from) { "an edge step should stay put, got $next" }
     }
@@ -271,9 +319,9 @@ class RemapZoomSceneTest {
         val down = stepCellAcrossGroups(from, dRow = 1, dCol = 0, slots = counts)
         assert(down == cell(RemapSimpleGroup.DPAD, row = 1, slot = 1)) { "got $down" }
 
-        // And a step off the SHORT row's end still leaves the table for the neighbour.
+        // And a step off the SHORT row's inboard end still leaves the table for the neighbour.
         val onward = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.DPAD, row = 1, slot = 1),
+            cell(RemapSimpleGroup.DPAD, row = 1, slot = 0),
             dRow = 0,
             dCol = 1,
             slots = counts,

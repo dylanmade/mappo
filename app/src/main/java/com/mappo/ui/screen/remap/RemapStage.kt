@@ -11,11 +11,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -33,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.focus.FocusRequester
@@ -40,6 +44,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -70,7 +77,10 @@ import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.ui.component.LocalStickScroll
 import com.mappo.ui.component.rememberMoveModeState
+import androidx.compose.material3.MaterialTheme
 import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputOverflowScroll
+import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.MinputPodPlateCorner
@@ -253,6 +263,13 @@ internal fun RemapStage(
         val viewportH = maxHeight
         val scene = remember(viewportW, viewportH, aspect) { sceneGeometry(viewportW, viewportH, aspect) }
         val density = LocalDensity.current
+        // The window's own size in pixels. The stage measures against THIS rather than its
+        // incoming constraints, which the body scroller leaves unbounded across.
+        val viewportWPx = with(density) { viewportW.roundToPx() }
+        val viewportHPx = with(density) { viewportH.roundToPx() }
+        // The BODY's one scroller, and whether the right stick currently belongs to it.
+        val bodyScroll = rememberScrollState()
+        var bodyFocused by remember { mutableStateOf(false) }
 
         // The camera: where the scene sits under the viewport once zoomed. Opening SNAPS it (the
         // zoom itself carries that motion); moving between groups while zoomed PANS.
@@ -425,7 +442,9 @@ internal fun RemapStage(
                     ),
                 )
             }
-            groups.forEach { group -> add { StageCardChrome(interactions.getValue(group), settled) } }
+            groups.forEach { group ->
+                add { StageCardChrome(settled, zoomed, progress) }
+            }
             groups.forEach { group ->
                 add {
                     StageBasicContent(
@@ -474,6 +493,11 @@ internal fun RemapStage(
         Box(
             Modifier
                 .fillMaxSize()
+                // Does controller focus sit anywhere in the view? That is what says the right
+                // stick means the BODY scroller — the same question each group box used to
+                // answer for its own rows, asked once now that the body is the thing that
+                // scrolls.
+                .onFocusChanged { bodyFocused = it.hasFocus }
                 /*
                  * Handing the camera back to the gamepad.
                  *
@@ -551,12 +575,32 @@ internal fun RemapStage(
                     }
                 },
         ) {
-        // The cards know the stage draws their tiles in flight for them, and hide the ones the
-        // overlay is standing in for rather than drawing each twice.
-        CompositionLocalProvider(LocalMoveOverlay provides true) {
-            Layout(contents = slots) { measurables, constraints ->
-                val width = constraints.maxWidth
-                val height = constraints.maxHeight
+        // ── The BODY is the scroller (Dylan, 2026-09-22) ─────────────────────────────────────
+        //
+        // The group cards are gone, and with them the seven little scrollers that lived inside
+        // them: a box no longer clips its own rows, it simply IS as wide as they are, and what
+        // overruns the window is scrolled here, once, for the whole grid. The cues are the ones
+        // the boxes used to wear (edge fade + chevrons), plus the bar beneath.
+        //
+        // Zoomed, the stage measures exactly one viewport wide, so this has nothing to scroll
+        // and quietly gets out of the camera's way.
+        CompositionLocalProvider(
+            LocalMoveOverlay provides true,
+            LocalStickScroll provides (bodyFocused && !zoomed),
+        ) {
+            MinputOverflowScroll(
+                state = bodyScroll,
+                orientation = Orientation.Horizontal,
+                chevronOutset = BodyChevronOutset,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+            Layout(contents = slots) { measurables, _ ->
+                // The VIEWPORT, not the incoming constraints: the stage now sits inside a
+                // horizontal scroller (see the body scroll below), which hands its child an
+                // unbounded width. Both geometries are framed against the window either way —
+                // the camera's, and the grid's centring.
+                val viewport = viewportWPx
+                val height = viewportHPx
                 val p = progress().coerceIn(0f, 1f)
                 val camOffset = camera.value
                 val count = groups.size
@@ -570,37 +614,26 @@ internal fun RemapStage(
                 // ── REST: the 3 × 3 grid, inside the plate's inset ────────────────────────────
                 val edgeX = MinputBarEdgePadding.roundToPx()
                 val edgeY = MinputPodGap.roundToPx()
-                val gridW = (width - edgeX * 2).coerceAtLeast(0)
+                val viewportGridW = (viewport - edgeX * 2).coerceAtLeast(0)
                 val gridH = (height - edgeY * 2).coerceAtLeast(0)
                 val columnGap = GridColumnGap.roundToPx()
                 val rowGap = GridRowGap.roundToPx()
-                val centreW = (gridH * ControllerColumnHeightRatio).roundToInt().coerceAtMost(gridW / 2)
-                val sideW = ((gridW - centreW - columnGap * 2) / 2).coerceAtLeast(0)
+                val centreW = (gridH * ControllerColumnHeightRatio).roundToInt()
+                    .coerceAtMost(viewportGridW / 2)
 
                 val restBasic = arrayOfNulls<androidx.compose.ui.layout.Placeable>(count)
-                fun measureBasic(group: RemapSimpleGroup, minWidth: Int, maxWidth: Int) {
+                // **Every box now WRAPS its content, with no width cap at all** (Dylan,
+                // 2026-09-22). The group cards are gone, so there is no card left to clip
+                // against and nothing to scroll inside: the BODY scrolls as one instead, and a
+                // box is simply as wide as what it holds. That includes the centre column's
+                // utility box, which used to be pinned to the column and scroll — accepting
+                // that a wide one now reaches across its neighbours, which Dylan called for
+                // explicitly while this is being tried out.
+                groups.forEach { group ->
                     val index = groups.indexOf(group)
-                    restBasic[index] = basicM[index].measure(
-                        Constraints(
-                            minWidth = minWidth.coerceIn(0, maxWidth.coerceAtLeast(0)),
-                            maxWidth = maxWidth.coerceAtLeast(0),
-                            maxHeight = gridH,
-                        ),
-                    )
+                    restBasic[index] = basicM[index].measure(Constraints(maxHeight = gridH))
                 }
-                // A FLANK box wraps its content: the column has the whole side of the plate to
-                // spend, and a box that fits its assignments is the point of the grid.
-                val flanks = GridBands.flatMap { listOf(it.left, it.right) }
-                flanks.forEach { measureBasic(it, 0, sideW) }
                 fun restOf(group: RemapSimpleGroup) = restBasic[groups.indexOf(group)]!!
-                // A CENTRE-COLUMN box does NOT (Dylan, 2026-09-18). It is boxed in by the two flanks
-                // and by the controller above it, so growing to fit its content spills it across
-                // the columns either side — which is exactly what the utility box did, being two
-                // mirrored halves that each claimed a full assignment run. It is pinned to the
-                // centre column's width instead, and its rows scroll inside it, cueing the overflow
-                // with the same fades + chevrons every other box uses. The compromise the middle
-                // column costs.
-                measureBasic(RemapSimpleGroup.UTILITY, centreW, centreW)
 
                     // The image is INSET in its column (Dylan, 2026-09-21): drawn at the column's
                 // full width it ran flush into the gutters either side and, being the tallest
@@ -623,7 +656,16 @@ internal fun RemapStage(
                 val bandTop = IntArray(3)
                 bandTop[0] = edgeY + ((gridH - bandTotal) / 2).coerceAtLeast(0)
                 for (band in 1..2) bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
-                val centreX = edgeX + sideW + columnGap
+                // Each side column is as wide as its widest box; the grid is that plus the
+                // controller's column. When it all fits, the whole matrix is CENTRED in the
+                // viewport exactly as it was when the columns split the width evenly — when it
+                // doesn't, the surplus is what the body scroller scrolls.
+                val leftColumnW = GridBands.maxOf { restOf(it.left).width }
+                val rightColumnW = GridBands.maxOf { restOf(it.right).width }
+                val contentW = leftColumnW + columnGap + centreW + columnGap + rightColumnW
+                val gridW = maxOf(contentW, viewportGridW)
+                val startX = edgeX + ((gridW - contentW) / 2).coerceAtLeast(0)
+                val centreX = startX + leftColumnW + columnGap
                 val rightX = centreX + centreW + columnGap
 
                 // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
@@ -639,7 +681,7 @@ internal fun RemapStage(
                 GridBands.forEachIndexed { band, row ->
                     val left = restOf(row.left)
                     restRects[row.left] = StageRect(
-                        left = edgeX + sideW - left.width,
+                        left = startX + leftColumnW - left.width,
                         top = restTop(band, left.height),
                         width = left.width,
                         height = left.height,
@@ -682,7 +724,7 @@ internal fun RemapStage(
                 val current = groups.associateWith { lerpRect(restRects.getValue(it), zoomRects.getValue(it), p) }
                 val controllerNow = lerpRect(controllerRest, controllerZoom, p)
                 val plateNow = lerpRect(plateRest, plateZoom, p)
-                val fade = ((p - CrossfadeStart) / CrossfadeSpan).coerceIn(0f, 1f)
+                val fade = crossfadeAt(p)
 
                 val platePlaceable = plateM.measure(Constraints.fixed(plateNow.width, plateNow.height))
                 // Measured at its ZOOM size and scaled down to wherever it is now: one bitmap,
@@ -709,6 +751,13 @@ internal fun RemapStage(
                 // heading, and dimming what someone is reaching for reads as the view resisting
                 // them. The exceptions that had already accumulated (all lit while a command is
                 // being carried, all lit while the scene is dragged) were most of the time.
+
+                // The stage is as wide as the RESTING grid, which may overrun the window — that
+                // surplus is what the body scroller scrolls. Zoomed it is exactly the viewport:
+                // the scene is framed by the camera, so there is nothing left to scroll, and the
+                // scroller's own maximum collapses to zero as the travel lands.
+                val restTotalW = gridW + edgeX * 2
+                val width = lerpInt(restTotalW, viewport, p)
 
                 layout(width, height) {
                     platePlaceable.place(plateNow.left, plateNow.top)
@@ -742,7 +791,19 @@ internal fun RemapStage(
                     }
                 }
             }
+            }
         }
+
+        // HOW MUCH more and WHERE, which a fade at the rim can't say. It belongs to the resting
+        // view only — zoomed, the camera is the navigation — so it fades out with the travel.
+        MinputScrollbar(
+            state = bodyScroll,
+            orientation = Orientation.Horizontal,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = MinputBarEdgePadding)
+                .graphicsLayer { alpha = 1f - crossfadeAt(progress()) },
+        )
 
         // ABOVE everything: the tile being carried, and the one it would displace. Outside every
         // card on purpose — a card clips, so a tile lifted from a slot at its rim was sliced by
@@ -756,7 +817,7 @@ internal fun RemapStage(
             config = config,
             // Whichever tile the user actually picked up: a row's in edit mode, a table's
             // otherwise. The two modes never run at once.
-            look = if (editing) RowTileLook else TableTileLook,
+            look = if (editing) rowTileLook() else TableTileLook,
         )
 
         // Edit mode's tiles have no card to host the dialogs their menus summon, so the stage
@@ -805,25 +866,112 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
     }
 }
 
-/** A card's surface: fill, bevel and (once the zoom has settled) its shadow. Drawn at the card's
- *  live size rather than scaled with its contents, so the corner radius and the bevel stay the
- *  width they were designed at through the whole travel. */
+/**
+ * A group's chrome, which is now two different things at the two ends of the travel (Dylan,
+ * 2026-09-22).
+ *
+ * **Zoomed, it is a CARD** — fill, bevel and (once the travel has settled) its shadow. Drawn at
+ * the card's live size rather than scaled with its contents, so the corner radius and the bevel
+ * stay the width they were designed at the whole way.
+ *
+ * **At rest, the card is GONE** and a thin inner line takes its place. Dylan asked for the
+ * backing cards off the basic view: seven filled, bevelled, shadowed plates around seven small
+ * clusters of text was a lot of container for very little content, and with the body now one
+ * scrolling canvas the cards were also the thing doing the clipping. The line still demarcates
+ * a group — you can see where one ends and the next begins — and it is deliberately a VECTOR
+ * stroke rather than a border modifier, because it is the genesis of the connector lines that
+ * will eventually run from each group to the buttons it governs on the controller image.
+ *
+ * Both alphas are read in the DRAW phase, so the travel repaints them without recomposing.
+ */
 @Composable
-private fun StageCardChrome(interaction: MutableInteractionSource, settled: Boolean) {
+private fun StageCardChrome(
+    settled: Boolean,
+    zoomed: Boolean,
+    progress: () -> Float,
+) {
     val container = minputBoxContainer()
     val shape = RoundedCornerShape(GroupCorner)
     Box(
         Modifier
             .fillMaxSize()
-            .minputInteractiveMotion(interaction)
+            .graphicsLayer { alpha = crossfadeAt(progress()) }
             // The blurred shadow re-rasterizes whenever the rect changes, which during a zoom is
-            // every frame for every card. It comes back the moment the travel ends.
-            .then(if (settled) Modifier.softDropShadow(cornerRadius = GroupCorner, offsetY = 0.dp) else Modifier)
+            // every frame for every card — and at rest there is no card to cast it.
+            .then(
+                if (settled && zoomed) {
+                    Modifier.softDropShadow(cornerRadius = GroupCorner, offsetY = 0.dp)
+                } else Modifier,
+            )
             .clip(shape)
             .background(container)
             .border(minputBevelBorder(container, GroupCorner), shape),
     )
 }
+
+/**
+ * The single vector line that marks a group at rest (Dylan, 2026-09-22, corrected 2026-09-23).
+ *
+ * **One line, on the edge that FACES THE CONTROLLER** — not a border around the group. A full
+ * ring was the first cut and read as the card it had just replaced, drawn in outline; the point
+ * is a mark that says "this group belongs to that part of the controller", which is why it is a
+ * drawn stroke rather than a border modifier: the connector lines that will eventually run from
+ * here to the buttons themselves start at this edge.
+ *
+ * **It is drawn with the group's CONTENT, not with the card chrome beside it**, and that is
+ * load-bearing. `minputInteractiveMotion` tracks focus on its own node, so the chrome (never
+ * focusable) and the content (focusable) lift by different amounts the moment a group takes
+ * focus — invisible while the chrome was a filled card behind the rows, but a hairline that
+ * slid out from under them once it became a line. Same node, same lift, no gap.
+ */
+private fun Modifier.groupEdgeLine(
+    group: RemapSimpleGroup,
+    color: Color,
+    alpha: () -> Float,
+): Modifier = drawBehind {
+    val strength = alpha()
+    if (strength <= 0f) return@drawBehind
+    val stroke = GroupOutlineWidth.toPx()
+    val inset = GroupOutlineInset.toPx() + stroke / 2f
+    // How far the line stops short of each end, so it reads as a deliberate mark rather than
+    // a wall boxing the group in.
+    val trim = GroupOutlineEndTrim.toPx()
+    val (from, to) = when (group.controllerEdge()) {
+        GroupEdge.TOP -> Offset(trim, inset) to Offset(size.width - trim, inset)
+        GroupEdge.START -> Offset(inset, trim) to Offset(inset, size.height - trim)
+        GroupEdge.END ->
+            Offset(size.width - inset, trim) to Offset(size.width - inset, size.height - trim)
+    }
+    if (to.x < from.x || to.y < from.y) return@drawBehind
+    drawLine(
+        color = color.copy(alpha = strength),
+        start = from,
+        end = to,
+        strokeWidth = stroke,
+        cap = StrokeCap.Round,
+    )
+}
+
+/** Which edge of a group faces the controller image — where its [groupEdgeLine] is drawn. The
+ *  flanks face inward; the utility group sits under the controller and faces up at it. */
+private enum class GroupEdge { START, END, TOP }
+
+private fun RemapSimpleGroup.controllerEdge(): GroupEdge = when (this) {
+    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK ->
+        GroupEdge.END
+    RemapSimpleGroup.UTILITY -> GroupEdge.TOP
+    else -> GroupEdge.START
+}
+
+/**
+ * How far through the travel the two contents (and the two chromes) have traded places.
+ *
+ * Kept to the middle of the zoom: a table scaled down to box size is illegible and summary rows
+ * blown up to card size are a blur, so neither wants to be the thing on screen at its own
+ * extreme.
+ */
+private fun crossfadeAt(progress: Float): Float =
+    ((progress.coerceIn(0f, 1f) - CrossfadeStart) / CrossfadeSpan).coerceIn(0f, 1f)
 
 /** One group's basic-view content: the glyph + assignment rows, and (while zoomed out) the tap
  *  target that opens it. The card's surface is [StageCardChrome], a sibling. */
@@ -843,23 +991,32 @@ private fun StageBasicContent(
     edit: RowEditHost?,
 ) {
     val focusRequester = remember { FocusRequester() }
-    // The box is one focus target, so "this box has focus" is exactly "the stick should scroll
-    // this box's rows". In edit mode the box itself can't be focused — its tiles can — so the
-    // question becomes whether the cursor is anywhere INSIDE it, which is the same question.
-    var focused by remember { mutableStateOf(false) }
     if (seatFocus && interactive) {
         LaunchedEffect(Unit) {
             runCatching { focusRequester.requestFocus() }
             onFocusSeated()
         }
     }
+    // The group's own line goes ACCENT where it holds the controller cursor. With no card there
+    // is no plate left to carry a focus indication, and a view navigated by d-pad has to say
+    // where the cursor is. In EDIT MODE the group is not the thing being navigated — its tiles
+    // are, each with its own focus ring — so the line stays quiet and the cursor is read off
+    // whichever tile is lit.
+    val focused by interaction.collectIsFocusedAsState()
+    val lit = focused && edit == null
+    val lineColor = if (lit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    val lineAlpha = if (lit) GroupOutlineFocusAlpha else GroupOutlineAlpha
     Box(
         modifier = Modifier
-            .minputInteractiveMotion(interaction)
+            // **The group lifts as ONE only while it IS one** (Dylan, 2026-09-23). In edit mode
+            // the individual tiles are the controls, and each already carries this same motion —
+            // so a group-level lift on top of it moved the whole d-pad every time the cursor
+            // landed on one of its commands.
+            .then(if (edit == null) Modifier.minputInteractiveMotion(interaction) else Modifier)
             // Clipped so the tap ripple takes the card's shape: the fill and the bevel belong to
             // the chrome sibling, but the indication is drawn here.
             .clip(RoundedCornerShape(GroupCorner))
-            .onFocusChanged { focused = if (edit != null) it.hasFocus else it.isFocused }
+            .groupEdgeLine(group, lineColor) { lineAlpha }
             .then(
                 if (interactive) {
                     Modifier
@@ -886,19 +1043,11 @@ private fun StageBasicContent(
             )
             .testTag("simple-group:${group.name}")
             .padding(horizontal = 8.dp, vertical = 6.dp),
-        // A CENTRE-COLUMN box is wider than its rows (it is sized by the column, not by its
-        // content), and a Box hands its children a zero minimum — so without this its cluster
-        // sat against the left edge of a box it is supposed to be centred in (Dylan,
-        // 2026-09-19). A flank box IS its content's size, so centring costs it nothing.
+        // Every box wraps its own rows now, so centring costs nothing and covers the case where
+        // one is ever given more room than it asked for.
         contentAlignment = Alignment.Center,
     ) {
-        // The box is one focus target, so "this box has focus" is exactly "the right stick
-        // should scroll this box's rows" — which the scrollers inside can't see for themselves,
-        // sitting as they do INSIDE the focusable. Published, not passed: every scroller in the
-        // subtree reads it, however deeply the rows get rearranged.
-        CompositionLocalProvider(LocalStickScroll provides focused) {
-            GroupRows(group, viewingSet, viewingLayer, config, edit = edit)
-        }
+        GroupRows(group, viewingSet, viewingLayer, config, edit = edit)
     }
 }
 
@@ -1066,10 +1215,30 @@ private const val ControllerBand = 1
 private const val UtilityBand = 2
 
 /** Where the contents of a card start and finish trading places, as a fraction of the travel.
- *  Kept to the middle: a table scaled down to box size is illegible, and summary rows blown up
- *  to card size are a blur, so neither wants to be the thing on screen at its own extreme. */
+ *  See [crossfadeAt]. */
 private const val CrossfadeStart = 0.18f
 private const val CrossfadeSpan = 0.46f
+
+/**
+ * The group outline that replaced the basic view's cards (Dylan, 2026-09-22) — how far inside
+ * the group's bounds it sits, how thick it draws, and how strongly it reads.
+ *
+ * Faint on purpose: it is there to say where one group ends and the next begins, not to rebuild
+ * the card it replaced out of line work.
+ */
+private val GroupOutlineInset = 3.dp
+private val GroupOutlineWidth = 1.dp
+
+/** How far the group's line stops short of each end of its edge. */
+private val GroupOutlineEndTrim = 4.dp
+private const val GroupOutlineAlpha = 0.55f
+
+/** The same line where the group holds the controller cursor — the focus affordance the card
+ *  used to carry. Drawn in the accent, so it reads as "you are here" rather than "heavier". */
+private const val GroupOutlineFocusAlpha = 0.9f
+
+/** How far the body scroller's chevrons sit out past the grid, into the plate's own inset. */
+private val BodyChevronOutset = 2.dp
 
 /** Fallback shape for the controller artwork, if its intrinsic size is ever unavailable. */
 private const val DefaultControllerAspect = 0.62f

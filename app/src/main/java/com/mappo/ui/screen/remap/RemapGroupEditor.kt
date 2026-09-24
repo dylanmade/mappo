@@ -2034,7 +2034,9 @@ internal fun stepCellWithinGroup(
     val nextRow = (row + dRow).coerceIn(0, rows.lastIndex)
     val spec = rows[nextRow]
     val lastSlot = (slots(from.group, spec) - 1).coerceAtLeast(0)
-    return CellKey(from.group, spec, (from.slot + dCol).coerceIn(0, lastSlot))
+    // A screen-space step, converted into the row's own slot direction — see [slotsRunLeftward].
+    val nextSlot = from.slot + dCol * from.group.slotStepFor(from.row)
+    return CellKey(from.group, spec, nextSlot.coerceIn(0, lastSlot))
 }
 
 /**
@@ -2558,15 +2560,24 @@ private const val MinTableRows = 2
 private val RowTileWidth = 88.dp
 
 /**
- * A row tile's height — the RESTING row height, unchanged (Dylan, 2026-09-22): edit mode was
- * asked to put a capsule around what a row already says without first buying the rows the
- * padding a button would normally want. The rhythm of the view is therefore identical in both
- * modes, and this is the constant to raise if the tiles read as cramped.
+ * A row tile's height and the gaps around it, **in PHYSICAL pixels** — Dylan's own measurement
+ * off the device (2026-09-23), converted at runtime exactly as the layouts drawer's width is.
+ * A dp figure would have been his number divided by whatever density he was measuring at.
+ *
+ * "42 high, stroke inclusive": the tile's bevel is an INNER stroke, so this is the whole thing.
+ * The gap is the air between two buttons of one group, horizontally between tiles and
+ * vertically between rows alike.
  */
-private val RowTileHeight = SummaryRowHeight
+private const val RowTileHeightPx = 42
+private const val RowTileGapPx = 6
 
-/** Gap between tiles on a row. The table's gap, not the resting rows' divider run. */
-internal val RowTileGap = TileGap
+/** [RowTileHeightPx] in dp on this device. The row height of BOTH modes — see [rowTileLook]. */
+@Composable
+internal fun rowTileHeight(): Dp = with(LocalDensity.current) { RowTileHeightPx.toDp() }
+
+/** [RowTileGapPx] in dp on this device: between tiles on a row, and between a group's rows. */
+@Composable
+internal fun rowTileGap(): Dp = with(LocalDensity.current) { RowTileGapPx.toDp() }
 
 /** A row tile's text inset. Tighter than the table's: less tile to inset into. */
 private val RowTileContentPadding = 6.dp
@@ -2607,6 +2618,10 @@ internal class TileLook(
 /** The advanced table's tile: two lines, a press-type glyph, room for both. */
 internal val TableTileLook = TileLook(TileWidth, TileHeight, TileCorner, compact = false)
 
-/** The basic view's tile: one line, at row height. */
-internal val RowTileLook = TileLook(RowTileWidth, RowTileHeight, RowTileHeight / 2, compact = true)
+/** The basic view's tile: one line, at the row height both modes share. */
+@Composable
+internal fun rowTileLook(): TileLook {
+    val height = rowTileHeight()
+    return remember(height) { TileLook(RowTileWidth, height, height / 2, compact = true) }
+}
 

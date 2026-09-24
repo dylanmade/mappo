@@ -183,6 +183,24 @@ class ControllerConfigRepositoryTest {
     }
 
     @Test
+    fun seedDefaultConfig_commandsPrintPlainly_withNoDeviceIconOrInitials() = runTest {
+        // Both qualifiers default OFF (Dylan, 2026-09-22). They were on from before the toggles
+        // existed; once a fresh layout seeded a real command on every input, that meant opening
+        // one to a wall of device glyphs and "GP: " prefixes qualifying names nothing was
+        // ambiguous about. They qualify, so they belong where the user asks for them.
+        subject.seedDefaultConfig(layoutId = 1L)
+        val cfg = subject.getActiveConfigOnce(1L)!!
+
+        val bindings = cfg.activeActionSet!!.preset
+            .flatMap { it.group.inputs }
+            .flatMap { it.activators }
+            .flatMap { it.bindings }
+        assertTrue("The seed should produce commands to check", bindings.isNotEmpty())
+        assertTrue("No seeded command shows a device icon", bindings.none { it.showDeviceIcon })
+        assertTrue("No seeded command shows device initials", bindings.none { it.showDeviceInitials })
+    }
+
+    @Test
     fun seedDefaultConfig_everyInputHasOneFullPressActivator_mappedToItselfWhereItCanBe() = runTest {
         subject.seedDefaultConfig(layoutId = 1L)
         val cfg = subject.getActiveConfigOnce(1L)!!

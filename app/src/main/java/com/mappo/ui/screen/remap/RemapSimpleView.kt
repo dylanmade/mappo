@@ -571,8 +571,7 @@ internal fun GroupRows(
         // belongs to no cell. Without a tolerance a finger crossing one resolves to nothing and
         // the drop target snaps back to the origin, visible as the landing marker flickering
         // home mid-drag. Same bargain the advanced table strikes.
-        edit.moveState.hitTolerancePx =
-            with(density) { maxOf(SummaryRowSpacing, RowTileGap).toPx() }
+        edit.moveState.hitTolerancePx = with(density) { rowTileGap().toPx() }
     }
     val rows = group.summaryRows.map { spec ->
         simpleRowFor(group, spec, viewingSet, viewingLayer, config, edit != null, order)
@@ -687,7 +686,7 @@ private fun simpleRowFor(
 /**
  * One command tile on a basic-view row.
  *
- * The tile itself is the advanced table's ([CommandTile] at [RowTileLook]); everything here is
+ * The tile itself is the advanced table's ([CommandTile] at [rowTileLook]); everything here is
  * the wiring it needs — which cell it is, what its menu does, and the drop marker underneath it.
  *
  * It carries NO swap displacement: the stage's [MoveOverlay] draws both ends of an exchange
@@ -699,6 +698,7 @@ private fun RowCommandTile(
     slot: RowSlot.Tile,
     edit: RowEditHost,
     config: ControllerConfig?,
+    look: TileLook,
     modifier: Modifier,
 ) {
     val command = slot.command
@@ -719,7 +719,7 @@ private fun RowCommandTile(
     Box(
         modifier = modifier.then(
             if (marker != null) {
-                Modifier.clip(RoundedCornerShape(RowTileLook.corner)).background(marker)
+                Modifier.clip(RoundedCornerShape(look.corner)).background(marker)
             } else Modifier,
         ),
     ) {
@@ -759,7 +759,7 @@ private fun RowCommandTile(
                     onType = edit.onType,
                 )
             },
-            look = RowTileLook,
+            look = look,
             modifier = Modifier.focusRequester(edit.focusHandle(slot.key)),
         )
     }
@@ -810,21 +810,14 @@ internal fun CentreSplit(
 }
 
 /**
- * One anchored table in its scrolling viewport.
+ * One anchored table.
  *
- * The viewport WRAPS the table (Dylan, 2026-09-16) — a group with few assignments makes a
- * small box — up to the space the box's column allows, beyond which it scrolls, cueing the
- * overflow with [MinputOverflowScroll]'s edge fades + chevrons. The chevrons sit out in the
- * box's padding ([OverflowChevronOutset]), nearer its rim.
- *
- * **A mirrored table scrolls in reverse.** Its rows read outward from a glyph pinned to the
- * box's right edge, so the resting position is the scroller's FAR end: `reverseScrolling`
- * makes value 0 mean "showing the right end", which is both the correct opening view and what
- * keeps the glyph column pinned where it belongs. The stick direction is mirrored to match, so
- * pushing the stick toward the content always reveals more of it.
- *
- * The right stick is a prototyping stand-in for real scroll controls, at Dylan's request; only
- * the focused box responds.
+ * It used to be a scrolling viewport of its own (Dylan, 2026-09-16), wrapping its rows up to the
+ * width its column allowed and scrolling beyond it with [MinputOverflowScroll]'s edge fades and
+ * chevrons. **The scroller moved out to the BODY on 2026-09-22** (Dylan) along with the group
+ * cards: with no card there is nothing to clip against, so a table is simply as wide as its rows
+ * and the whole grid scrolls as one. The cues did not disappear — they are the same cues, once,
+ * around the whole body (see RemapStage).
  */
 @Composable
 private fun ScrollingAssignmentTable(
@@ -835,16 +828,14 @@ private fun ScrollingAssignmentTable(
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
 ) {
-    val scroll = rememberScrollState()
-    val reversed = anchor == RowAnchor.END
-    MinputOverflowScroll(
-        state = scroll,
-        reverseScrolling = reversed,
-        chevronOutset = OverflowChevronOutset,
+    AssignmentTable(
+        rows = rows,
+        anchor = anchor,
+        floored = floored,
+        edit = edit,
+        config = config,
         modifier = modifier,
-    ) {
-        AssignmentTable(rows = rows, anchor = anchor, floored = floored, edit = edit, config = config)
-    }
+    )
 }
 
 /**
@@ -894,7 +885,13 @@ private fun AssignmentTable(
     // Edit mode's tiles are taller than the text they replace would be; every other rhythm of
     // the table (the row gap, the glyph column) is deliberately unchanged, so entering edit mode
     // wraps the rows rather than re-laying the view out (Dylan, 2026-09-22).
-    val rowHeightDp = if (edit != null) maxOf(SummaryRowHeight, RowTileLook.height) else SummaryRowHeight
+    // ONE rhythm across both modes (Dylan, 2026-09-23): the row height is the tile height
+    // whether or not a tile is drawn in it, and the glyph is the same size either way. The
+    // resting view and edit mode are the same view with different cells, so a row that changed
+    // height between them read as the whole grid resettling every time edit mode was entered.
+    val look = rowTileLook()
+    val rowHeightDp = look.height
+    val rowGapDp = rowTileGap()
     Layout(
         modifier = modifier,
         content = {
@@ -911,6 +908,7 @@ private fun AssignmentTable(
                             // A Tile slot only exists where GroupRows was given a host.
                             edit = edit!!,
                             config = config,
+                            look = look,
                             modifier = slotModifier,
                         )
                         is RowSlot.Text -> {
@@ -959,16 +957,16 @@ private fun AssignmentTable(
     ) { measurables, _ ->
         val slots = measurables.associateBy { it.layoutId }
         val rowHeight = rowHeightDp.roundToPx()
-        val spacing = SummaryRowSpacing.roundToPx()
+        val spacing = rowGapDp.roundToPx()
         val glyph = SummaryGlyphSize.roundToPx()
         val glyphGap = AssignmentGlyphGap.roundToPx()
         val dividerPadding = AssignmentDividerPadding.roundToPx()
         val dividerWidth = AssignmentDividerWidth.roundToPx().coerceAtLeast(1)
         val dividerHeight = AssignmentDividerHeight.roundToPx().coerceAtMost(rowHeight)
         val dividerRun = dividerPadding * 2 + dividerWidth
-        val tileGap = RowTileGap.roundToPx()
-        val tileWidth = RowTileLook.width.roundToPx()
-        val tileHeight = RowTileLook.height.roundToPx()
+        val tileGap = rowGapDp.roundToPx()
+        val tileWidth = look.width.roundToPx()
+        val tileHeight = look.height.roundToPx()
 
         /** The air before the slot at [column]: a divider's run between two text runs, the
          *  tiles' own gap wherever a tile is involved. */
@@ -1042,15 +1040,13 @@ private data class GlyphSlot(val row: Int)
 private data class CellSlot(val row: Int, val column: Int)
 private data class DividerSlot(val row: Int, val column: Int)
 
-/** Height of one glyph + assignment row inside a group box. Also the height of an edit-mode
- *  tile ([RowTileLook]), which is what keeps the view's rhythm identical in both modes. */
-internal val SummaryRowHeight = 17.dp
+// A row's HEIGHT and the gap between rows are the tile's — see [rowTileHeight] / [rowTileGap],
+// which are specified in device pixels and shared by both modes.
 
-/** Vertical gap between a box's rows. */
-internal val SummaryRowSpacing = 4.dp
-
-/** The input glyph that anchors every row. */
-private val SummaryGlyphSize = 14.dp
+/** The input glyph that anchors every row — the SAME size in both modes (Dylan, 2026-09-23).
+ *  Raised from 14dp on 2026-09-22 to sit with the taller tiles; the resting view gets it too,
+ *  because the glyph is the row's only identity in either mode. */
+private val SummaryGlyphSize = 18.dp
 
 /** The DEVICE glyph leading one command's text — the advanced tile's scale
  *  (TileOutputGlyphSize), since the two views print the same command. */

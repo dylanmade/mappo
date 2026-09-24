@@ -227,7 +227,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("ENTER", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -235,7 +235,7 @@ class RemapControlsScreenTest {
         setScreenLocal(sampleConfig(boundButtonA = BindingOutput.KeyPress("ENTER"), buttonALabel = "Jump"))
 
         composeRule.onNodeWithText("Jump", useUnmergedTree = true).assertExists()
-        composeRule.onAllNodesWithText("KB: ENTER", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("ENTER", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
@@ -246,8 +246,8 @@ class RemapControlsScreenTest {
 
         // 2026-09-11: a row renders EVERY assigned press type inline (Press then Long here),
         // replacing the "+N" badge that only counted them.
-        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("KB: SPACE", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("SPACE", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("\u200A+\u200A1", useUnmergedTree = true).assertCountEquals(0)
     }
 
@@ -257,7 +257,7 @@ class RemapControlsScreenTest {
 
         // button_b's standard press is UNBOUND and its long press is bound: assignments close
         // up rank (no empty leading slot), and the row stops showing its resting hardware name.
-        composeRule.onNodeWithText("KB: Q", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Q", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("B Button", useUnmergedTree = true).assertCountEquals(0)
     }
 
@@ -274,7 +274,7 @@ class RemapControlsScreenTest {
         // name whenever the group's mode was DEVICE_DEFAULT, so a command assigned from the
         // advanced table — which never consults the mode — showed as "A Button". A row with an
         // assignment shows the assignment; the mode only decides the RESTING label.
-        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("ENTER", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("A Button", useUnmergedTree = true).assertCountEquals(0)
     }
 
@@ -347,9 +347,9 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("KB: SPACE", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("SPACE", useUnmergedTree = true).assertExists()
         // The default set's binding is NOT shown — the editor follows the viewing pointer.
-        composeRule.onAllNodesWithText("KB: ENTER", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("ENTER", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
@@ -373,7 +373,7 @@ class RemapControlsScreenTest {
         }
 
         // Default set (set 1) wins → ENTER, not SPACE.
-        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("ENTER", useUnmergedTree = true).assertExists()
     }
 
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
@@ -684,7 +684,7 @@ class RemapControlsScreenTest {
 
         // The base set's binding text shows through as ghost (Robolectric can't probe
         // alpha cleanly; we verify the text is *present* and there's no override icon).
-        composeRule.onNodeWithText("KB: ENTER", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("ENTER", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Override actions").assertCountEquals(0)
     }
 
@@ -939,8 +939,8 @@ class RemapControlsScreenTest {
         }
 
         // Override visible in the simple view; base hidden for that row.
-        composeRule.onNodeWithText("MS: MOUSE_LEFT", useUnmergedTree = true).assertExists()
-        composeRule.onAllNodesWithText("KB: ENTER", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onNodeWithText("MOUSE_LEFT", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("ENTER", useUnmergedTree = true).assertCountEquals(0)
         // The override affordance now lives on the cell itself: the advanced view is a table,
         // and button_a's Press cell carries the layer menu.
         openAdvanced("FACE")

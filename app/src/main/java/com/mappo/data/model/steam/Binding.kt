@@ -40,10 +40,15 @@ data class Binding(
     val orderIndex: Int = 0,
     // ── How this command PRINTS (Dylan, 2026-09-19) ──
     // Per command, not per view: the same binding reads the same way in the advanced table and
-    // in the basic view's summary rows. Both default to what every command showed before the
-    // toggles existed, so an untouched layout looks exactly as it did.
+    // in the basic view's summary rows.
+    //
+    // **Both default to OFF** (Dylan, 2026-09-22), for seeded and newly created commands alike.
+    // They were on to begin with, matching what every command showed before the toggles existed;
+    // with layouts now seeding a real self-mapping on every input, that meant a fresh layout
+    // opened covered in device glyphs and "GP: " prefixes qualifying names nothing was
+    // ambiguous about. They are qualifiers, so they belong where the user asks for them.
     /** Show the output device's glyph (keyboard, gamepad, mouse) beside the command. */
-    val showDeviceIcon: Boolean = true,
+    val showDeviceIcon: Boolean = false,
     /** Show the device INITIALS the output's name is prefixed with ("KB: ", "GP: "). */
-    val showDeviceInitials: Boolean = true,
+    val showDeviceInitials: Boolean = false,
 )

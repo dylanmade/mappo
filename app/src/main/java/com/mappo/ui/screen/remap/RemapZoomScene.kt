@@ -52,7 +52,10 @@ internal fun stepCellAcrossGroups(
     val rows = from.group.rows
     val row = rows.indexOf(from.row).takeIf { it >= 0 } ?: return null
     val nextRow = row + dRow
-    val nextSlot = from.slot + dCol
+    // [dCol] is a SCREEN direction; a slot index counts outward from its row's glyph. On a
+    // MIRRORED row those run opposite ways (see [slotsRunLeftward]), so the two have to be
+    // converted into one another rather than used interchangeably.
+    val nextSlot = from.slot + dCol * from.group.slotStepFor(from.row)
     if (nextRow in rows.indices) {
         val spec = rows[nextRow]
         val count = slots(from.group, spec)
@@ -70,13 +73,36 @@ internal fun stepCellAcrossGroups(
     }
     val spec = neighbourRows[landingRow]
     val lastSlot = (slots(neighbour, spec) - 1).coerceAtLeast(0)
+    // Enter the neighbour at the edge you arrive from, in SCREEN terms: travelling right, land
+    // on its leftmost tile — which is its LAST slot when its row reads leftward.
+    val enteringLeftward = neighbour.slotsRunLeftward(spec)
     val landingSlot = when {
-        dCol > 0 -> 0
-        dCol < 0 -> lastSlot
+        dCol > 0 -> if (enteringLeftward) lastSlot else 0
+        dCol < 0 -> if (enteringLeftward) 0 else lastSlot
         else -> from.slot.coerceAtMost(lastSlot)
     }
     return CellKey(neighbour, spec, landingSlot)
 }
+
+/**
+ * **Does this row lay its slots out right-to-left?**
+ *
+ * A slot INDEX counts outward from the row's input glyph, which is the card's outward-facing
+ * edge on a mirrored group — so on the left flank, slot 0 is the RIGHTMOST tile and the indices
+ * climb leftward. Both views mirror by the same rule ([RemapSimpleGroup.anchorFor]), including
+ * the centre group, which mirrors per ROW around its own centre line rather than as a whole.
+ *
+ * Ordinary focus navigation never needed this — Compose's spatial search reads actual screen
+ * positions — but a MOVE walks the drop target by index, so without it pressing right on the
+ * left flank carried a tile left and pressing left did nothing at all (Dylan, 2026-09-23).
+ */
+internal fun RemapSimpleGroup.slotsRunLeftward(spec: SimpleRowSpec): Boolean =
+    anchorFor(spec) == RowAnchor.END
+
+/** +1 where a row's slots climb rightward, -1 where they climb leftward: the factor that turns
+ *  a screen-space column step into a slot-index step. */
+internal fun RemapSimpleGroup.slotStepFor(spec: SimpleRowSpec): Int =
+    if (slotsRunLeftward(spec)) -1 else 1
 
 /**
  * Which group lies one step [dRow] / [dCol] away — the scene's map, in hardware terms.
