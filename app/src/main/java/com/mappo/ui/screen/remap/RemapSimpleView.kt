@@ -5,8 +5,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -32,15 +30,26 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.MultiContentMeasurePolicy
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.ActionLayerGraph
@@ -60,6 +69,7 @@ import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.minputMiniTextStyle
+import kotlin.math.roundToInt
 
 /**
  * The simplified remap view: a controller diagram flanked by one tappable box per input group,
@@ -144,8 +154,37 @@ internal fun RemapSimpleView(
      * tables register the same cell keys these tiles do.
      */
     var editGroup by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
+    /**
+     * Edit mode as it is ON SCREEN, which outlives [editGroup] through the morph out — the same
+     * arrangement [visibleGroup] has for the zoom, and for the same reason: the rows are still
+     * travelling home after the intent has gone.
+     */
+    var editVisible by remember { mutableStateOf(editGroup) }
+    /** 0 = the resting rows, 1 = tiles. The whole travel is this one number; see [EditPhase]. */
+    val editProgress = remember { Animatable(if (editGroup != null) 1f else 0f) }
+    var editSettled by remember { mutableStateOf(true) }
+    /** One-shot: seat the cursor on this group's first tile, once there IS one to seat it on. */
+    var editSeat by remember { mutableStateOf<RemapSimpleGroup?>(null) }
     // Bumped to re-seat the cursor on a tile after a tap has wiped focus. See [refocusTick].
     var editFocusTick by remember { mutableIntStateOf(0) }
+
+    // The morph in and out. Focus is seated only once the tiles are REAL — mid-travel they are
+    // inert ghosts with nothing to focus (see EditPhase).
+    LaunchedEffect(editGroup) {
+        val target = editGroup
+        if (target != null) {
+            editVisible = target
+            editSettled = false
+            editProgress.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+            editSettled = true
+            editSeat = target
+        } else if (editVisible != null) {
+            editSettled = false
+            editProgress.animateTo(0f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+            editSettled = true
+            editVisible = null
+        }
+    }
     // Where the camera has travelled since the zoom began — the group being edited NOW, which
     // is what the zoom collapses back into and hands focus to. Distinct from [expandedGroup],
     // which stays the group it was opened from.
@@ -185,7 +224,7 @@ internal fun RemapSimpleView(
         // In edit mode there is no box left to recover onto — the tiles are the focus targets,
         // and the stage knows where they are.
         if (editGroup != null) {
-            editFocusTick++
+            if (editSettled) editFocusTick++
             return@LaunchedEffect
         }
         if (expandedGroup == null) {
@@ -258,7 +297,16 @@ internal fun RemapSimpleView(
         viewingLayer = viewingLayer,
         config = config,
         callbacks = editorCallbacks,
-        editGroup = editGroup,
+        editGroup = editVisible,
+        editPhase = when {
+            editVisible == null -> EditPhase.REST
+            editSettled -> EditPhase.EDIT
+            else -> EditPhase.MORPH
+        },
+        editProgress = { editProgress.value },
+        editSettled = editSettled,
+        editSeatGroup = editSeat,
+        onEditSeated = { editSeat = null },
         editFocusTick = editFocusTick,
         // Selecting a box EDITS IN PLACE; holding it opens the advanced view it used to open.
         onOpenGroup = { editGroup = it },
@@ -561,8 +609,12 @@ internal fun GroupRows(
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
-    /** Non-null in EDIT MODE: the rows are made of real command tiles instead of text runs. */
+    /** Non-null once EDIT MODE owns these rows — mid-morph included. */
     edit: RowEditHost? = null,
+    /** Which of the two shapes the rows are in, or the travel between them. */
+    phase: EditPhase = EditPhase.REST,
+    /** The travel's position, read in the layout and draw phases only. */
+    progress: () -> Float = { 0f },
 ) {
     val order = LocalCommandOrder.current
     val density = LocalDensity.current
@@ -588,8 +640,10 @@ internal fun GroupRows(
             // protect and everything to break: two halves each claiming a full assignment run
             // outgrew the column and cued an overflow the text didn't have (Dylan, 2026-09-19).
             // In edit mode it is meaningless either way — a tile carries its own width.
-            floored = !split && edit == null,
+            floored = !split,
             edit = edit,
+            phase = phase,
+            progress = progress,
             config = config,
             modifier = m,
         )
@@ -630,29 +684,40 @@ internal class RowEditHost(
     val onType: (TypeEdit) -> Unit,
 )
 
-/** One row of a group box, resolved: what it draws, and (in edit mode) what its tiles act on. */
+/**
+ * One row of a group box, resolved for BOTH modes at once: the text runs the resting view draws,
+ * and the tiles edit mode draws. The morph between them interpolates slot by slot, so a row has
+ * to know both of its shapes at every moment (Dylan, 2026-09-24).
+ *
+ * The two lists line up by INDEX, which is what lets a label travel into its own tile: both come
+ * from the same `rowCommandsFor` order, so slot *i* is the same command either way. [tiles] runs
+ * one longer — the trailing "+" has no resting counterpart and grows out of nothing — and is
+ * EMPTY for a row edit mode doesn't own (a stick's movement row), which therefore never morphs.
+ */
 private data class SimpleRow(
     val spec: SimpleRowSpec,
-    val slots: List<RowSlot>,
+    val rest: List<AssignmentCell>,
+    val tiles: List<RowTile>,
     val bindingGroupId: Long? = null,
     val overridden: Boolean = false,
-)
-
-/** One drawn item on a row: a text run at rest, a real command TILE in edit mode. */
-private sealed interface RowSlot {
-    data class Text(val cell: AssignmentCell) : RowSlot
-
-    /** [command] is null for the row's trailing "+", exactly as in the advanced table. */
-    data class Tile(val key: CellKey, val command: RowCommand?) : RowSlot
+) {
+    /** Does this row have a second shape to travel to at all? */
+    val morphs: Boolean get() = tiles.isNotEmpty()
+    val slotCount: Int get() = maxOf(rest.size, tiles.size)
+    fun restAt(index: Int): AssignmentCell? = rest.getOrNull(index)
+    fun tileAt(index: Int): RowTile? = tiles.getOrNull(index)
 }
 
+/** One tile slot of a row. [command] is null for the trailing "+", as in the advanced table. */
+private data class RowTile(val key: CellKey, val command: RowCommand?)
+
 /**
- * Resolve one row to what it draws.
+ * Resolve one row to what it draws in BOTH modes.
  *
- * A stick's MOVEMENT row stays text even in edit mode: movement is the stick's MODE, not a
- * command anyone assigns ([RemapSimpleGroup.summaryRows]), so there is nothing there to tile.
- * The test is general rather than a special case — a summary row the editor doesn't own is not
- * editable, whichever row it turns out to be.
+ * A stick's MOVEMENT row gets no tiles: movement is the stick's MODE, not a command anyone
+ * assigns ([RemapSimpleGroup.summaryRows]), so there is nothing there to tile. The test is
+ * general rather than a special case — a summary row the editor doesn't own is not editable,
+ * whichever row it turns out to be.
  */
 @Composable
 private fun simpleRowFor(
@@ -661,22 +726,19 @@ private fun simpleRowFor(
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
-    editing: Boolean,
+    editable: Boolean,
     order: CommandOrder,
 ): SimpleRow {
-    if (!editing || spec !in group.rows) {
-        return SimpleRow(
-            spec = spec,
-            slots = assignmentCells(viewingSet, viewingLayer, config, spec).map { RowSlot.Text(it) },
-        )
-    }
+    val rest = assignmentCells(viewingSet, viewingLayer, config, spec)
+    if (!editable || spec !in group.rows) return SimpleRow(spec = spec, rest = rest, tiles = emptyList())
     val commands = rowCommandsFor(viewingSet, viewingLayer, spec, order)
     return SimpleRow(
         spec = spec,
+        rest = rest,
         // The commands that exist, then the row's "+" — the same stack the table draws, and the
         // same slot indices, so stepping, moving and the test tags all carry over untouched.
-        slots = (0 until rowSlotCount(commands.size)).map { slot ->
-            RowSlot.Tile(CellKey(group, spec, slot), commands.getOrNull(slot))
+        tiles = (0 until rowSlotCount(commands.size)).map { slot ->
+            RowTile(CellKey(group, spec, slot), commands.getOrNull(slot))
         },
         bindingGroupId = viewingSet?.presetFor(spec.source)?.group?.group?.id,
         overridden = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey) != null,
@@ -695,7 +757,7 @@ private fun simpleRowFor(
 @Composable
 private fun RowCommandTile(
     row: SimpleRow,
-    slot: RowSlot.Tile,
+    slot: RowTile,
     edit: RowEditHost,
     config: ControllerConfig?,
     look: TileLook,
@@ -766,6 +828,139 @@ private fun RowCommandTile(
 }
 
 /**
+ * **The morph between the two modes** (Dylan, 2026-09-24).
+ *
+ * Entering edit mode used to be a cut: every element at its resting place on one frame and at
+ * its edit-mode place on the next, with the scroller landing wherever the new width put it. It
+ * now runs as one short travel in two acts, which is how Dylan asked for it —
+ *
+ *  1. **The labels travel.** Each cell widens from its text's own width to the tile's, and the
+ *     label rides to the centre of where its tile will be. Nothing else appears yet; the row is
+ *     still just words moving apart.
+ *  2. **The buttons arrive behind them.** Only once the labels are home does the tile chrome
+ *     fade in underneath — the fill, the press-type tint, the ring, the "+".
+ *
+ * The label itself never fades: it is the same text throughout, which is what makes the two
+ * modes read as one view rearranging rather than two views swapping.
+ */
+internal enum class EditPhase {
+    /** The resting view: text runs and dividers, and no tile exists anywhere. */
+    REST,
+
+    /** Mid-travel, either way. Nothing here is interactive — see [RowTileGhost]. */
+    MORPH,
+
+    /** Edit mode proper: real [CommandTile]s, focusable and carryable. */
+    EDIT,
+}
+
+/** How far the labels have travelled — act one, finishing before the chrome starts. Shared
+ *  with the STAGE, whose grid must interpolate on exactly the same curve as the rows inside it. */
+internal fun editTravelAt(progress: Float): Float =
+    (progress.coerceIn(0f, 1f) / EditTravelSpan).coerceIn(0f, 1f)
+
+/** How far the tile chrome has arrived — act two. Reversed on the way out, so the buttons
+ *  leave first and the labels walk home after them. */
+private fun editChromeAt(progress: Float): Float =
+    ((progress.coerceIn(0f, 1f) - EditChromeStart) / (1f - EditChromeStart)).coerceIn(0f, 1f)
+
+/** Where act one ends and act two begins, as fractions of the travel. They overlap slightly:
+ *  a hard handover reads as two animations rather than one. */
+private const val EditTravelSpan = 0.62f
+private const val EditChromeStart = 0.55f
+
+/**
+ * A tile mid-morph: its chrome, fading in behind a label that is being drawn by the cell itself.
+ *
+ * Deliberately inert — no focus, no gestures, no menu. The real [CommandTile] takes over the
+ * instant the travel lands, and because the two are the same size and the same face by then,
+ * the handover is invisible. Keeping them separate is what lets the resting view stay exactly
+ * as it was: no focusable tile ever exists outside edit mode.
+ */
+@Composable
+private fun RowTileGhost(
+    tile: RowTile,
+    look: TileLook,
+    progress: () -> Float,
+    modifier: Modifier,
+) {
+    TileChrome(
+        pressType = tile.command?.type,
+        defined = tile.command != null,
+        look = look,
+        modifier = modifier.graphicsLayer { alpha = editChromeAt(progress()) },
+    )
+}
+
+/**
+ * A resting cell's text — the thing that travels.
+ *
+ * While the morph runs it also carries the tile's own colour on top of its resting one, faded in
+ * with the chrome: an alternate press type reads in its column colour at rest and in white on
+ * the tinted tile, and a label that changed colour the moment the buttons landed would undo the
+ * continuity the travel exists to create. Drawn as an opaque base with the second colour over
+ * it, never as two half-transparent copies, which would wash the text out mid-travel.
+ */
+@Composable
+private fun MorphingCellText(
+    cell: AssignmentCell,
+    style: TextStyle,
+    /** The colour this text wears once it is a tile's label, when that differs. */
+    editColor: Color?,
+    /** True for a resting label the "+" replaces: it has no tile to become, so it bows out. */
+    fadesOut: Boolean,
+    progress: () -> Float,
+    modifier: Modifier,
+) {
+    Box(
+        modifier = modifier.then(
+            if (fadesOut) Modifier.graphicsLayer { alpha = 1f - editChromeAt(progress()) } else Modifier,
+        ),
+    ) {
+        AssignmentCellRow(cell, cell.color, style)
+        if (editColor != null && editColor != cell.color) {
+            Box(Modifier.graphicsLayer { alpha = editChromeAt(progress()) }) {
+                AssignmentCellRow(cell, editColor, style)
+            }
+        }
+    }
+}
+
+/** One resting cell: its command's device glyph, then its name — the advanced tile's own output
+ *  line, which is why the two views print a command identically. */
+@Composable
+private fun AssignmentCellRow(cell: AssignmentCell, color: Color, style: TextStyle) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        cell.glyph?.let { output ->
+            InputGlyphs.outputPainter(output)?.let { painter ->
+                Icon(
+                    painter,
+                    contentDescription = null,
+                    modifier = Modifier.size(AssignmentOutputGlyphSize),
+                    tint = color,
+                )
+                Spacer(Modifier.width(MinputGlyphLabelGap))
+            }
+        }
+        Text(
+            text = cell.text,
+            style = if (cell.italic) style.copy(fontStyle = FontStyle.Italic) else style,
+            color = color,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+/** What a command's label reads as once it is a tile's — white on a tinted tile, the ordinary
+ *  content colour on Regular Press. Mirrors `RowTileContent`, which owns the rule. */
+@Composable
+private fun tileLabelColor(command: RowCommand?): Color {
+    val tinted = command != null && command.type != ActivatorType.FULL_PRESS
+    return if (tinted) Color.White else MaterialTheme.colorScheme.onSurface
+}
+
+/**
  * Two tables meeting at a centre line: [end] (mirrored) on the left half, [start] on the right.
  *
  * Shared with the ADVANCED view (2026-09-20): the centre group's card splits the same way its
@@ -784,28 +979,64 @@ internal fun CentreSplit(
     start: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Both halves' intrinsics combine the way their measurements do, so the stage can ask the
+    // centre group's box how wide it will be at either end of a morph — see AssignmentTable.
+    fun IntrinsicMeasureScope.span(
+        halves: List<List<IntrinsicMeasurable>>,
+        height: Int,
+        editing: Boolean,
+    ): Int {
+        val gap = CentreSplitGap.roundToPx()
+        val widest = halves.flatten().maxOfOrNull {
+            if (editing) it.maxIntrinsicWidth(height) else it.minIntrinsicWidth(height)
+        } ?: 0
+        return widest * 2 + gap
+    }
     Layout(
         modifier = modifier,
         contents = listOf(end, start),
-    ) { (endMeasurables, startMeasurables), constraints ->
-        val gap = CentreSplitGap.roundToPx()
-        val halfMax = if (constraints.hasBoundedWidth) {
-            ((constraints.maxWidth - gap) / 2).coerceAtLeast(0)
-        } else {
-            Constraints.Infinity
-        }
-        val childConstraints = Constraints(maxWidth = halfMax, maxHeight = constraints.maxHeight)
-        val endPlaceable = endMeasurables.single().measure(childConstraints)
-        val startPlaceable = startMeasurables.single().measure(childConstraints)
-        val half = maxOf(endPlaceable.width, startPlaceable.width)
-        val width = (half * 2 + gap).coerceIn(constraints.minWidth, constraints.maxWidth)
-        val height = maxOf(endPlaceable.height, startPlaceable.height)
-            .coerceIn(constraints.minHeight, constraints.maxHeight)
-        val centre = width / 2
-        layout(width, height) {
-            endPlaceable.place(centre - gap / 2 - endPlaceable.width, 0)
-            startPlaceable.place(centre + (gap - gap / 2), 0)
-        }
+        measurePolicy = object : MultiContentMeasurePolicy {
+            override fun IntrinsicMeasureScope.minIntrinsicWidth(
+                measurables: List<List<IntrinsicMeasurable>>,
+                height: Int,
+            ): Int = span(measurables, height, editing = false)
+
+            override fun IntrinsicMeasureScope.maxIntrinsicWidth(
+                measurables: List<List<IntrinsicMeasurable>>,
+                height: Int,
+            ): Int = span(measurables, height, editing = true)
+
+            override fun MeasureScope.measure(
+                measurables: List<List<Measurable>>,
+                constraints: Constraints,
+            ): MeasureResult = measureSplit(measurables[0], measurables[1], constraints)
+        },
+    )
+}
+
+/** [CentreSplit]'s measure, split out so its policy object stays readable. */
+private fun MeasureScope.measureSplit(
+    endMeasurables: List<Measurable>,
+    startMeasurables: List<Measurable>,
+    constraints: Constraints,
+): MeasureResult {
+    val gap = CentreSplitGap.roundToPx()
+    val halfMax = if (constraints.hasBoundedWidth) {
+        ((constraints.maxWidth - gap) / 2).coerceAtLeast(0)
+    } else {
+        Constraints.Infinity
+    }
+    val childConstraints = Constraints(maxWidth = halfMax, maxHeight = constraints.maxHeight)
+    val endPlaceable = endMeasurables.single().measure(childConstraints)
+    val startPlaceable = startMeasurables.single().measure(childConstraints)
+    val half = maxOf(endPlaceable.width, startPlaceable.width)
+    val width = (half * 2 + gap).coerceIn(constraints.minWidth, constraints.maxWidth)
+    val height = maxOf(endPlaceable.height, startPlaceable.height)
+        .coerceIn(constraints.minHeight, constraints.maxHeight)
+    val centre = width / 2
+    return layout(width, height) {
+        endPlaceable.place(centre - gap / 2 - endPlaceable.width, 0)
+        startPlaceable.place(centre + (gap - gap / 2), 0)
     }
 }
 
@@ -825,6 +1056,8 @@ private fun ScrollingAssignmentTable(
     anchor: RowAnchor,
     floored: Boolean,
     edit: RowEditHost?,
+    phase: EditPhase,
+    progress: () -> Float,
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
 ) {
@@ -833,6 +1066,8 @@ private fun ScrollingAssignmentTable(
         anchor = anchor,
         floored = floored,
         edit = edit,
+        phase = phase,
+        progress = progress,
         config = config,
         modifier = modifier,
     )
@@ -861,8 +1096,13 @@ private fun AssignmentTable(
     anchor: RowAnchor,
     /** Whether the assignment run keeps its [AssignmentMinChars] floor. See [GroupRows]. */
     floored: Boolean,
-    /** Non-null in edit mode — the rows are tiles, and this is what they act through. */
+    /** Non-null once edit mode owns these rows — including mid-morph, when its tiles are still
+     *  ghosts. Only [EditPhase.EDIT] actually builds real tiles from it. */
     edit: RowEditHost?,
+    phase: EditPhase,
+    /** The morph's position, read in the LAYOUT and DRAW phases so the travel neither
+     *  recomposes the rows nor re-resolves a single command. */
+    progress: () -> Float,
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
 ) {
@@ -882,9 +1122,6 @@ private fun AssignmentTable(
         }
     }
     val dividerColor = MaterialTheme.colorScheme.outlineVariant
-    // Edit mode's tiles are taller than the text they replace would be; every other rhythm of
-    // the table (the row gap, the glyph column) is deliberately unchanged, so entering edit mode
-    // wraps the rows rather than re-laying the view out (Dylan, 2026-09-22).
     // ONE rhythm across both modes (Dylan, 2026-09-23): the row height is the tile height
     // whether or not a tile is drawn in it, and the glyph is the same size either way. The
     // resting view and edit mode are the same view with different cells, so a row that changed
@@ -892,152 +1129,325 @@ private fun AssignmentTable(
     val look = rowTileLook()
     val rowHeightDp = look.height
     val rowGapDp = rowTileGap()
+    // Every resting cell's natural width, measured from the TEXT rather than from the laid-out
+    // children. That makes it available for the intrinsics below, which are asked for a width
+    // the children have not been measured at — and, during a morph, may not even be composed in.
+    val density = LocalDensity.current
+    val restSpans = remember(rows, measurer, cellStyle, density) {
+        val glyphRun = with(density) {
+            (AssignmentOutputGlyphSize + MinputGlyphLabelGap).roundToPx()
+        }
+        rows.map { row ->
+            IntArray(row.slotCount) { column ->
+                val cell = row.restAt(column) ?: return@IntArray 0
+                val style = if (cell.italic) cellStyle.copy(fontStyle = FontStyle.Italic) else cellStyle
+                val text = measurer.measure(cell.text, style = style, softWrap = false).size.width
+                if (cell.glyph != null) glyphRun + text else text
+            }
+        }
+    }
+    /**
+     * The table's width at each end of the morph, offered as INTRINSICS.
+     *
+     * The stage plans the travel from these (RemapStage's `EditCameraAnchor`): it has to know
+     * where the grid will END UP before the first frame of it, so it can work out once — rather
+     * than chase frame by frame — how far to hold the view against the change. `min` is the
+     * resting width, `max` the edit-mode one; a Box's padding and [CentreSplit] pass both
+     * through, so the stage can ask the whole group box for them.
+     */
+    fun span(editing: Boolean): Int {
+        val metrics = with(density) { tableMetrics(rowHeightDp, rowGapDp, look.width) }
+        val runs = rows.mapIndexed { rowIndex, row ->
+            val plan = rowPlan(row, metrics) { column -> restSpans[rowIndex][column] }
+            if (editing) plan.editRun else plan.restRun
+        }
+        val run = runs.maxOrNull() ?: 0
+        return metrics.glyph + metrics.glyphGap + if (editing) run else maxOf(run, assignmentFloor)
+    }
     Layout(
         modifier = modifier,
+        measurePolicy = object : MeasurePolicy {
+            override fun IntrinsicMeasureScope.minIntrinsicWidth(
+                measurables: List<IntrinsicMeasurable>,
+                height: Int,
+            ): Int = span(editing = false)
+
+            override fun IntrinsicMeasureScope.maxIntrinsicWidth(
+                measurables: List<IntrinsicMeasurable>,
+                height: Int,
+            ): Int = span(editing = true)
+
+            override fun MeasureScope.measure(
+                measurables: List<Measurable>,
+                constraints: Constraints,
+            ): MeasureResult = measureTable(
+                measurables = measurables,
+                rows = rows,
+                anchor = anchor,
+                assignmentFloor = assignmentFloor,
+                rowHeightDp = rowHeightDp,
+                rowGapDp = rowGapDp,
+                tileWidthDp = look.width,
+                progress = progress,
+            )
+        },
         content = {
             rows.forEachIndexed { rowIndex, row ->
                 Box(Modifier.layoutId(GlyphSlot(rowIndex))) {
                     InputGlyphs.SubInputGlyph(row.spec.source, row.spec.subInputKey, size = SummaryGlyphSize)
                 }
-                row.slots.forEachIndexed { columnIndex, slot ->
-                    val slotModifier = Modifier.layoutId(CellSlot(rowIndex, columnIndex))
-                    when (slot) {
-                        is RowSlot.Tile -> RowCommandTile(
-                            row = row,
-                            slot = slot,
-                            // A Tile slot only exists where GroupRows was given a host.
-                            edit = edit!!,
-                            config = config,
-                            look = look,
-                            modifier = slotModifier,
+                for (column in 0 until row.slotCount) {
+                    val restCell = row.restAt(column)
+                    val tile = row.tileAt(column)
+                    // The travelling label. Present in every phase but EDIT, where the real tile
+                    // draws its own — and in EDIT for a row that has no tiles to travel to.
+                    if (restCell != null && (phase != EditPhase.EDIT || !row.morphs)) {
+                        MorphingCellText(
+                            cell = restCell,
+                            style = cellStyle,
+                            editColor = if (phase == EditPhase.MORPH && tile?.command != null) {
+                                tileLabelColor(tile.command)
+                            } else null,
+                            fadesOut = phase == EditPhase.MORPH && tile?.command == null && row.morphs,
+                            progress = progress,
+                            modifier = Modifier.layoutId(RestSlot(rowIndex, column)),
                         )
-                        is RowSlot.Text -> {
-                            val cell = slot.cell
-                            Row(
-                                modifier = slotModifier,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                // The device glyph LEADS the name here exactly as it does on the
-                                // advanced tile's output line, in the cell's own color so the
-                                // pair reads as one object rather than a glyph beside some text.
-                                cell.glyph?.let { output ->
-                                    InputGlyphs.outputPainter(output)?.let { painter ->
-                                        Icon(
-                                            painter,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(AssignmentOutputGlyphSize),
-                                            tint = cell.color,
-                                        )
-                                        Spacer(Modifier.width(MinputGlyphLabelGap))
-                                    }
-                                }
-                                Text(
-                                    text = cell.text,
-                                    style = if (cell.italic) {
-                                        cellStyle.copy(fontStyle = FontStyle.Italic)
-                                    } else cellStyle,
-                                    color = cell.color,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
+                    }
+                    if (tile != null) {
+                        when (phase) {
+                            EditPhase.EDIT -> RowCommandTile(
+                                row = row,
+                                slot = tile,
+                                // A tile is only built where GroupRows was given a host.
+                                edit = edit!!,
+                                config = config,
+                                look = look,
+                                modifier = Modifier.layoutId(TileSlot(rowIndex, column)),
+                            )
+                            EditPhase.MORPH -> RowTileGhost(
+                                tile = tile,
+                                look = look,
+                                progress = progress,
+                                modifier = Modifier.layoutId(TileSlot(rowIndex, column)),
+                            )
+                            // At rest a tile does not exist at all — which is what keeps the
+                            // resting view free of focusable cells.
+                            EditPhase.REST -> Unit
                         }
                     }
                     // A divider separates two text runs. Tiles separate themselves — a rule
-                    // between two capsules is a line drawn through a gap that already reads.
-                    if (columnIndex > 0 &&
-                        slot is RowSlot.Text &&
-                        row.slots[columnIndex - 1] is RowSlot.Text
+                    // between two capsules is a line drawn through a gap that already reads —
+                    // so it thins away with the travel.
+                    if (column > 0 && restCell != null && row.restAt(column - 1) != null &&
+                        phase != EditPhase.EDIT
                     ) {
-                        Box(Modifier.layoutId(DividerSlot(rowIndex, columnIndex)).background(dividerColor))
+                        Box(
+                            Modifier
+                                .layoutId(DividerSlot(rowIndex, column))
+                                .graphicsLayer { alpha = 1f - editTravelAt(progress()) }
+                                .background(dividerColor),
+                        )
                     }
                 }
             }
         },
-    ) { measurables, _ ->
+    )
+}
+
+/** [AssignmentTable]'s measure, split out only so its policy object stays readable. */
+private fun MeasureScope.measureTable(
+    measurables: List<Measurable>,
+    rows: List<SimpleRow>,
+    anchor: RowAnchor,
+    assignmentFloor: Int,
+    rowHeightDp: Dp,
+    rowGapDp: Dp,
+    tileWidthDp: Dp,
+    progress: () -> Float,
+): MeasureResult {
         val slots = measurables.associateBy { it.layoutId }
-        val rowHeight = rowHeightDp.roundToPx()
-        val spacing = rowGapDp.roundToPx()
-        val glyph = SummaryGlyphSize.roundToPx()
-        val glyphGap = AssignmentGlyphGap.roundToPx()
-        val dividerPadding = AssignmentDividerPadding.roundToPx()
-        val dividerWidth = AssignmentDividerWidth.roundToPx().coerceAtLeast(1)
-        val dividerHeight = AssignmentDividerHeight.roundToPx().coerceAtMost(rowHeight)
-        val dividerRun = dividerPadding * 2 + dividerWidth
-        val tileGap = rowGapDp.roundToPx()
-        val tileWidth = look.width.roundToPx()
-        val tileHeight = look.height.roundToPx()
-
-        /** The air before the slot at [column]: a divider's run between two text runs, the
-         *  tiles' own gap wherever a tile is involved. */
-        fun gapBefore(row: SimpleRow, column: Int): Int = when {
-            column == 0 -> 0
-            row.slots[column] is RowSlot.Text && row.slots[column - 1] is RowSlot.Text -> dividerRun
-            else -> tileGap
+        val metrics = tableMetrics(rowHeightDp, rowGapDp, tileWidthDp)
+        val glyphs = rows.indices.map {
+            slots[GlyphSlot(it)]?.measure(Constraints.fixed(metrics.glyph, metrics.glyph))
         }
+        // The resting text at its NATURAL width — the width each label travels FROM. Unbounded:
+        // the table lives inside a scroller it may overrun.
+        val restCells = rows.mapIndexed { rowIndex, row ->
+            (0 until row.slotCount).map { column ->
+                slots[RestSlot(rowIndex, column)]?.measure(Constraints())
+            }
+        }
+        // **Both shapes, laid out in full, once** (Dylan, 2026-09-24) — then interpolated. The
+        // first cut derived each frame's widths from the frame before it, and the rounding,
+        // the shifting argmax and the scroller's own clamping compounded into a visible shake.
+        // A run is now a LERP BETWEEN TWO FIXED LAYOUTS, which cannot drift: every cell's
+        // offset, every gap and the table's own width all come from the same two ends.
+        val plans = rows.mapIndexed { rowIndex, row ->
+            rowPlan(row, metrics) { column -> restCells[rowIndex][column]?.width ?: 0 }
+        }
+        val travel = editTravelAt(progress())
+        // The width is a lerp of the two ENDPOINT widths, floors included — never a max() taken
+        // afresh each frame. A max of a rising run against a falling floor dips before it
+        // climbs, and that dip is a reversal: the box narrows for a few frames in the middle of
+        // widening, and the whole grid steps back and forth around it. Everything placed here
+        // has to be a monotonic function of the travel, or the motion shakes.
+        val restWidth = metrics.glyph + metrics.glyphGap +
+            maxOf(plans.maxOfOrNull { it.restRun } ?: 0, assignmentFloor)
+        val editWidth = metrics.glyph + metrics.glyphGap + (plans.maxOfOrNull { it.editRun } ?: 0)
+        val width = lerpPx(restWidth, editWidth, travel)
+        val height = rows.size * metrics.rowHeight +
+            (rows.size - 1).coerceAtLeast(0) * metrics.rowGap
 
-        val glyphs = rows.indices.map { slots[GlyphSlot(it)]?.measure(Constraints.fixed(glyph, glyph)) }
-        val cells = rows.mapIndexed { rowIndex, row ->
-            row.slots.mapIndexed { column, slot ->
-                val measurable = slots[CellSlot(rowIndex, column)]
-                when (slot) {
-                    // Every tile the same width, exactly as in the table: equal widths are what
-                    // let a run of commands be scanned rather than read.
-                    is RowSlot.Tile -> measurable?.measure(Constraints.fixed(tileWidth, tileHeight))
-                    // Unbounded: the natural width IS the cell width, and this table lives
-                    // inside a scroller that it may overrun.
-                    is RowSlot.Text -> measurable?.measure(Constraints())
-                }
+        val tilePlaceables = rows.mapIndexed { rowIndex, row ->
+            (0 until row.slotCount).map { column ->
+                slots[TileSlot(rowIndex, column)]?.measure(
+                    Constraints.fixed(
+                        plans[rowIndex].widthAt(column, travel).coerceAtLeast(0),
+                        metrics.rowHeight,
+                    ),
+                )
             }
         }
         val dividers = rows.mapIndexed { rowIndex, row ->
-            row.slots.indices.map { column ->
-                slots[DividerSlot(rowIndex, column)]?.measure(Constraints.fixed(dividerWidth, dividerHeight))
+            (0 until row.slotCount).map { column ->
+                slots[DividerSlot(rowIndex, column)]
+                    ?.measure(Constraints.fixed(metrics.dividerWidth, metrics.dividerHeight))
             }
         }
-        val rowRuns = rows.mapIndexed { rowIndex, row ->
-            cells[rowIndex].sumOf { it?.width ?: 0 } + row.slots.indices.sumOf { gapBefore(row, it) }
-        }
-        val width = glyph + glyphGap + maxOf(rowRuns.maxOrNull() ?: 0, assignmentFloor)
-        val height = rows.size * rowHeight + (rows.size - 1).coerceAtLeast(0) * spacing
 
-        layout(width, height) {
+        return layout(width, height) {
             rows.forEachIndexed { rowIndex, row ->
-                val top = rowIndex * (rowHeight + spacing)
+                val plan = plans[rowIndex]
+                val top = rowIndex * (metrics.rowHeight + metrics.rowGap)
                 glyphs[rowIndex]?.let { placeable ->
-                    val x = if (anchor == RowAnchor.START) 0 else width - glyph
-                    placeable.place(x, top + (rowHeight - placeable.height) / 2)
+                    val x = if (anchor == RowAnchor.START) 0 else width - metrics.glyph
+                    placeable.place(x, top + (metrics.rowHeight - placeable.height) / 2)
                 }
-                // Walk outward from the glyph: rightward for a START row, leftward for a
-                // mirrored END one. `cursor` is the glyph-side edge of the next item.
-                val outward = if (anchor == RowAnchor.START) 1 else -1
-                var cursor = if (anchor == RowAnchor.START) glyph + glyphGap else width - glyph - glyphGap
-                cells[rowIndex].forEachIndexed { column, cell ->
-                    val gap = gapBefore(row, column)
-                    if (gap > 0) {
-                        dividers[rowIndex][column]?.let { placeable ->
-                            val x = if (anchor == RowAnchor.START) {
-                                cursor + dividerPadding
-                            } else {
-                                cursor - dividerPadding - placeable.width
-                            }
-                            placeable.place(x, top + (rowHeight - placeable.height) / 2)
-                        }
-                        cursor += outward * gap
+                // A run reads OUTWARD from the glyph: rightward for a START row, leftward for a
+                // mirrored END one. Offsets are measured along that direction, so mirroring is
+                // one subtraction here and nothing anywhere else.
+                fun screenX(offset: Int, itemWidth: Int): Int = if (anchor == RowAnchor.START) {
+                    metrics.glyph + metrics.glyphGap + offset
+                } else {
+                    width - metrics.glyph - metrics.glyphGap - offset - itemWidth
+                }
+                for (column in 0 until row.slotCount) {
+                    val cell = plan.widthAt(column, travel)
+                    val left = plan.offsetAt(column, travel)
+                    tilePlaceables[rowIndex][column]?.place(screenX(left, cell), top)
+                    restCells[rowIndex][column]?.let { placeable ->
+                        // The label rides CENTRED in its cell, which is what carries it to the
+                        // middle of the tile as the cell grows around it.
+                        placeable.place(
+                            screenX(left + (cell - placeable.width) / 2, placeable.width),
+                            top + (metrics.rowHeight - placeable.height) / 2,
+                        )
                     }
-                    if (cell == null) return@forEachIndexed
-                    val x = if (anchor == RowAnchor.START) cursor else cursor - cell.width
-                    cell.place(x, top + (rowHeight - cell.height) / 2)
-                    cursor += outward * cell.width
+                    dividers[rowIndex][column]?.let { placeable ->
+                        val previousEnd = plan.offsetAt(column - 1, travel) +
+                            plan.widthAt(column - 1, travel)
+                        val gapCentre = (previousEnd + left) / 2
+                        placeable.place(
+                            screenX(gapCentre - placeable.width / 2, placeable.width),
+                            top + (metrics.rowHeight - placeable.height) / 2,
+                        )
+                    }
                 }
             }
         }
-    }
 }
+
+/** The fixed measurements a table lays out against, resolved once per pass. */
+private class TableMetrics(
+    val rowHeight: Int,
+    val rowGap: Int,
+    val glyph: Int,
+    val glyphGap: Int,
+    val dividerWidth: Int,
+    val dividerHeight: Int,
+    val dividerRun: Int,
+    val tileWidth: Int,
+    val tileGap: Int,
+)
+
+private fun Density.tableMetrics(rowHeight: Dp, rowGap: Dp, tileWidth: Dp): TableMetrics {
+    val height = rowHeight.roundToPx()
+    val dividerWidth = AssignmentDividerWidth.roundToPx().coerceAtLeast(1)
+    val dividerPadding = AssignmentDividerPadding.roundToPx()
+    return TableMetrics(
+        rowHeight = height,
+        rowGap = rowGap.roundToPx(),
+        glyph = SummaryGlyphSize.roundToPx(),
+        glyphGap = AssignmentGlyphGap.roundToPx(),
+        dividerWidth = dividerWidth,
+        dividerHeight = AssignmentDividerHeight.roundToPx().coerceAtMost(height),
+        dividerRun = dividerPadding * 2 + dividerWidth,
+        tileWidth = tileWidth.roundToPx(),
+        tileGap = rowGap.roundToPx(),
+    )
+}
+
+/**
+ * One row laid out at BOTH ends of the morph: where every cell starts and how wide it is, as
+ * text and as tiles. Everything the travel needs is a lerp between two entries of these arrays,
+ * so no frame is ever derived from the frame before it.
+ */
+private class RowPlan(
+    private val restOffsets: IntArray,
+    private val restWidths: IntArray,
+    private val editOffsets: IntArray,
+    private val editWidths: IntArray,
+    val restRun: Int,
+    val editRun: Int,
+) {
+    fun widthAt(column: Int, travel: Float): Int =
+        if (column < 0) 0 else lerpPx(restWidths[column], editWidths[column], travel)
+
+    fun offsetAt(column: Int, travel: Float): Int =
+        if (column < 0) 0 else lerpPx(restOffsets[column], editOffsets[column], travel)
+}
+
+/** Lay one row out at both ends. [restWidthOf] gives a slot's text width, already measured. */
+private fun rowPlan(row: SimpleRow, metrics: TableMetrics, restWidthOf: (Int) -> Int): RowPlan {
+    val slots = row.slotCount
+    val restOffsets = IntArray(slots)
+    val restWidths = IntArray(slots)
+    val editOffsets = IntArray(slots)
+    val editWidths = IntArray(slots)
+    var restCursor = 0
+    var editCursor = 0
+    for (column in 0 until slots) {
+        val hasRest = row.restAt(column) != null
+        val hasTile = row.tileAt(column) != null
+        if (hasRest && restCursor > 0) restCursor += metrics.dividerRun
+        restOffsets[column] = restCursor
+        restWidths[column] = if (hasRest) restWidthOf(column) else 0
+        restCursor += restWidths[column]
+        // A row edit mode does not own keeps its text shape at both ends, so it never moves.
+        if (!row.morphs) {
+            editOffsets[column] = restOffsets[column]
+            editWidths[column] = restWidths[column]
+            editCursor = restCursor
+            continue
+        }
+        if (hasTile && editCursor > 0) editCursor += metrics.tileGap
+        editOffsets[column] = editCursor
+        editWidths[column] = if (hasTile) metrics.tileWidth else 0
+        editCursor += editWidths[column]
+    }
+    return RowPlan(restOffsets, restWidths, editOffsets, editWidths, restCursor, editCursor)
+}
+
+private fun lerpPx(from: Int, to: Int, travel: Float): Int =
+    from + ((to - from) * travel).roundToInt()
 
 /** [AssignmentTable]'s layout slot ids. */
 private data class GlyphSlot(val row: Int)
-private data class CellSlot(val row: Int, val column: Int)
+
+/** A slot's two occupants: the text that travels, and the tile that arrives behind it. Both
+ *  exist at once mid-morph, which is why they need separate ids. */
+private data class RestSlot(val row: Int, val column: Int)
+private data class TileSlot(val row: Int, val column: Int)
 private data class DividerSlot(val row: Int, val column: Int)
 
 // A row's HEIGHT and the gap between rows are the tile's — see [rowTileHeight] / [rowTileGap],
@@ -1087,4 +1497,8 @@ internal const val ExpandMillis = com.mappo.ui.minput.MinputMorphExpandMillis
 internal const val CollapseMillis = com.mappo.ui.minput.MinputMorphCollapseMillis
 /** Inset between the expanded editor (or full-screen panel) and its host's edges. */
 internal val EditorMargin = 10.dp
+
+/** How long the resting rows take to become tiles, and back (Dylan, 2026-09-24). A shade
+ *  quicker than the zoom's own travel: nothing changes place here, the cells only widen. */
+internal const val EditMorphMillis = 260
 

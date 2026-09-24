@@ -1275,6 +1275,109 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **The morph's two ends must be the real thing.**
+     *
+     * Entering edit mode now travels (Dylan, 2026-09-24): the labels widen into their tiles and
+     * the buttons fade in behind them. Mid-travel the tiles are inert ghosts, so this walks the
+     * clock through the middle — where nothing should be focusable or tagged — and on to the end,
+     * where the real tiles must have taken over.
+     */
+    @Test
+    fun selectingAGroup_morphsIntoTiles_ratherThanCutting() {
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+
+        // Mid-travel: the resting label is still on screen and no tile has been built yet.
+        composeRule.mainClock.advanceTimeBy(80)
+        composeRule.onAllNodesWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertCountEquals(0)
+
+        // Landed: the real tiles are there.
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertExists()
+        composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **The morph must not shake.**
+     *
+     * The first implementation corrected the view's position from the frame before it, while the
+     * scroller clamped against the width that correction was producing — a loop that chased its
+     * own tail, and which Dylan saw immediately as the content "shaking horizontally a little
+     * bit" on the way in and out. Since the whole point is a motion nobody can watch in a unit
+     * test, this measures it instead: every group's on-screen x is sampled frame by frame across
+     * the travel, and each one has to move in ONE direction throughout. A reversal is jitter.
+     *
+     * The window is deliberately narrow enough that the tiles overrun it, which is the case that
+     * jittered: the scroller has a range, so the camera correction actually does something.
+     */
+    @Test
+    fun enteringEditMode_movesEveryGroupInOneDirection_withoutShaking() {
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(560.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(600)
+
+        val tracked = listOf("DPAD", "FACE", "LEFT_SHOULDER", "RIGHT_STICK")
+        fun sample() = tracked.associateWith {
+            composeRule.onNodeWithTag("simple-group:$it", useUnmergedTree = true)
+                // positionInRoot, not boundsInRoot: the latter is CLIPPED to its parents, so a
+                // group scrolled past the window's edge reads as a flat 0 and hides the motion
+                // being measured.
+                .fetchSemanticsNode().positionInRoot.x
+        }
+
+        val frames = mutableListOf(sample())
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        // Every frame of the travel, not a sample of it: a shake lives between frames.
+        repeat(40) {
+            composeRule.mainClock.advanceTimeBy(8)
+            frames += sample()
+        }
+
+        tracked.forEach { group ->
+            val path = frames.map { it.getValue(group) }
+            val net = path.last() - path.first()
+            val forward = if (net >= 0f) 1f else -1f
+            // How far the group travelled AGAINST its own overall direction. A monotonic travel
+            // scores zero; a wobble superimposed on one scores a couple of pixels per frame,
+            // which is exactly what "shaking a little bit" looks like from the outside.
+            val backtrack = path.zipWithNext { a, b -> (b - a) * forward }
+                .filter { it < 0f }
+                .sumOf { -it.toDouble() }
+            // One pixel of give for rounding; a wobble costs several per frame.
+            val allowed = 1.0
+            assert(backtrack <= allowed) {
+                "$group shook across the morph (backtracked %.1f of %.1f): ".format(backtrack, net) +
+                    path.joinToString { "%.1f".format(it) }
+            }
+        }
+        composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
      * A row tile is the table's tile: same menu, same verbs. If it weren't, edit mode would be a
      * second implementation of the same control wearing the same face.
      */

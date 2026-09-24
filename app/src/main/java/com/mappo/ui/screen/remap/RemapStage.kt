@@ -159,6 +159,15 @@ internal fun RemapStage(
      * of it.
      */
     editGroup: RemapSimpleGroup? = null,
+    /** Which shape the rows are in, or the travel between them. */
+    editPhase: EditPhase = EditPhase.REST,
+    /** That travel's position, read in the layout and draw phases only. */
+    editProgress: () -> Float = { 0f },
+    /** False while the rows are morphing either way. */
+    editSettled: Boolean = true,
+    /** One-shot: seat the cursor on this group's first tile now that the tiles are real. */
+    editSeatGroup: RemapSimpleGroup? = null,
+    onEditSeated: () -> Unit = {},
     /** Bumped when the view loses focus in edit mode, to re-seat the cursor on a tile. */
     editFocusTick: Int = 0,
     // One-shot: the basic box that should reclaim controller focus (the zoom just collapsed
@@ -231,13 +240,16 @@ internal fun RemapStage(
         )
     }
     // Seat the cursor on the group the user selected — without it, entering edit mode leaves
-    // focus on the box that is no longer a focus target. Re-run on [editFocusTick] too: a tap
-    // clears Compose focus wholesale, and in edit mode there is no box left to recover onto.
-    LaunchedEffect(editGroup, editFocusTick) {
-        val group = editGroup ?: return@LaunchedEffect
+    // focus on the box that is no longer a focus target. It waits for the morph to land: a tile
+    // mid-travel is an inert ghost with no focus to take. Re-runs on [editFocusTick] too, since
+    // a tap clears Compose focus wholesale and in edit mode there is no box to recover onto.
+    LaunchedEffect(editSeatGroup, editFocusTick) {
+        val group = editSeatGroup ?: editGroup.takeIf { editFocusTick > 0 && editSettled }
+            ?: return@LaunchedEffect
         // The tiles compose on this frame; their requesters attach with them.
         withFrameNanos { }
         runCatching { focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus() }
+        onEditSeated()
     }
 
     val painter = painterResource(R.drawable.controller_placeholder)
@@ -270,6 +282,19 @@ internal fun RemapStage(
         // The BODY's one scroller, and whether the right stick currently belongs to it.
         val bodyScroll = rememberScrollState()
         var bodyFocused by remember { mutableStateOf(false) }
+        // Keeps the view still while the rows change shape underneath it — see [EditCameraAnchor].
+        val editMorph = remember { EditMorphPlan() }
+        // The travel is over: fold the shift the anchor has been applying into the scroller
+        // itself, so the two agree about where the content is and the user can still reach both
+        // ends of it. Nothing moves — the scroll gains exactly what the shift gives up.
+        LaunchedEffect(editSettled) {
+            if (!editSettled) return@LaunchedEffect
+            withFrameNanos { }
+            val handed = editMorph.handOff() ?: return@LaunchedEffect
+            if (handed != 0) {
+                bodyScroll.scrollTo((bodyScroll.value + handed).coerceIn(0, bodyScroll.maxValue))
+            }
+        }
 
         // The camera: where the scene sits under the viewport once zoomed. Opening SNAPS it (the
         // zoom itself carries that motion); moving between groups while zoomed PANS.
@@ -459,6 +484,8 @@ internal fun RemapStage(
                         // the same way — otherwise it would swallow taps meant for a tile and
                         // sit in the d-pad's path between them.
                         interactive = !zoomed && !editing,
+                        editPhase = editPhase,
+                        editProgress = editProgress,
                         seatFocus = focusSeatGroup == group,
                         onFocusSeated = onFocusSeated,
                         onOpenGroup = onOpenGroup,
@@ -656,17 +683,64 @@ internal fun RemapStage(
                 val bandTop = IntArray(3)
                 bandTop[0] = edgeY + ((gridH - bandTotal) / 2).coerceAtLeast(0)
                 for (band in 1..2) bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
+                // ── The grid, at BOTH ends of the morph (Dylan, 2026-09-24) ─────────────────
+                //
                 // Each side column is as wide as its widest box; the grid is that plus the
                 // controller's column. When it all fits, the whole matrix is CENTRED in the
                 // viewport exactly as it was when the columns split the width evenly — when it
                 // doesn't, the surplus is what the body scroller scrolls.
-                val leftColumnW = GridBands.maxOf { restOf(it.left).width }
-                val rightColumnW = GridBands.maxOf { restOf(it.right).width }
-                val contentW = leftColumnW + columnGap + centreW + columnGap + rightColumnW
-                val gridW = maxOf(contentW, viewportGridW)
-                val startX = edgeX + ((gridW - contentW) / 2).coerceAtLeast(0)
-                val centreX = startX + leftColumnW + columnGap
-                val rightX = centreX + centreW + columnGap
+                //
+                // **Both ends are worked out once, at the start of a travel, and every frame
+                // in between is a straight interpolation of the two.** The first cut derived
+                // each frame from the one before it — the columns from the boxes' current
+                // widths, the camera's correction from the scroller's current value, which the
+                // scroller was itself clamping against the width being reported — and the whole
+                // loop chased its own tail into a visible shake. Nothing here reads a value it
+                // also influences.
+                val measuredColumns = intArrayOf(
+                    GridBands.maxOf { restOf(it.left).width },
+                    GridBands.maxOf { restOf(it.right).width },
+                )
+                val travel = editTravelAt(editProgress())
+                editMorph.begin(settled = editSettled, travel = travel, measured = measuredColumns) {
+                    // The OTHER end, asked of the rows themselves: their two widths are
+                    // intrinsics (see AssignmentTable), so the end we are heading for can be
+                    // known before a single frame of the travel has been drawn.
+                    val entering = travel < 0.5f
+                    fun span(group: RemapSimpleGroup): Int {
+                        val measurable = basicM[groups.indexOf(group)]
+                        return if (entering) {
+                            measurable.maxIntrinsicWidth(gridH)
+                        } else {
+                            measurable.minIntrinsicWidth(gridH)
+                        }
+                    }
+                    intArrayOf(GridBands.maxOf { span(it.left) }, GridBands.maxOf { span(it.right) })
+                }
+                fun spanOf(columns: IntArray) =
+                    gridSpan(columns[0], columns[1], centreW, columnGap, edgeX, viewportGridW)
+                val restSpan = spanOf(editMorph.restColumns ?: measuredColumns)
+                val editSpan = spanOf(editMorph.editColumns ?: measuredColumns)
+                fun spanAt(at: Float) = lerpGridSpan(restSpan, editSpan, at)
+                val grid = spanAt(travel)
+                // Holding the camera still: the controller's column is pinned to the screen
+                // position it had when the travel began, and the rows spread outward around it.
+                // The clamp is where "camera movement cannot be avoided" — a view scrolled hard
+                // against an end has nowhere to give, so the correction eases into its limit
+                // rather than stopping dead. It is a pure function of the travel either way.
+                val shift = editMorph.shiftAt(
+                    settled = editSettled,
+                    travel = travel,
+                    scroll = bodyScroll.value,
+                    centreAt = { at -> spanAt(at).centreX },
+                    maxScrollAt = { at -> (spanAt(at).totalW - viewport).coerceAtLeast(0) },
+                )
+                val leftColumnW = grid.leftW
+                val gridW = grid.gridW
+                val restTotalW = grid.totalW
+                val startX = grid.startX - shift
+                val centreX = grid.centreX - shift
+                val rightX = grid.rightX - shift
 
                 // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
                 // bottom band on the CEILING of its own, and the middle band centres on the
@@ -702,7 +776,7 @@ internal fun RemapStage(
                     width = controllerRestW,
                     height = controllerRestH,
                 )
-                val plateRest = StageRect(edgeX, edgeY, gridW, gridH)
+                val plateRest = StageRect(edgeX - shift, edgeY, gridW, gridH)
 
                 // ── ZOOM: the scene under the camera ─────────────────────────────────────────
                 fun sceneRect(rect: SceneRect) = StageRect(
@@ -756,7 +830,6 @@ internal fun RemapStage(
                 // surplus is what the body scroller scrolls. Zoomed it is exactly the viewport:
                 // the scene is framed by the camera, so there is nothing left to scroll, and the
                 // scroller's own maximum collapses to zero as the travel lands.
-                val restTotalW = gridW + edgeX * 2
                 val width = lerpInt(restTotalW, viewport, p)
 
                 layout(width, height) {
@@ -987,8 +1060,10 @@ private fun StageBasicContent(
     onFocusSeated: () -> Unit,
     onOpenGroup: (RemapSimpleGroup) -> Unit,
     onOpenAdvanced: (RemapSimpleGroup) -> Unit,
-    /** Non-null in edit mode: this box's rows are command tiles. */
+    /** Non-null once edit mode owns this box's rows, mid-morph included. */
     edit: RowEditHost?,
+    editPhase: EditPhase,
+    editProgress: () -> Float,
 ) {
     val focusRequester = remember { FocusRequester() }
     if (seatFocus && interactive) {
@@ -1047,7 +1122,7 @@ private fun StageBasicContent(
         // one is ever given more room than it asked for.
         contentAlignment = Alignment.Center,
     ) {
-        GroupRows(group, viewingSet, viewingLayer, config, edit = edit)
+        GroupRows(group, viewingSet, viewingLayer, config, edit = edit, phase = editPhase, progress = editProgress)
     }
 }
 
@@ -1175,6 +1250,123 @@ private fun StageAdvancedContent(
                 )
             }
         }
+    }
+}
+
+/** The grid's horizontal metrics at one end of the morph — everything the placement needs. */
+private class GridSpan(
+    val leftW: Int,
+    val gridW: Int,
+    val totalW: Int,
+    val startX: Int,
+    val centreX: Int,
+    val rightX: Int,
+)
+
+private fun gridSpan(
+    leftW: Int,
+    rightW: Int,
+    centreW: Int,
+    columnGap: Int,
+    edgeX: Int,
+    viewportGridW: Int,
+): GridSpan {
+    val contentW = leftW + columnGap + centreW + columnGap + rightW
+    val gridW = maxOf(contentW, viewportGridW)
+    val startX = edgeX + ((gridW - contentW) / 2).coerceAtLeast(0)
+    val centreX = startX + leftW + columnGap
+    return GridSpan(
+        leftW = leftW,
+        gridW = gridW,
+        totalW = gridW + edgeX * 2,
+        startX = startX,
+        centreX = centreX,
+        rightX = centreX + centreW + columnGap,
+    )
+}
+
+private fun lerpGridSpan(a: GridSpan, b: GridSpan, t: Float): GridSpan = when {
+    t <= 0f -> a
+    t >= 1f -> b
+    else -> GridSpan(
+        leftW = lerpInt(a.leftW, b.leftW, t),
+        gridW = lerpInt(a.gridW, b.gridW, t),
+        totalW = lerpInt(a.totalW, b.totalW, t),
+        startX = lerpInt(a.startX, b.startX, t),
+        centreX = lerpInt(a.centreX, b.centreX, t),
+        rightX = lerpInt(a.rightX, b.rightX, t),
+    )
+}
+
+/**
+ * **What holds the view still while the rows change shape** (Dylan, 2026-09-24).
+ *
+ * Entering edit mode makes every box wider, which widens the side columns, which pushes the
+ * controller — and everything past it — along, while the scroller keeps its value. The grid
+ * appeared to lurch sideways as the tiles arrived.
+ *
+ * **The fix is to stop recalculating.** At the first frame of a travel this captures BOTH ends
+ * of it — the columns it is leaving (their measured widths) and the columns it is heading for
+ * (the rows' own intrinsics) — plus where the controller's column sits on screen and what the
+ * scroll was. From then until the travel lands, every frame is a pure function of one number:
+ * where the controller would be at that point, minus where it should stay. Nothing is measured
+ * against the previous frame, nothing reads the scroller it is also resizing, and so nothing can
+ * chase itself. Dylan's own diagnosis of the first attempt, and his prescription for it.
+ *
+ * Plain fields, not snapshot state: it is written and read entirely inside the layout phase,
+ * where the correction has to come from the same numbers in the same pass. The one value that
+ * leaves is the final shift, [handOff]ed into the scroller once the travel lands so that the
+ * scroll position and the content agree again — no movement, the scroll simply gains what the
+ * shift gives up.
+ */
+private class EditMorphPlan {
+    var restColumns: IntArray? = null
+        private set
+    var editColumns: IntArray? = null
+        private set
+    private var scroll0 = 0
+    private var anchorX: Float? = null
+    private var pending: Int? = null
+
+    /** Capture both ends of a travel, once. [otherEnd] is only consulted on that first frame. */
+    fun begin(settled: Boolean, travel: Float, measured: IntArray, otherEnd: () -> IntArray) {
+        if (settled) {
+            // Keep the plan alive until the scroller has taken over the shift it is holding.
+            if (pending == null) {
+                restColumns = null
+                editColumns = null
+                anchorX = null
+            }
+            return
+        }
+        if (restColumns != null) return
+        val entering = travel < 0.5f
+        val other = otherEnd()
+        restColumns = if (entering) measured else other
+        editColumns = if (entering) other else measured
+    }
+
+    fun shiftAt(
+        settled: Boolean,
+        travel: Float,
+        scroll: Int,
+        centreAt: (Float) -> Int,
+        maxScrollAt: (Float) -> Int,
+    ): Int {
+        if (settled) return pending ?: 0
+        val anchor = anchorX ?: (centreAt(travel) - scroll).toFloat().also {
+            anchorX = it
+            scroll0 = scroll
+        }
+        val wanted = (centreAt(travel) - anchor).coerceIn(0f, maxScrollAt(travel).toFloat())
+        return (wanted - scroll0).roundToInt().also { pending = it }
+    }
+
+    /** The shift the scroller should absorb, once. Null when there is nothing outstanding. */
+    fun handOff(): Int? {
+        val shift = pending ?: return null
+        pending = null
+        return shift
     }
 }
 

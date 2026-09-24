@@ -1753,6 +1753,45 @@ private fun FloatingTile(
 }
 
 /**
+ * **A tile's CHROME with nothing on it** — the fill, the press-type tint, the ring, and the "+"
+ * where the slot is still empty.
+ *
+ * It exists for the basic view's morph (Dylan, 2026-09-24), which fades the button in behind a
+ * label the row is already drawing: the label must not be drawn twice, so the arriving tile
+ * brings only its face. It is also, deliberately, the same face [CommandTile] wears — same
+ * fill, same ring, same plus — so the handover to the real tile at the end of the travel shows
+ * nothing at all.
+ */
+@Composable
+internal fun TileChrome(
+    pressType: ActivatorType?,
+    /** Does this slot hold a command? A "+" is unfilled and wears the hairline ring instead. */
+    defined: Boolean,
+    look: TileLook,
+    modifier: Modifier = Modifier,
+) {
+    val colors = (pressType ?: ActivatorType.FULL_PRESS).columnColors()
+    val container = if (!defined) Color.Transparent else colors.tile.compositeOver(MinputElevatedContainer)
+    val shape = RoundedCornerShape(look.corner)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(container, shape)
+            .then(tileOutline(container, defined, shape, look.corner)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!defined) {
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = null,
+                modifier = Modifier.size(if (look.compact) RowTilePlusSize else EmptyTilePlusSize),
+                tint = colors.plus,
+            )
+        }
+    }
+}
+
+/**
  * A tile's ring: the family bevel on a command, a hairline outline on the row's "+".
  *
  * The "+" used to be strokeless — chrome-less by spec, so it wouldn't compete with the commands
