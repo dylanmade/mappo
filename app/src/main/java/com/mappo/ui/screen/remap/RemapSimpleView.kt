@@ -136,6 +136,9 @@ internal fun RemapSimpleView(
     // from the drawer mid-scroll. The pending seat is NOT consumed while gated, so it still
     // fires once the drawers close and the screen becomes controller-ready then.
     focusSeatEnabled: Boolean = true,
+    /** A command the edit-mode cursor should land on once it exists — see [RemapStage]. */
+    seatCommand: Long? = null,
+    onSeatCommand: (Long?) -> Unit = {},
 ) {
     // The group whose editor should be open (user intent — survives the command-picker
     // round-trip) vs. the group currently on stage, which outlives it through the collapse.
@@ -308,6 +311,8 @@ internal fun RemapSimpleView(
         editSeatGroup = editSeat,
         onEditSeated = { editSeat = null },
         editFocusTick = editFocusTick,
+        seatCommand = seatCommand,
+        onSeatCommand = onSeatCommand,
         // Selecting a box EDITS IN PLACE; holding it opens the advanced view it used to open.
         onOpenGroup = { editGroup = it },
         onOpenAdvanced = {

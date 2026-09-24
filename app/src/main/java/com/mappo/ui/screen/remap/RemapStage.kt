@@ -171,6 +171,20 @@ internal fun RemapStage(
     onEditSeated: () -> Unit = {},
     /** Bumped when the view loses focus in edit mode, to re-seat the cursor on a tile. */
     editFocusTick: Int = 0,
+    /**
+     * A command the cursor should land on AS SOON AS IT EXISTS, named by its binding id.
+     *
+     * Seating by GROUP can only ever mean "that group's first tile", which is where the cursor
+     * went after every add and every move — make a command on the button pad while editing from
+     * the right trigger and you were returned to the right trigger (Dylan, 2026-09-24). A
+     * command keeps its id through both operations, so the id is the one handle that says
+     * exactly which tile the user just acted on, wherever the row's sort order puts it. Adding
+     * goes out through the full-screen picker and back, which is why the claim is held saveably
+     * by the screen rather than here.
+     */
+    seatCommand: Long? = null,
+    /** Claim a command for the cursor, or clear the claim with null. */
+    onSeatCommand: (Long?) -> Unit = {},
     // One-shot: the basic box that should reclaim controller focus (the zoom just collapsed
     // back into it, or the screen is being seated for the first time).
     focusSeatGroup: RemapSimpleGroup? = null,
@@ -209,6 +223,14 @@ internal fun RemapStage(
         if (lifted != null && toId != null) {
             // A null landing command means the row's "+": an ADD, not a swap.
             callbacks.onMoveCommand(lifted.id, toId, to.inputKey, landedOn?.id)
+            // The cursor goes WITH the command. Two steps, because the move is a round trip
+            // through the repository: the destination cell exists NOW, so take it immediately
+            // and keep the cursor inside the body while the write comes back — otherwise focus
+            // has nowhere to be and the window lights its first focusable, the layouts button
+            // top left. Then the claim below lands it on the command itself, wherever the row's
+            // sort order has put it (Dylan, 2026-09-24).
+            runCatching { focusHandle(to).requestFocus() }
+            onSeatCommand(lifted.id)
         }
     }
 
@@ -245,12 +267,39 @@ internal fun RemapStage(
     // mid-travel is an inert ghost with no focus to take. Re-runs on [editFocusTick] too, since
     // a tap clears Compose focus wholesale and in edit mode there is no box to recover onto.
     LaunchedEffect(editSeatGroup, editFocusTick) {
+        // A named command outranks a group: it says which tile, not merely which neighbourhood,
+        // and it is the whole reason the cursor stopped being returned to where it came in.
+        if (seatCommand != null) return@LaunchedEffect
         val group = editSeatGroup ?: editGroup.takeIf { editFocusTick > 0 && editSettled }
             ?: return@LaunchedEffect
         // The tiles compose on this frame; their requesters attach with them.
         withFrameNanos { }
         runCatching { focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus() }
         onEditSeated()
+    }
+    // Where a command sits in the tiled rows right now, if it is on screen at all.
+    fun locate(commandId: Long): CellKey? = groups.firstNotNullOfOrNull { group ->
+        group.rows.firstNotNullOfOrNull { row ->
+            rowCommandsFor(viewingSet, viewingLayer, row, order)
+                .indexOfFirst { it.id == commandId }
+                .takeIf { it >= 0 }
+                ?.let { slot -> CellKey(group, row, slot) }
+        }
+    }
+    // The claimed command, seated the moment it turns up. Re-runs on the config precisely
+    // because the command is NOT there yet when the claim is made: an add and a move are both
+    // writes that come back a frame or several later — an add having gone out to the picker and
+    // returned in between. The claim is cleared when it lands, so an ordinary edit elsewhere
+    // never drags the cursor back here.
+    LaunchedEffect(seatCommand, editGroup, editSettled, viewingSet, viewingLayer) {
+        val claimed = seatCommand ?: return@LaunchedEffect
+        // No tiles to seat on: the claim is stale (edit mode was left while it was outstanding).
+        if (editGroup == null) return@LaunchedEffect onSeatCommand(null)
+        if (!editSettled) return@LaunchedEffect
+        val cell = locate(claimed) ?: return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { focusHandle(cell).requestFocus() }
+        onSeatCommand(null)
     }
 
     val painter = painterResource(R.drawable.controller_placeholder)
@@ -482,7 +531,13 @@ internal fun RemapStage(
                         // EDIT MODE the tiles inside it are the controls, so the box steps back
                         // the same way — otherwise it would swallow taps meant for a tile and
                         // sit in the d-pad's path between them.
-                        interactive = !zoomed && !editing,
+                        // **A box stays a focus target until its tiles are real, and becomes one
+                        // again the moment they stop being** (Dylan, 2026-09-24). Switched off
+                        // the instant edit mode opened, the boxes left the whole body with
+                        // nothing focusable for the length of the morph — 260ms in which the
+                        // window falls back to its first focusable and the layouts button, top
+                        // left, visibly lights up before the cursor arrives on a tile.
+                        interactive = !zoomed && (!editing || !editSettled),
                         editPhase = editPhase,
                         editProgress = editProgress,
                         seatFocus = focusSeatGroup == group,
@@ -1137,7 +1192,14 @@ private fun StageBasicContent(
                             interactionSource = interaction,
                             indication = LocalIndication.current,
                             onLongClick = { onOpenAdvanced(group) },
-                            onClick = { onOpenGroup(group) },
+                            onClick = {
+                                // Take the cursor before handing it on. A tap flips the window
+                                // into touch mode, which clears Compose focus outright, so
+                                // without this there is nothing focused to hand over FROM and
+                                // the morph runs with the cursor parked outside the body.
+                                runCatching { focusRequester.requestFocus() }
+                                onOpenGroup(group)
+                            },
                         )
                         // The gamepad's half of the same gesture. `clickable` has no notion of a
                         // held KEY — it fires on release — so the hold is timed here, and both

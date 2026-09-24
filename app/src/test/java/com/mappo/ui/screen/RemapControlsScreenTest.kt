@@ -279,6 +279,119 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("A Button", useUnmergedTree = true).assertCountEquals(0)
     }
 
+
+    /**
+     * The scroll extent follows the content when a row grows.
+     *
+     * Dylan suspected this on 2026-09-24 ("the scrollbar still seems to think there is not yet
+     * additional scrollable space") after adding a tile that landed past the window's edge. It
+     * holds, so the stale-looking bar was the absent SCROLL, not a stale extent — see
+     * [addingACommand_seatsTheCursorOnIt_notBackWhereYouCameIn], which is what wasn't moving.
+     * Kept because it pins the half that works.
+     */
+    @Test
+    fun aWiderRow_widensWhatTheBodyCanScroll() {
+        val live = androidx.compose.runtime.mutableStateOf(seedShapedConfig())
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = live.value,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        fun maxScroll(): Float = composeRule
+            .onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+            .maxValue()
+
+        val before = maxScroll()
+        live.value = live.value.withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)
+        composeRule.waitForIdle()
+
+        val after = maxScroll()
+        assert(after > before) {
+            "The face row grew by two commands and the body still scrolls $after (was $before)"
+        }
+    }
+
+    /**
+     * **Where the cursor goes after making a command.** On the command, wherever the row's sort
+     * order puts it — not back on the first tile of the group edit mode was entered from.
+     *
+     * Seating by GROUP was all the stage could do, so every add and every move returned the
+     * cursor to the entry group: open edit mode on the right trigger, add a command on the
+     * button pad, and you were looking at the right trigger again (Dylan, 2026-09-24). Nothing
+     * then scrolled to the new tile either, because the cursor — which is what the body's
+     * bring-into-view follows — had never gone near it.
+     *
+     * Creating a command leaves for the full-screen picker and comes back, which is why the
+     * claim is made by binding id and held saveably rather than as a cell position.
+     */
+    @Test
+    fun addingACommand_seatsTheCursorOnIt_notBackWhereYouCameIn() {
+        val live = androidx.compose.runtime.mutableStateOf(seedShapedConfig())
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = live.value,
+                        onOpenInputEditor = { _, _, _ -> },
+                        // Stand in for the repository: make the command, hand back its id. The
+                        // picker it would open next is not part of what this asserts.
+                        onAddRowCommand = { _, inputKey, _, onReady ->
+                            live.value = live.value.withTwoCommands(
+                                InputSource.BUTTON_DIAMOND, inputKey, 900L,
+                            )
+                            onReady(950L)
+                        },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        // Enter edit mode on the SHOULDER, so "the group you came in on" is somewhere else
+        // entirely from the row being added to.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        composeRule.waitForIdle()
+
+        // The face row's "+" — slot 1, after the seeded command — and the verb that makes one.
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").performClick()
+        composeRule.waitForIdle()
+        clickMenuItem("New")
+        composeRule.waitForIdle()
+
+        // Slot 0: where the new command's press type sorts it — NOT the "+" that was clicked,
+        // and not the shoulder. Only following the command's own id lands here.
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0", useUnmergedTree = true)
+            .assertIsFocused()
+    }
+
+
+    /**
+     * Click a verb in a tile's action menu.
+     *
+     * [MinputMenuRow] puts the click on its Row and does not merge its label into it, so the
+     * node carrying the text and the node carrying the action are two different nodes — which
+     * is why the obvious `onNodeWithText(verb).performClick()` finds a node and does nothing.
+     */
+    private fun clickMenuItem(label: String) {
+        composeRule.onNode(
+            androidx.compose.ui.test.hasClickAction() and
+                androidx.compose.ui.test.hasAnyDescendant(androidx.compose.ui.test.hasText(label)),
+            useUnmergedTree = true,
+        ).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+    }
+
     private fun setScreenLocal(config: ControllerConfig) {
         composeRule.setContent {
             MaterialTheme {

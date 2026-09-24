@@ -395,6 +395,10 @@ fun RemapControlsScreen(
         editingBindingId = null
         onConsumePickerResult()
     }
+    // One-shot: the command edit mode's cursor should land on once it exists (see RemapStage's
+    // `seatCommand`). Saveable because the one operation that makes a command — the "+" tile —
+    // leaves for the full-screen picker and comes back, and the cursor has to survive the trip.
+    var seatCommandId by rememberSaveable { mutableStateOf<Long?>(null) }
     val onEditCommand: (Long, BindingOutput, String) -> Unit = { bindingId, current, title ->
         editingBindingId = bindingId
         onOpenPicker(title, current)
@@ -424,6 +428,8 @@ fun RemapControlsScreen(
         // edits a binding, so one has to exist before it can open.
         onAddCommand = { bindingGroupId, inputKey, type, title ->
             onAddRowCommand(bindingGroupId, inputKey, type) { bindingId ->
+                // The cursor belongs on what you just made, not back where you came in.
+                seatCommandId = bindingId
                 onEditCommand(bindingId, BindingOutput.Unbound, title)
             }
         },
@@ -623,6 +629,8 @@ fun RemapControlsScreen(
                             // cards; browsing can remount this view (no-layout ↔ controls
                             // flip), and an ungated entry-seat stole focus from the drawer.
                             focusSeatEnabled = !layoutsDrawerOpen,
+                            seatCommand = seatCommandId,
+                            onSeatCommand = { seatCommandId = it },
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                         )
                     }
