@@ -1446,11 +1446,25 @@ private class EditMorphPlan {
         return (wanted - effective).roundToInt().also { pending = it }
     }
 
-    /** The scroll position the scroller should take over, once the travel has landed. */
+    /**
+     * The scroll position the scroller should take over, once the travel has landed — and the
+     * end of the plan.
+     *
+     * **It resets here, not on some later layout pass.** Clearing it in [begin] instead meant
+     * clearing it only if a measure happened to run while settled, which it need not: the
+     * hand-off often scrolls to where the scroller already is, nothing is invalidated, and no
+     * measure follows. The plan then survived into the NEXT travel, which reused its captured
+     * widths and — the part that showed — its captured scroll target. So the first group opened
+     * behaved, and every one after it went back to wherever the last session had been left
+     * (Dylan, 2026-09-24).
+     */
     fun handOff(): Int? {
         val landed = target ?: return null
         target = null
         pending = null
+        restWidths = null
+        editWidths = null
+        scrollsKnown = false
         return landed
     }
 }

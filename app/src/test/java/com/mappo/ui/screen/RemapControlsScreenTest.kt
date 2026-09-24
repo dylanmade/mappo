@@ -1516,6 +1516,63 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **Dylan's sequence, exactly**: work on one group, scroll away, leave, then open a
+     * different group — which must be the one you end up looking at.
+     *
+     * The travel's plan outlived its travel. It was cleared on a later layout pass, and there
+     * need not BE one: the hand-off usually scrolls to where the scroller already is, nothing is
+     * invalidated, no measure follows. So every session after the first reused the previous
+     * one's captured scroll target, and you were returned to wherever you last were rather than
+     * taken to what you just opened (2026-09-24).
+     */
+    @Test
+    fun openingASecondGroup_goesToThatGroup_notBackToTheLastOne() {
+        var back: (() -> Unit)? = null
+        composeRule.setContent {
+            val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+                ?.onBackPressedDispatcher
+            back = { dispatcher?.onBackPressed() }
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig()
+                            .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)
+                            .withTwoCommands(InputSource.DPAD, "dpad_up", 910L),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        fun visibleWidthOf(group: String): Pair<Float, Int> {
+            val node = composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode()
+            return node.boundsInRoot.width to node.size.width
+        }
+
+        // A session on the RIGHT, dragged as far right as it will go.
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(4000f, 0f) }
+        composeRule.waitForIdle()
+        composeRule.runOnUiThread { back?.invoke() }
+        composeRule.waitForIdle()
+
+        // Now a group on the far LEFT. It is the one being opened, so it is the one to show.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        composeRule.waitForIdle()
+
+        val (visible, own) = visibleWidthOf("LEFT_SHOULDER")
+        assert(visible >= own - 1f) {
+            "Opened the left shoulder and got left looking elsewhere: " +
+                "%.1f of %d visible".format(visible, own)
+        }
+    }
+
+    /**
      * A row tile is the table's tile: same menu, same verbs. If it weren't, edit mode would be a
      * second implementation of the same control wearing the same face.
      */
