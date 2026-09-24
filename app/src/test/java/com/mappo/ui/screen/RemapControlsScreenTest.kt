@@ -30,6 +30,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
+import com.mappo.ui.screen.remap.ControlsBodyTestTag
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
@@ -1326,7 +1327,11 @@ class RemapControlsScreenTest {
     @Test
     fun enteringEditMode_movesEveryGroupInOneDirection_withoutShaking() {
         composeRule.mainClock.autoAdvance = false
+        var back: (() -> Unit)? = null
         composeRule.setContent {
+            val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+                ?.onBackPressedDispatcher
+            back = { dispatcher?.onBackPressed() }
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(560.dp, 500.dp)) {
                     RemapControlsScreen(
@@ -1349,15 +1354,24 @@ class RemapControlsScreenTest {
                 .fetchSemanticsNode().positionInRoot.x
         }
 
-        val frames = mutableListOf(sample())
-        composeRule.onNodeWithTag("simple-group:FACE").performClick()
-        // Every frame of the travel, not a sample of it: a shake lives between frames.
-        repeat(40) {
-            composeRule.mainClock.advanceTimeBy(8)
-            frames += sample()
+        fun travel(begin: () -> Unit): List<Map<String, Float>> {
+            val frames = mutableListOf(sample())
+            begin()
+            // Every frame of the travel, not a sample of it: a shake lives between frames.
+            repeat(40) {
+                composeRule.mainClock.advanceTimeBy(8)
+                frames += sample()
+            }
+            return frames
         }
 
-        tracked.forEach { group ->
+        val legs = mapOf(
+            "in" to travel { composeRule.onNodeWithTag("simple-group:FACE").performClick() },
+            // And out again — the leg that drifted, and so the one worth watching.
+            "out" to travel { composeRule.runOnUiThread { back?.invoke() } },
+        )
+
+        for ((leg, frames) in legs) tracked.forEach { group ->
             val path = frames.map { it.getValue(group) }
             val net = path.last() - path.first()
             val forward = if (net >= 0f) 1f else -1f
@@ -1370,11 +1384,135 @@ class RemapControlsScreenTest {
             // One pixel of give for rounding; a wobble costs several per frame.
             val allowed = 1.0
             assert(backtrack <= allowed) {
-                "$group shook across the morph (backtracked %.1f of %.1f): ".format(backtrack, net) +
-                    path.joinToString { "%.1f".format(it) }
+                "$group shook on the way $leg (backtracked %.1f of %.1f): "
+                    .format(backtrack, net) + path.joinToString { "%.1f".format(it) }
             }
         }
         composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **Leaving edit mode from a scrolled view must land where it started.**
+     *
+     * Dylan, 2026-09-24: scroll right in edit mode, leave it, and the whole body came to rest
+     * offset to the right by exactly what had been scrolled — a band of empty space down the
+     * left. The travel holds the view still by shifting the grid against a scroll it captured
+     * when the travel began, but the scroller CLAMPS its own value as the content narrows, so
+     * the two disagreed by however far it had been dragged.
+     */
+    @Test
+    fun leavingEditMode_whileScrolled_returnsToTheRestingPosition() {
+        // Back is the only way out of edit mode, so the test needs the dispatcher the
+        // BackHandler is registered against.
+        var back: (() -> Unit)? = null
+        composeRule.setContent {
+            val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+                ?.onBackPressedDispatcher
+            back = { dispatcher?.onBackPressed() }
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(560.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        val tracked = listOf("DPAD", "FACE", "LEFT_SHOULDER", "RIGHT_STICK", "UTILITY")
+        fun sample() = tracked.associateWith {
+            composeRule.onNodeWithTag("simple-group:$it", useUnmergedTree = true)
+                .fetchSemanticsNode().positionInRoot.x
+        }
+
+        val resting = sample()
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+
+        // Drag the body to the right, the way a finger would.
+        val body = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val scrollBy = body.config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(50f, 0f) }
+        composeRule.waitForIdle()
+
+        composeRule.runOnUiThread { back?.invoke() }
+        composeRule.waitForIdle()
+
+        val after = sample()
+        tracked.forEach { group ->
+            val drift = after.getValue(group) - resting.getValue(group)
+            assert(kotlin.math.abs(drift) <= 1f) {
+                "$group came back %.1f from where it started".format(drift)
+            }
+        }
+    }
+
+    /**
+     * **Entering edit mode goes to the group you opened, not to wherever you were last.**
+     *
+     * Dylan, 2026-09-24: "I might've been scrolled all the way to the right while working on
+     * button pad assignments the last time I was in edit mode, but then when I open the left
+     * trigger input group sometime later, the window scrolls all the way to the right because
+     * that's where I was last. Very unintuitive." The travel had no target of its own — it
+     * simply held whatever the scroll happened to be.
+     *
+     * `boundsInRoot` is CLIPPED, which makes it the measurement here: a group scrolled off the
+     * side of the window loses that much of its visible width.
+     *
+     * **This pins the invariant, it is not a regression test.** No fixture I could build made
+     * the old rule leave the opened group cut off — the real case depends on a layout's own
+     * widths against a particular window — so it guards the rule from here rather than proving
+     * the bug gone.
+     */
+    @Test
+    fun enteringEditMode_bringsTheOpenedGroupIntoView() {
+        composeRule.setContent {
+            MaterialTheme {
+                // Narrow enough, and with rows full enough, that the RESTING view already
+                // overruns it — so there is somewhere to be scrolled away from to begin with.
+                Surface(modifier = androidx.compose.ui.Modifier.size(300.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig()
+                            .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)
+                            .withTwoCommands(InputSource.DPAD, "dpad_up", 910L),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        fun leftShoulderX() = composeRule
+            .onNodeWithTag("simple-group:LEFT_SHOULDER", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+
+        // Hard to the right, as far as the body will go.
+        val before = leftShoulderX()
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(4000f, 0f) }
+        composeRule.waitForIdle()
+        // The premise: the view really is scrolled away from the group about to be opened.
+        assert(leftShoulderX() < before - 10f) {
+            "the body did not scroll, so this proves nothing (%.1f -> %.1f)"
+                .format(before, leftShoulderX())
+        }
+
+        // Now open a group on the far LEFT.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        composeRule.waitForIdle()
+
+        val node = composeRule
+            .onNodeWithTag("simple-group:LEFT_SHOULDER", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        // Clipped width vs the node's own: anything less and part of the group the user just
+        // opened is off the side of the window.
+        assert(node.boundsInRoot.width >= node.size.width - 1f) {
+            "The group just opened is still cut off: %.1f of %d visible"
+                .format(node.boundsInRoot.width, node.size.width)
+        }
     }
 
     /**
