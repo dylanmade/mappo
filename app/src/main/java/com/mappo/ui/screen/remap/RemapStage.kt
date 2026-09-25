@@ -25,6 +25,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -200,6 +201,9 @@ internal fun RemapStage(
     // other. Every cell registers its window bounds here, so a finger crossing from one card to
     // the next resolves targets as it goes.
     val moveState = rememberMoveModeState<CellKey>()
+    // Frames a group when its tiles change — a tile added, cleared or carried in. Declared up
+    // here because the cursor-seating effects below are what claim it. See [ReframePlan].
+    val reframe = remember { ReframePlan() }
     val cellFocus = remember { mutableStateMapOf<CellKey, FocusRequester>() }
     val focusHandle: (CellKey) -> FocusRequester = { key ->
         cellFocus.getOrPut(key) { FocusRequester() }
@@ -299,6 +303,13 @@ internal fun RemapStage(
         val cell = locate(claimed) ?: return@LaunchedEffect
         withFrameNanos { }
         runCatching { focusHandle(cell).requestFocus() }
+        // And bring the whole group into view, "+" tile and all — not merely the tile itself,
+        // which is all focus does on its own (Dylan, 2026-09-25: "the camera and scroll migrate
+        // to the very edge of that group, including the empty tiles"). The travel overrides that
+        // minimal scroll rather than racing it: while it runs, the view's position is its own
+        // function of the travel, whatever the scroller is doing underneath.
+        reframe.frameGroup = cell.group
+        reframe.frameTick++
         onSeatCommand(null)
     }
 
@@ -334,6 +345,19 @@ internal fun RemapStage(
         var bodyFocused by remember { mutableStateOf(false) }
         // Keeps the view still while the rows change shape underneath it — see [EditCameraAnchor].
         val editMorph = remember { EditMorphPlan() }
+        val reframeTravel = remember { Animatable(1f) }
+        // What the LAYOUT is displacing the content by, in pixels — the sum of whatever travels
+        // are running. The scroll CUES read it, because the scroller's own value says nothing
+        // about a displacement the scroller is not the one applying (see MinputScrollbar).
+        val contentShift = remember { mutableFloatStateOf(0f) }
+        LaunchedEffect(reframe.request.intValue) {
+            if (reframe.request.intValue == 0) return@LaunchedEffect
+            reframe.arm(reframe.request.intValue)
+            reframeTravel.snapTo(0f)
+            reframeTravel.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+            val landed = reframe.handOff() ?: return@LaunchedEffect
+            bodyScroll.scrollTo(landed.coerceIn(0, bodyScroll.maxValue))
+        }
         // The travel is over: fold the shift the anchor has been applying into the scroller
         // itself, so the two agree about where the content is and the user can still reach both
         // ends of it. Nothing moves — the scroll gains exactly what the shift gives up.
@@ -679,7 +703,7 @@ internal fun RemapStage(
                 modifier = Modifier.fillMaxSize(),
                 // The morph moves the content without moving the scroller; say so, or the
                 // fade and chevron describe a view that isn't on screen.
-                contentShift = { editMorph.shift.floatValue },
+                contentShift = { contentShift.floatValue },
             ) {
             Layout(contents = slots) { measurables, _ ->
                 // The VIEWPORT, not the incoming constraints: the stage now sits inside a
@@ -817,12 +841,30 @@ internal fun RemapStage(
                     }
                 }
                 val grid = spanAt(travel)
-                val shift = editMorph.shiftAt(
+                val morphShift = editMorph.shiftAt(
                     settled = editSettled,
                     travel = travel,
                     scroll = bodyScroll.value,
                     maxScrollAt = ::maxScrollAt,
                 )
+                val shift = morphShift + reframe.shiftAt(
+                    // Only while edit mode is SETTLED: mid-morph the grid is meant to be
+                    // changing shape, and that travel already owns the view.
+                    active = editSettled && editGroup != null,
+                    centreX = grid.centreX,
+                    widths = measuredWidths,
+                    scroll = bodyScroll.value,
+                    max = maxScrollAt(travel),
+                    virtual = bodyScroll.value + morphShift,
+                    progress = reframeTravel.value,
+                    groupAt = { groups[it] },
+                    targetFor = { group, at ->
+                        editScrollTarget(
+                            grid, group, measuredWidths, groups, centreW, viewport, at,
+                        )
+                    },
+                )
+                contentShift.floatValue = shift.toFloat()
                 val leftColumnW = grid.leftW
                 val gridW = grid.gridW
                 val restTotalW = grid.totalW
@@ -964,7 +1006,7 @@ internal fun RemapStage(
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = MinputBarEdgePadding)
                 .graphicsLayer { alpha = 1f - crossfadeAt(progress()) },
-            contentShift = { editMorph.shift.floatValue },
+            contentShift = { contentShift.floatValue },
         )
 
         // ABOVE everything: the tile being carried, and the one it would displace. Outside every
@@ -1405,6 +1447,24 @@ private fun lerpGridSpan(a: GridSpan, b: GridSpan, t: Float): GridSpan = when {
  * A group too wide for the window shows its INNER edge, the side its glyph column sits on: that
  * is where its rows read from, and it is the side nearest the controller the group belongs to.
  */
+/** Where a group's box starts, in the grid's own coordinates — the anchor a re-frame measures
+ *  a shape change against, and the left edge [editScrollTarget] works from. */
+private fun groupLeftIn(
+    span: GridSpan,
+    group: RemapSimpleGroup,
+    widths: IntArray,
+    groups: List<RemapSimpleGroup>,
+    centreW: Int,
+): Int {
+    val width = widths[groups.indexOf(group)]
+    return when {
+        // A left-flank box is right-aligned to its column, so its inner edge is its right one.
+        GridBands.any { it.left == group } -> span.startX + span.leftW - width
+        group == RemapSimpleGroup.UTILITY -> span.centreX + (centreW - width) / 2
+        else -> span.rightX
+    }
+}
+
 private fun editScrollTarget(
     span: GridSpan,
     group: RemapSimpleGroup,
@@ -1416,12 +1476,7 @@ private fun editScrollTarget(
 ): Int {
     val width = widths[groups.indexOf(group)]
     val onLeft = GridBands.any { it.left == group }
-    val left = when {
-        // A left-flank box is right-aligned to its column, so its inner edge is its right one.
-        onLeft -> span.startX + span.leftW - width
-        group == RemapSimpleGroup.UTILITY -> span.centreX + (centreW - width) / 2
-        else -> span.rightX
-    }
+    val left = groupLeftIn(span, group, widths, groups, centreW)
     val right = left + width
     val target = when {
         // Too wide to show at once: the glyph side, whichever side that is.
@@ -1449,8 +1504,8 @@ private fun editScrollTarget(
  * nothing reads a value it also influences.
  *
  * Plain fields, not snapshot state: it is written and read entirely inside the layout phase,
- * where the correction has to come from the same numbers in the same pass. The one exception
- * is [shift], which the scroll CUES read — see below.
+ * where the correction has to come from the same numbers in the same pass. What the cues need
+ * out of it is published by the stage, which sums this travel's shift with any other's.
  */
 private class EditMorphPlan {
     var restWidths: IntArray? = null
@@ -1463,20 +1518,6 @@ private class EditMorphPlan {
     private var pending: Int? = null
     private var target: Int? = null
 
-    /**
-     * The displacement being applied right now, published for the scroll cues.
-     *
-     * The scroller's own value stays where it was for the whole travel — the shift is what
-     * moves the content, and only at the hand-off does the scroller take it over. So the
-     * chevron, the edge fade and the bar, which all ask the scroller where it is, spent the
-     * animation believing nothing had moved: open a right-hand group, watch the view slide
-     * right, and the left-hand "there's more this way" cues only appeared once the scroller
-     * was let in on it (Dylan, 2026-09-24). This is snapshot state precisely because it
-     * crosses out of the layout phase; it is read in draw (the bar) and inside a
-     * derivedStateOf that yields a Boolean (the fade and chevron), so a frame of travel
-     * costs a redraw, never a recomposition.
-     */
-    val shift = mutableFloatStateOf(0f)
 
     /** True on the one frame a travel begins, when the other end still needs capturing. */
     fun begin(settled: Boolean, travel: Float, measured: IntArray): Boolean {
@@ -1526,10 +1567,7 @@ private class EditMorphPlan {
         // Dylan saw on the way out of edit mode from a mid-scrolled view. What this guarantees
         // is that `wanted` — a pure function of the travel — is what ends up on screen.
         val effective = scroll.coerceIn(0, max)
-        return (wanted - effective).roundToInt().also {
-            pending = it
-            shift.floatValue = it.toFloat()
-        }
+        return (wanted - effective).roundToInt().also { pending = it }
     }
 
     /**
@@ -1548,12 +1586,143 @@ private class EditMorphPlan {
         val landed = target ?: return null
         target = null
         pending = null
-        // The scroller is about to hold exactly what the shift was holding, so the cues must
-        // stop counting it — they'd double it otherwise, for one frame, at both ends at once.
-        shift.floatValue = 0f
         restWidths = null
         editWidths = null
         scrollsKnown = false
+        return landed
+    }
+}
+
+/**
+ * **A tile arriving or leaving re-frames the view, the same way opening a group does** (Dylan,
+ * 2026-09-24).
+ *
+ * A group's box is as wide as its tiles, and the columns are as wide as their widest box, so
+ * adding or clearing one tile re-widths the whole grid: the new tile can land past the window's
+ * edge with nothing going to it, and a cleared one can drag the entire grid sideways by a tile's
+ * width — or, when the content narrows past where the view was scrolled to, make the scroller
+ * clamp and snap the view across in one frame.
+ *
+ * So a shape change is treated as a TRAVEL, exactly like entering edit mode: hold the view
+ * precisely where it was — past the new clamp if need be, which simply means the space the tile
+ * vacated stays on screen for the length of the animation — and interpolate from there to the
+ * scroll that frames the whole changed group, empty edge tiles included ([editScrollTarget], the
+ * same function that frames a group being opened).
+ *
+ * The change is detected in the LAYOUT, by comparing this pass's box widths against the last
+ * one's, because an effect would only notice a frame later — and that frame is the jump.
+ */
+private class ReframePlan {
+    /** Every group's box width, and where the controller's column sat, last layout. */
+    private var widths: IntArray? = null
+    private var anchor: Int? = null
+    private var from = 0f
+    private var to = 0f
+    private var live = false
+    private var pending: Int? = null
+    private var landing: Int? = null
+    private var armedFor = 0
+
+    /** Bumped when a shape change needs animating; the stage arms the travel in answer. */
+    val request = mutableIntStateOf(0)
+
+    /**
+     * **The group to frame, said out loud** (Dylan, 2026-09-25).
+     *
+     * Inferring it from which box changed shape is not good enough, and fails in both directions
+     * that matter. A MOVE changes two boxes — the row a command left and the row it joined — and
+     * the first of them is as likely as not the one already on screen, so the travel had nothing
+     * to do and the minimal scroll that focus does on its own was all that happened. An ADD is
+     * worse: it leaves for the full-screen output picker, so the whole screen is torn down and
+     * rebuilt, there is no previous layout to compare against, and no shape change is ever seen.
+     *
+     * So the stage names the group when a command lands in it, which it knows by binding id
+     * (see `seatCommand`) — and a claim survives the picker trip because that id does.
+     */
+    var frameGroup: RemapSimpleGroup? by mutableStateOf(null)
+    var frameTick: Int by mutableIntStateOf(0)
+    private var servedTick = 0
+
+    /** The travel is running only once the animation has actually been reset for THIS request —
+     *  until then the progress on hand still reads 1 from the last one, which would land the
+     *  view at the destination on the very frame that is supposed to hold it still. */
+    fun arm(id: Int) { armedFor = id }
+
+    fun shiftAt(
+        active: Boolean,
+        /** Where the controller's column starts — the anchor the hold is measured against. */
+        centreX: Int,
+        widths: IntArray,
+        scroll: Int,
+        max: Int,
+        /** Where the view sits right now, whatever else is displacing it. */
+        virtual: Int,
+        progress: Float,
+        groupAt: (index: Int) -> RemapSimpleGroup,
+        /** The scroll that frames a whole group, "+" tiles included, from a given position. */
+        targetFor: (group: RemapSimpleGroup, from: Int) -> Int,
+    ): Int {
+        if (!active) {
+            this.widths = null
+            this.anchor = null
+            live = false
+            pending = null
+            return 0
+        }
+        val wasW = this.widths
+        val wasAnchor = this.anchor
+        val claimed = frameGroup.takeIf { frameTick != servedTick }
+        // A shape change nobody claimed — a tile cleared or pasted — frames the box it happened
+        // to, which is the best guess available and the right one for a single-row change.
+        val changed = if (wasW != null && !wasW.contentEquals(widths)) {
+            widths.indices.first { widths[it] != wasW[it] }
+        } else null
+        // A claim PRE-EMPTS a travel already under way, rather than queueing behind it. A move
+        // changes TWO boxes, so the shape diff tends to start a travel toward the row a command
+        // left a frame or two before the claim naming the row it joined arrives — and waiting
+        // one out meant two journeys, the first of them to the wrong place.
+        if (claimed != null || (!live && changed != null)) {
+            servedTick = frameTick
+            // **The CONTROLLER is the anchor** for the hold, not the box that changed — the box
+            // that changed is, more often than not, the one thing that did NOT move. A left-flank
+            // box is right-aligned in a column it is itself sizing, so losing a tile leaves its
+            // outer edge where it was and pulls its inner edge — and the controller, and the
+            // entire right half of the grid — a whole tile's width across. Holding the picture
+            // still is what makes the change read as one tile appearing or leaving rather than
+            // the view lurching (Dylan proposed this anchor for the morph, 2026-09-24, for the
+            // same reason; the way out of edit mode has used it since). With no previous layout
+            // to measure against — the picker trip rebuilds the screen — there is nothing to
+            // hold and the travel simply starts from where the view is.
+            // Where the view visually IS: mid-travel that is the position the travel last
+            // placed it at, not the scroller's value, which the travel has been overriding.
+            val here = (if (live) landing ?: from.roundToInt() else virtual) +
+                if (wasAnchor != null) centreX - wasAnchor else 0
+            from = here.toFloat()
+            to = targetFor(claimed ?: groupAt(changed!!), here).toFloat()
+            live = true
+            request.intValue++
+        }
+        this.widths = widths
+        this.anchor = centreX
+        if (!live) {
+            pending = null
+            return 0
+        }
+        val at = if (armedFor == request.intValue) progress else 0f
+        // NOT clamped to the scrollable range: the hold is allowed to sit past the end while the
+        // content is narrower than the view was, which is the whole point of animating out of it.
+        val wanted = from + (to - from) * at
+        landing = wanted.roundToInt()
+        return (wanted - scroll.coerceIn(0, max)).roundToInt().also { pending = it }
+    }
+
+    /** The scroll the scroller should take over once the travel has landed. */
+    fun handOff(): Int? {
+        if (!live) return null
+        val landed = landing ?: return null
+        live = false
+        landing = null
+        pending = null
         return landed
     }
 }

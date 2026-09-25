@@ -383,6 +383,254 @@ class RemapControlsScreenTest {
      * node carrying the text and the node carrying the action are two different nodes — which
      * is why the obvious `onNodeWithText(verb).performClick()` finds a node and does nothing.
      */
+
+    /**
+     * **A tile arriving re-frames the view the way opening a group does** (Dylan, 2026-09-24).
+     *
+     * A group's box is as wide as its tiles and a column as wide as its widest box, so one new
+     * tile can land past the window's edge — and nothing went to it, because only entering edit
+     * mode ever framed a group. Clearing one was worse than useless: the grid lost a tile's
+     * width, the scroller clamped, and the whole view snapped sideways in a single frame.
+     *
+     * The travel is driven by an animation, so this drives the clock by hand and lets it land.
+     */
+    @Test
+    fun aTileArriving_bringsItsWholeGroupIntoView() {
+        composeRule.mainClock.autoAdvance = false
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = live.value,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1_200L)
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.waitForIdle()
+        }
+        // Edit from the far LEFT, then look at the left edge, so the face group is off to the
+        // right with nothing drawing the view toward it.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settle()
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(-4000f, 0f) }
+        settle()
+
+        fun faceVisible(): Pair<Float, Int> {
+            val node = composeRule.onNodeWithTag("simple-group:FACE", useUnmergedTree = true)
+                .fetchSemanticsNode()
+            return node.boundsInRoot.width to node.size.width
+        }
+        val (before, _) = faceVisible()
+
+        // A third command on the face row — one more tile, and the "+" pushed out behind it.
+        live.value = seedShapedConfig()
+            .withThreeCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)
+        settle()
+
+        val (after, own) = faceVisible()
+        assert(after >= own - 1f) {
+            "The face group grew a tile and the view never went to it: " +
+                "%.1f of %d visible (was %.1f)".format(after, own, before)
+        }
+    }
+
+
+    /**
+     * **Clearing a tile must not snap the view across.**
+     *
+     * Losing a tile narrows its column, which drags everything the column carries — and when the
+     * content ends up narrower than the scroll position, the scroller clamps and the whole view
+     * jumps by a tile's width in one frame. Dylan saw exactly that on 2026-09-24: "an abrupt
+     * shift to the right, to the tune of what appears to be the full distance of the removed
+     * tile".
+     *
+     * A frame-by-frame measure, because the fault is a single frame. The travel is ~260ms, so
+     * even its fastest frame moves a group a few pixels; a snap moves it by a whole tile at once.
+     */
+    @Test
+    fun clearingATile_doesNotSnapTheView() {
+        composeRule.mainClock.autoAdvance = false
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withTwoCommands(InputSource.LEFT_TRIGGER, "full_pull", 900L),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = live.value,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(1_200L)
+        composeRule.waitForIdle()
+
+        // PART of the way right — the case Dylan hit ("a left column tile scrolled mostly
+        // offscreen"). Pinned to the far end it cannot show: the content narrows by a tile, the
+        // scroller clamps by exactly that, and the two cancel. It is the positions in between
+        // where nothing absorbs the change and the grid slides.
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(200f, 0f) }
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.waitForIdle()
+
+        // Everything EXCEPT the group that lost the tile. That box genuinely gets one tile
+        // narrower, shedding it from its outer end — that is the change, not a jump. What must
+        // not move is the rest of the grid, which had nothing to do with it.
+        val tracked = listOf("DPAD", "FACE", "RIGHT_SHOULDER", "RIGHT_STICK")
+        // positionInRoot, not boundsInRoot: the latter is clipped, so a group off the window's
+        // edge reads as a flat 0 and hides the very motion being measured.
+        fun sample() = tracked.associateWith {
+            composeRule.onNodeWithTag("simple-group:$it", useUnmergedTree = true)
+                .fetchSemanticsNode().positionInRoot.x
+        }
+
+        val frames = mutableListOf(sample())
+        // The trigger row loses a command: the left column narrows by a whole tile.
+        live.value = seedShapedConfig()
+        composeRule.waitForIdle()
+        repeat(45) {
+            composeRule.mainClock.advanceTimeBy(8)
+            composeRule.waitForIdle()
+            frames += sample()
+        }
+
+        tracked.forEach { group ->
+            val path = frames.map { it.getValue(group) }
+            val printable = path.map { "%.0f".format(it) }
+            // THE SNAP: the frame the tile goes away on. Nothing may move on it — the travel
+            // that follows is allowed to take the view anywhere, but it has to start from where
+            // the eye last saw things. Without the hold this frame alone was a whole tile wide.
+            val onTheFrame = kotlin.math.abs(path[1] - path[0])
+            assert(onTheFrame < 4f) {
+                "$group jumped ${"%.1f".format(onTheFrame)}px on the frame the tile was cleared " +
+                    "(path: $printable)"
+            }
+            // And the travel out of it goes one way: a hold that is undone before the animation
+            // picks it up reads as a lurch and a crawl back, which scores here as backtracking.
+            val net = path.last() - path.first()
+            val forward = if (net >= 0f) 1f else -1f
+            val backtrack = path.zipWithNext { a, b -> (b - a) * forward }
+                .filter { it < 0f }
+                .sumOf { -it.toDouble() }
+            assert(backtrack <= 1.0) {
+                "$group backtracked ${"%.1f".format(backtrack)}px re-framing after a clear " +
+                    "(path: $printable)"
+            }
+        }
+        composeRule.mainClock.autoAdvance = true
+    }
+
+
+    /**
+     * **Adding a command frames its WHOLE group — the "+" tile at the end included.**
+     *
+     * Focus, left to itself, scrolls the minimum that reveals the tile it just landed on, which
+     * stops dead at the new command and leaves the "+" behind it off screen. That minimal scroll
+     * was ALL that happened on an add, because the travel is started by comparing a layout
+     * against the one before it and an add has no "before": creating a command leaves for the
+     * full-screen output picker, so the screen is torn down and rebuilt around the answer. The
+     * group is now named explicitly when a command lands in it (Dylan, 2026-09-25: "the camera
+     * and scroll migrate to the very edge of that group, including the empty tiles").
+     */
+    @Test
+    fun addingACommand_framesTheWholeGroup_notJustTheNewTile() {
+        composeRule.mainClock.autoAdvance = false
+        // The left shoulder starts WIDE, and the change below narrows it as the face row grows —
+        // two boxes changing at once, which is the shape of every move: one row loses a command
+        // and another gains it. Only naming the group the command LANDED IN can tell those apart;
+        // taking the first box that changed takes the shoulder, which the view has no business
+        // travelling to.
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withTwoCommands(InputSource.LEFT_TRIGGER, "full_pull", 800L),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = live.value,
+                        onOpenInputEditor = { _, _, _ -> },
+                        onAddRowCommand = { _, inputKey, _, onReady ->
+                            live.value = seedShapedConfig()
+                                .withTwoCommands(InputSource.BUTTON_DIAMOND, inputKey, 900L)
+                            onReady(950L)
+                        },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1_200L)
+            composeRule.waitForIdle()
+        }
+        settle()
+        // Edit from the far left, and look there, so the face group is off to the right.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settle()
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(-4000f, 0f) }
+        settle()
+
+        // The face row's "+", and the verb that makes a command on it. Through its semantics
+        // action, not a tap: the tile is scrolled off the window, which is the whole point, and a
+        // tap needs coordinates inside it.
+        activateTile("cell:FACE:BUTTON_DIAMOND:button_a:1")
+        settle()
+        clickMenuItem("New")
+        settle()
+
+        val node = composeRule.onNodeWithTag("simple-group:FACE", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        // boundsInRoot is CLIPPED, so this is how much of the box the window actually shows.
+        assert(node.boundsInRoot.width >= node.size.width - 1f) {
+            "Added a command and the face group is only %.1f of %d px on screen".format(
+                node.boundsInRoot.width, node.size.width,
+            )
+        }
+        // And the "+" pushed out behind it is reachable, which is the edge that was being missed.
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:2", useUnmergedTree = true)
+            .assertExists()
+        composeRule.mainClock.autoAdvance = true
+    }
+
+
+    /**
+     * Activate a tile through its semantics action rather than a tap — a tap needs coordinates
+     * inside the window, and some of these tests deliberately act on a tile scrolled out of it.
+     * The click sits on a node INSIDE the tagged cell, so the tag alone doesn't carry it.
+     */
+    private fun activateTile(tag: String) {
+        composeRule.onNode(
+            androidx.compose.ui.test.hasClickAction() and hasAnyAncestor(hasTestTag(tag)),
+            useUnmergedTree = true,
+        ).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+    }
+
     private fun clickMenuItem(label: String) {
         composeRule.onNode(
             androidx.compose.ui.test.hasClickAction() and
@@ -1796,6 +2044,49 @@ class RemapControlsScreenTest {
      * with an ACTIVE preset entry, all in their seeded modes, no commands bound. [sampleConfig]
      * deliberately populates only BUTTON_DIAMOND, so it can't catch a per-source preset miss.
      */
+
+    /** As [withTwoCommands], with a third command so a row can be seen to GAIN a tile. */
+    private fun ControllerConfig.withThreeCommands(
+        source: InputSource,
+        inputKey: String,
+        idBase: Long,
+    ): ControllerConfig = withTwoCommands(source, inputKey, idBase).copy(
+        actionSets = withTwoCommands(source, inputKey, idBase).actionSets.map { set ->
+            set.copy(
+                preset = set.preset.map { entry ->
+                    if (entry.inputSource != source) return@map entry
+                    entry.copy(
+                        group = entry.group.copy(
+                            inputs = entry.group.inputs.map { input ->
+                                if (input.input.inputKey != inputKey) return@map input
+                                val activator = Activator(
+                                    id = idBase + 2,
+                                    groupInputId = input.input.id,
+                                    type = ActivatorType.DOUBLE_PRESS,
+                                    orderIndex = 2,
+                                )
+                                val (outputType, args) = BindingOutput.KeyPress("ESCAPE").toEntity()
+                                input.copy(
+                                    activators = input.activators + ActivatorGraph(
+                                        activator,
+                                        listOf(
+                                            Binding(
+                                                id = idBase + 52L,
+                                                activatorId = activator.id,
+                                                outputType = outputType,
+                                                args = args,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            },
+                        ),
+                    )
+                },
+            )
+        },
+    )
+
     private fun seedShapedConfig(): ControllerConfig {
         var nextId = 1L
         fun entry(
