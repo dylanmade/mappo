@@ -614,6 +614,17 @@ class RemapControlsScreenTest {
         // And the "+" pushed out behind it is reachable, which is the edge that was being missed.
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:2", useUnmergedTree = true)
             .assertExists()
+        // Framing the OUTERMOST group goes the whole way to the end of the scroll. A group's box
+        // stops short of the grid's own margin, so landing on the box's edge left ~6dp of blank
+        // margin unscrolled — close enough to look landed, but the scroller still reported more
+        // to come and the edge fade and chevron stayed lit over it (Dylan, 2026-09-25).
+        val range = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        assert(range.value() >= range.maxValue() - 0.5f) {
+            "Panned to the outermost group and stopped %.1f short of the end (%.1f of %.1f)"
+                .format(range.maxValue() - range.value(), range.value(), range.maxValue())
+        }
         composeRule.mainClock.autoAdvance = true
     }
 

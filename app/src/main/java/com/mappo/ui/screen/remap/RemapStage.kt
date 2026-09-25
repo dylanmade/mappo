@@ -301,15 +301,16 @@ internal fun RemapStage(
         if (editGroup == null) return@LaunchedEffect onSeatCommand(null)
         if (!editSettled) return@LaunchedEffect
         val cell = locate(claimed) ?: return@LaunchedEffect
-        withFrameNanos { }
-        runCatching { focusHandle(cell).requestFocus() }
-        // And bring the whole group into view, "+" tile and all — not merely the tile itself,
-        // which is all focus does on its own (Dylan, 2026-09-25: "the camera and scroll migrate
-        // to the very edge of that group, including the empty tiles"). The travel overrides that
-        // minimal scroll rather than racing it: while it runs, the view's position is its own
-        // function of the travel, whatever the scroller is doing underneath.
+        // Bring the whole group into view, "+" tile and all — not merely the tile itself, which
+        // is all focus does on its own (Dylan, 2026-09-25: "the camera and scroll migrate to the
+        // very edge of that group, including the empty tiles"). The travel overrides that minimal
+        // scroll rather than racing it: while it runs, the view's position is its own function of
+        // the travel, whatever the scroller is doing underneath. Claimed BEFORE the frame wait —
+        // it reads the layout, not the focus requesters, so it need not wait for those to attach.
         reframe.frameGroup = cell.group
         reframe.frameTick++
+        withFrameNanos { }
+        runCatching { focusHandle(cell).requestFocus() }
         onSeatCommand(null)
     }
 
@@ -833,7 +834,9 @@ internal fun RemapStage(
                 ) { entering, from ->
                     if (entering) {
                         editGroup?.let { group ->
-                            editScrollTarget(editSpan, group, editWidths, groups, centreW, viewport, from)
+                            editScrollTarget(
+                                editSpan, group, editWidths, groups, centreW, viewport, edgeX, from,
+                            )
                         } ?: from
                     } else {
                         // The rest end that holds the controller still.
@@ -860,7 +863,7 @@ internal fun RemapStage(
                     groupAt = { groups[it] },
                     targetFor = { group, at ->
                         editScrollTarget(
-                            grid, group, measuredWidths, groups, centreW, viewport, at,
+                            grid, group, measuredWidths, groups, centreW, viewport, edgeX, at,
                         )
                     },
                 )
@@ -1472,6 +1475,8 @@ private fun editScrollTarget(
     groups: List<RemapSimpleGroup>,
     centreW: Int,
     viewport: Int,
+    /** The grid's own margin, inside which there is nothing left to see. */
+    edgeX: Int,
     from: Int,
 ): Int {
     val width = widths[groups.indexOf(group)]
@@ -1487,7 +1492,16 @@ private fun editScrollTarget(
         left < from -> left
         else -> from
     }
-    return target.coerceIn(0, (span.totalW - viewport).coerceAtLeast(0))
+    val max = (span.totalW - viewport).coerceAtLeast(0)
+    // **Go the whole way when what is left is only the margin** (Dylan, 2026-09-25). A group's
+    // box stops short of the grid's edge by [edgeX], so framing the outermost one lands that far
+    // from the end of the scroll — close enough to look landed, far enough that the scroller
+    // still says there is more and the edge fade and chevron stay lit over blank margin.
+    return when {
+        target <= edgeX -> 0
+        target >= max - edgeX -> max
+        else -> target
+    }.coerceIn(0, max)
 }
 
 /**

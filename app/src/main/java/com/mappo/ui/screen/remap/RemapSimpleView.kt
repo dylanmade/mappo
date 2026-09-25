@@ -177,14 +177,24 @@ internal fun RemapSimpleView(
         val target = editGroup
         if (target != null) {
             editVisible = target
-            editSettled = false
-            editProgress.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
-            editSettled = true
+            // **Only if there is a morph to run** (Dylan, 2026-09-25). Creating a command leaves
+            // for the full-screen picker, and the screen that comes back is already in edit mode
+            // with the travel at its end — but animating 1f to 1f still runs for the spec's full
+            // duration, holding `editSettled` false the whole time. Everything that waits for the
+            // tiles to be real waited with it: the cursor's seat, and the pan to the group the
+            // new command landed in, which is the "solid second" before the camera moved.
+            if (editProgress.value < 1f) {
+                editSettled = false
+                editProgress.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+                editSettled = true
+            }
             editSeat = target
         } else if (editVisible != null) {
-            editSettled = false
-            editProgress.animateTo(0f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
-            editSettled = true
+            if (editProgress.value > 0f) {
+                editSettled = false
+                editProgress.animateTo(0f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+                editSettled = true
+            }
             editVisible = null
         }
     }
