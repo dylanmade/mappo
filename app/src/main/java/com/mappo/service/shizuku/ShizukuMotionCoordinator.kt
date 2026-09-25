@@ -154,6 +154,7 @@ class ShizukuMotionCoordinator @Inject constructor(
                     inputEvaluator.activeLayerIdsFlow,
                     inputDispatcher.remapEnabled,
                     shizukuConnection.isReadyFlow,
+                    inputDispatcher.mappoInForeground,
                 ) { values ->
                     val activeLayout = values[0] as Layout?
                     val compiled = values[1] as CompiledConfig
@@ -162,6 +163,7 @@ class ShizukuMotionCoordinator @Inject constructor(
                     val activeLayers = values[3] as List<Long>
                     val remapEnabled = values[4] as Boolean
                     val shizukuReady = values[5] as Boolean
+                    val mappoInForeground = values[6] as Boolean
 
                     val activeLayoutId = activeLayout?.id
                     // Flush analog state on layout switch so synthetic dpad
@@ -180,6 +182,7 @@ class ShizukuMotionCoordinator @Inject constructor(
                         activeLayers = activeLayers,
                         remapEnabled = remapEnabled,
                         shizukuReady = shizukuReady,
+                        mappoInForeground = mappoInForeground,
                     )
                 }
                     .distinctUntilChanged()
@@ -235,16 +238,14 @@ class ShizukuMotionCoordinator @Inject constructor(
         // gamepad-button/stick/trigger output is invisible to games unless we grab and
         // present the MVG as the sole controller (device-default physical inputs pass
         // through it). Universalizes gamepad output beyond the analog-source-mode case.
-        val grabClause = { b: PredicateBreakdown ->
-            b.gyroStickModeConfigured || b.analogSourceHasNonDefaultMode || b.gamepadOutputConfigured
-        }
-        val grab = breakdown.shouldEnable && grabClause(breakdown)
-        if (prior?.let { p -> (p.shouldEnable && grabClause(p)) != grab } != false) {
+        val grab = shouldGrab(breakdown)
+        if (prior?.let { p -> shouldGrab(p) != grab } != false) {
             Log.i(
                 TAG,
                 "grab transition → $grab (gyroStick=${breakdown.gyroStickModeConfigured} " +
                     "analogNonDefault=${breakdown.analogSourceHasNonDefaultMode} " +
-                    "gamepadOutput=${breakdown.gamepadOutputConfigured})",
+                    "gamepadOutput=${breakdown.gamepadOutputConfigured} " +
+                    "mappoInForeground=${breakdown.mappoInForeground})",
             )
         }
         tryToggleGrab(grab)
@@ -320,6 +321,21 @@ class ShizukuMotionCoordinator @Inject constructor(
     }
 
     /**
+     * Whether EVIOCGRAB should be held. Extracted as a pure helper, like
+     * [shouldShowDegradedToast], so the clause can be pinned without staging coroutine flows.
+     *
+     * **Never while Mappo itself is in front** (Dylan, 2026-09-25) — see
+     * [PredicateBreakdown.mappoInForeground]. A grabbed pad reaches no window, so the app whose
+     * remapping has just been suspended would be left with no gamepad at all. Note this gates
+     * only the GRAB: `shouldEnable` is untouched, so the reader, the gyro and the health
+     * notification all stay up while the user sits in Mappo configuring them.
+     */
+    internal fun shouldGrab(b: PredicateBreakdown): Boolean =
+        b.shouldEnable &&
+            !b.mappoInForeground &&
+            (b.gyroStickModeConfigured || b.analogSourceHasNonDefaultMode || b.gamepadOutputConfigured)
+
+    /**
      * Pure breakdown evaluator. Returns the three clauses individually so the
      * degraded-mode transition detector can read each axis independently.
      * `shouldEnable` is just their conjunction.
@@ -330,8 +346,10 @@ class ShizukuMotionCoordinator @Inject constructor(
         activeLayers: List<Long>,
         remapEnabled: Boolean,
         shizukuReady: Boolean,
+        mappoInForeground: Boolean = false,
     ): PredicateBreakdown = PredicateBreakdown(
         remapEnabled = remapEnabled,
+        mappoInForeground = mappoInForeground,
         analogModeConfigured = hasModeInScope(compiled, activeSetId, activeLayers) { it.requiresMotionCapture() },
         anyShizukuModeConfigured = hasModeInScope(compiled, activeSetId, activeLayers) { it.requiresShizuku() } ||
             hasOutputInScope(compiled, activeSetId, activeLayers) { it.requiresShizuku() },
@@ -508,6 +526,27 @@ class ShizukuMotionCoordinator @Inject constructor(
          * analog source mode happened to already grab.
          */
         val gamepadOutputConfigured: Boolean = false,
+        /**
+         * **Mappo's own UI can't run on a grabbed controller** (Dylan, 2026-09-25).
+         *
+         * EVIOCGRAB removes the physical pad from the OS entirely, so while it is held the
+         * ONLY gamepad any window sees is Mappo's virtual one — which exists only because the
+         * evaluator writes to it. Suspending remapping while Mappo is in front (see
+         * [com.mappo.service.input.InputDispatcher.mappoInForeground]) therefore has to
+         * RELEASE the grab as well, or the gamepad goes completely dead inside Mappo: the
+         * kernel sends the input to Mappo alone, and the code that would re-emit it has just
+         * been told to stand down.
+         *
+         * Releasing it is also what makes "Mappo's defaults are the device's own defaults"
+         * literally true — the pad talks straight to Mappo's window, so d-pad focus traversal
+         * and the right stick's generic MotionEvents (which never reach an app while grabbed)
+         * work with no passthrough to maintain.
+         *
+         * Enumeration is deliberately NOT gated on this: the reader, the gyro sensor and the
+         * analog health notification all stay up, so the Shizuku setup screen keeps telling
+         * the truth while the user sits in it, and returning to a game costs no re-open.
+         */
+        val mappoInForeground: Boolean = false,
         val shizukuReady: Boolean,
     ) {
         val shouldEnable: Boolean

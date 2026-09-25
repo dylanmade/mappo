@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
@@ -77,7 +78,6 @@ import com.mappo.R
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
-import com.mappo.ui.component.LocalStickScroll
 import com.mappo.ui.component.rememberMoveModeState
 import androidx.compose.material3.MaterialTheme
 import com.mappo.ui.minput.MinputBarEdgePadding
@@ -341,9 +341,13 @@ internal fun RemapStage(
         // incoming constraints, which the body scroller leaves unbounded across.
         val viewportWPx = with(density) { viewportW.roundToPx() }
         val viewportHPx = with(density) { viewportH.roundToPx() }
-        // The BODY's one scroller, and whether the right stick currently belongs to it.
+        // The BODY's one scroller. Whether the right stick belongs to it is not asked here any
+        // more: every scroller that can scroll puts itself forward and the arbiter picks (see
+        // [com.mappo.ui.component.StickScrollArbiter]). Zoomed, this measures exactly one
+        // viewport and so isn't a candidate at all, which is what the old `!zoomed` said by
+        // hand; at rest with nothing focused it is the only candidate, which is the case the
+        // old focus-only gate got wrong.
         val bodyScroll = rememberScrollState()
-        var bodyFocused by remember { mutableStateOf(false) }
         // Keeps the view still while the rows change shape underneath it — see [EditCameraAnchor].
         val editMorph = remember { EditMorphPlan() }
         val reframeTravel = remember { Animatable(1f) }
@@ -351,6 +355,10 @@ internal fun RemapStage(
         // are running. The scroll CUES read it, because the scroller's own value says nothing
         // about a displacement the scroller is not the one applying (see MinputScrollbar).
         val contentShift = remember { mutableFloatStateOf(0f) }
+        // Where the resting grid wants the view to sit — the scroll that puts the controller
+        // dead centre (see [gridSpan]). Published from the layout, because only the layout knows
+        // how wide the boxes came out; -1 until the first pass has run.
+        val restCentreScroll = remember { mutableIntStateOf(-1) }
         LaunchedEffect(reframe.request.intValue) {
             if (reframe.request.intValue == 0) return@LaunchedEffect
             reframe.arm(reframe.request.intValue)
@@ -367,6 +375,56 @@ internal fun RemapStage(
             withFrameNanos { }
             val landed = editMorph.handOff() ?: return@LaunchedEffect
             bodyScroll.scrollTo(landed.coerceIn(0, bodyScroll.maxValue))
+        }
+
+        // ── Carrying a tile to the edge scrolls the body under it (Dylan, 2026-09-25) ────────
+        //
+        // With the whole grid one scroller and no card clipping anything, a command can only be
+        // taken somewhere off screen if the view follows the finger there. The controller path
+        // gets this free from focus bring-into-view; the pointer path had nothing, so a tile
+        // could only ever be dropped within the window it was lifted in.
+        //
+        // The scroll re-resolves the drop target as it goes: the finger can sit still while the
+        // content moves beneath it, and what is under the finger changes without the finger.
+        val carryingByPointer = moveState.pointerDriven && moveState.active
+        val carryBandPx = with(density) { CarryEdgeBand.toPx() }
+        val carryStepPx = with(density) { CarryEdgeSpeed.toPx() }
+        LaunchedEffect(carryingByPointer) {
+            if (!carryingByPointer) return@LaunchedEffect
+            while (true) {
+                withFrameNanos { }
+                val x = moveState.pointerWindow.x - stageOrigin.x
+                // Ramped across the band, so the edge of the window nudges and the very rim runs.
+                val push = when {
+                    x < carryBandPx -> -(carryBandPx - x) / carryBandPx
+                    x > viewportWPx - carryBandPx -> (x - (viewportWPx - carryBandPx)) / carryBandPx
+                    else -> 0f
+                }.coerceIn(-1f, 1f)
+                if (push != 0f) {
+                    bodyScroll.scrollBy(push * carryStepPx)
+                    moveState.dragTo(moveState.dragOffset, moveState.pointerWindow)
+                }
+            }
+        }
+
+        // The resting view opens with the controller centred. The grid says which scroll that
+        // is ([GridSpan.centreScroll]) — it is NOT the middle of the range, since the range is
+        // only symmetric when the two flanks are — and a scroller opens at its start, so the
+        // view has to be put there. Once only: after that the view is the user's, and the
+        // scrollbar and right stick move it like any other.
+        var restSeeded by remember { mutableStateOf(false) }
+        LaunchedEffect(bodyScroll.maxValue, restCentreScroll.intValue, editGroup) {
+            if (restSeeded || editGroup != null) return@LaunchedEffect
+            val max = bodyScroll.maxValue
+            if (max <= 0 || max == Int.MAX_VALUE) return@LaunchedEffect
+            val centre = restCentreScroll.intValue
+            if (centre < 0) return@LaunchedEffect
+            restSeeded = true
+            // Only a view nobody has touched. The range is not known until the body has been
+            // measured, so this necessarily runs a frame or more after the first one — long
+            // enough that a quick flick can beat it here, and being re-centred out from under
+            // a scroll already in progress is worse than opening off-centre once.
+            if (bodyScroll.value == 0) bodyScroll.scrollTo(centre.coerceIn(0, max))
         }
 
         // The camera: where the scene sits under the viewport once zoomed. Opening SNAPS it (the
@@ -533,7 +591,7 @@ internal fun RemapStage(
             }
             add {
                 Box(
-                    Modifier.fillMaxSize().paint(
+                    Modifier.fillMaxSize().testTag(ControllerImageTestTag).paint(
                         painter = painter,
                         sizeToIntrinsics = false,
                         contentScale = ContentScale.Fit,
@@ -599,11 +657,6 @@ internal fun RemapStage(
         Box(
             Modifier
                 .fillMaxSize()
-                // Does controller focus sit anywhere in the view? That is what says the right
-                // stick means the BODY scroller — the same question each group box used to
-                // answer for its own rows, asked once now that the body is the thing that
-                // scrolls.
-                .onFocusChanged { bodyFocused = it.hasFocus }
                 /*
                  * Handing the camera back to the gamepad.
                  *
@@ -690,10 +743,7 @@ internal fun RemapStage(
         //
         // Zoomed, the stage measures exactly one viewport wide, so this has nothing to scroll
         // and quietly gets out of the camera's way.
-        CompositionLocalProvider(
-            LocalMoveOverlay provides true,
-            LocalStickScroll provides (bodyFocused && !zoomed),
-        ) {
+        CompositionLocalProvider(LocalMoveOverlay provides true) {
             MinputOverflowScroll(
                 state = bodyScroll,
                 orientation = Orientation.Horizontal,
@@ -815,6 +865,7 @@ internal fun RemapStage(
                 val editWidths = editMorph.editWidths ?: measuredWidths
                 val restSpan = spanOf(restWidths)
                 val editSpan = spanOf(editWidths)
+                restCentreScroll.intValue = restSpan.centreScroll
                 fun spanAt(at: Float) = lerpGridSpan(restSpan, editSpan, at)
                 fun maxScrollAt(at: Float) = (spanAt(at).totalW - viewport).coerceAtLeast(0)
                 // Where the view should sit at each end of the travel, settled once.
@@ -1333,19 +1384,11 @@ private fun StageAdvancedContent(
     focusHandle: (CellKey) -> FocusRequester,
     focusRequester: FocusRequester?,
 ) {
-    // Does the CONTROLLER cursor sit in this card? That — not which group the camera is parked
-    // on — is what the right stick should scroll (Dylan, 2026-09-21): the stick is a reach of the
-    // same hand that moved the cursor here, so the card holding the cursor is the one it means.
-    // Under a finger nothing holds focus and no card answers the stick, which is correct.
-    var holdsCursor by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
             // Focus LEADS the camera: stepping the d-pad into this card's table pans to it.
-            .onFocusChanged {
-                holdsCursor = it.hasFocus
-                if (it.hasFocus) onLookAt()
-            }
+            .onFocusChanged { if (it.hasFocus) onLookAt() }
             // The touch equivalent, observed in the Initial pass and never consumed: a finger
             // reaching into a half-visible card brings it over without taking the press away
             // from whatever tile it landed on.
@@ -1373,29 +1416,41 @@ private fun StageAdvancedContent(
             // editor" gets the one the camera is on.
             .then(if (focused) Modifier.testTag("group-editor") else Modifier),
     ) {
+        // Which card the right stick scrolls is no longer asked here either. The cursor's own
+        // card wins because its table is the deepest scroller holding focus — the rule this
+        // used to state by hand (Dylan, 2026-09-21: the stick is a reach of the same hand that
+        // moved the cursor, so the card holding the cursor is the one it means). Under a finger
+        // nothing holds focus, seven cards claim at once, and none of them move.
         Box(Modifier.fillMaxSize().testTag(zoomCardTestTag(group))) {
-            CompositionLocalProvider(LocalStickScroll provides holdsCursor) {
-                RemapGroupEditor(
-                    group = group,
-                    viewingSet = viewingSet,
-                    viewingLayer = viewingLayer,
-                    config = config,
-                    callbacks = callbacks,
-                    onClose = onClose,
-                    modifier = Modifier.fillMaxSize(),
-                    moveState = moveState,
-                    stepTarget = stepTarget,
-                    onMoveCommitted = onMoveCommitted,
-                    focusHandle = focusHandle,
-                    focusRequester = focusRequester,
-                )
-            }
+            RemapGroupEditor(
+                group = group,
+                viewingSet = viewingSet,
+                viewingLayer = viewingLayer,
+                config = config,
+                callbacks = callbacks,
+                onClose = onClose,
+                modifier = Modifier.fillMaxSize(),
+                moveState = moveState,
+                stepTarget = stepTarget,
+                onMoveCommitted = onMoveCommitted,
+                focusHandle = focusHandle,
+                focusRequester = focusRequester,
+            )
         }
     }
 }
 
+/** How near the window's edge a carried tile starts pulling the body along, and how hard at
+ *  the very rim (per frame). See the carry edge-scroll in [RemapStage]. */
+private val CarryEdgeBand = 56.dp
+private val CarryEdgeSpeed = 16.dp
+
 /** The body's one scroller — the handle a test drives it by. */
 internal const val ControlsBodyTestTag = "controls-body"
+
+/** The picture of the device, which the resting view is arranged around — the handle a test
+ *  asks "is the controller centred" by. */
+internal const val ControllerImageTestTag = "controller-image"
 
 /** The grid's horizontal metrics at one end of the morph — everything the placement needs. */
 private class GridSpan(
@@ -1405,6 +1460,8 @@ private class GridSpan(
     val startX: Int,
     val centreX: Int,
     val rightX: Int,
+    /** The scroll value at which the controller sits dead centre in the window. */
+    val centreScroll: Int,
 )
 
 private fun gridSpan(
@@ -1415,9 +1472,39 @@ private fun gridSpan(
     edgeX: Int,
     viewportGridW: Int,
 ): GridSpan {
+    // **Centre the CONTROLLER, not the content** (Dylan, 2026-09-25). Centring the whole matrix
+    // only puts the controller in the middle when the two flanks happen to be the same width,
+    // and they rarely are — so the picture of the device the entire view is arranged around sat
+    // off to one side.
+    //
+    // What makes that possible without inventing content is padding the grid by exactly the
+    // shortfall, measured against the WINDOW: whichever side has less than half a viewport
+    // between the controller's middle and its own outer edge is padded up to half a viewport,
+    // and the other side is padded not at all. The first attempt widened both columns to the
+    // wider of the two, which is a padding rule that never looks at the window — it handed the
+    // short side a slab of emptiness the user could then scroll out into, with the bar
+    // promising content that was not there (Dylan: "not at all acceptable or tenable").
+    //
+    // The pad is therefore never scrollable space. Padding one side puts the controller-centred
+    // position at THAT END of the scroll range — 0 when the pad leads, the maximum when it
+    // trails — so the resting view is already as far as the scroller goes that way and there is
+    // nothing to scroll into. When both sides overflow the window, nothing is padded at all and
+    // the centred position is an ordinary interior scroll.
+    //
+    // Both ends of the morph are built by this same function, and they have to be: the rest and
+    // edit grids are two coordinate systems a scroll position is carried between, so a rule
+    // applied to one and not the other puts the travel's endpoints apart and the view lands
+    // where neither geometry meant.
     val contentW = leftW + columnGap + centreW + columnGap + rightW
-    val gridW = maxOf(contentW, viewportGridW)
-    val startX = edgeX + ((gridW - contentW) / 2).coerceAtLeast(0)
+    // The controller's middle, as a distance from the content's leading edge.
+    val toCentre = leftW + columnGap + centreW / 2
+    val half = viewportGridW / 2
+    val padLeading = (half - toCentre).coerceAtLeast(0)
+    val padTrailing = (half - (contentW - toCentre)).coerceAtLeast(0)
+    // The floor covers the rounding when both pads apply: two halves of an odd viewport are a
+    // pixel short of it, and a grid narrower than the window it fills has no valid scroll range.
+    val gridW = maxOf(contentW + padLeading + padTrailing, viewportGridW)
+    val startX = edgeX + padLeading
     val centreX = startX + leftW + columnGap
     return GridSpan(
         leftW = leftW,
@@ -1426,6 +1513,7 @@ private fun gridSpan(
         startX = startX,
         centreX = centreX,
         rightX = centreX + centreW + columnGap,
+        centreScroll = (padLeading + toCentre - half).coerceIn(0, gridW - viewportGridW),
     )
 }
 
@@ -1439,6 +1527,7 @@ private fun lerpGridSpan(a: GridSpan, b: GridSpan, t: Float): GridSpan = when {
         startX = lerpInt(a.startX, b.startX, t),
         centreX = lerpInt(a.centreX, b.centreX, t),
         rightX = lerpInt(a.rightX, b.rightX, t),
+        centreScroll = lerpInt(a.centreScroll, b.centreScroll, t),
     )
 }
 

@@ -562,6 +562,19 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
         val address = KEYCODE_TO_INPUT_ADDRESS[event.keyCode] ?: return false
         val isDown = event.action == KeyEvent.ACTION_DOWN
 
+        // ── Mappo's own UI runs on the device's own controls (Dylan, 2026-09-25) ──
+        // While Mappo is in front the gamepad belongs to Mappo, not to the active application's
+        // layout — otherwise the remapping you are sitting there editing is what you have to
+        // drive the editor with. Placed AFTER the Select+A chord above, which stays universal.
+        //
+        // An UP still goes to the evaluator: a button held as Mappo came to the front has a DOWN
+        // the evaluator is still holding, and dropping its release would strand whatever that
+        // DOWN started. Nothing new can begin, because a DOWN never gets this far.
+        if (dispatcher.mappoInForeground.value) {
+            if (!isDown) evaluator.handleDigital(address, false)
+            return false
+        }
+
         // Capture mode (Brick 3.3.e): when the chord-partner picker is open we hijack
         // physical inputs and emit them to the picker instead of running the evaluator.
         // We consume both edges so a partial press during capture can't leak the binding.

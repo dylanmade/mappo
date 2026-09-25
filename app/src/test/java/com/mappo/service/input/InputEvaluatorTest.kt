@@ -48,6 +48,11 @@ class InputEvaluatorTest {
         gamepadEmitter = mockk(relaxed = true)
         haptics = mockk(relaxed = true)
         every { dispatcher.compiledConfig } returns compiledConfig
+        // Mappo is NOT the app in front here: these tests are the evaluator doing its job for a
+        // game. A relaxed mock hands back a relaxed StateFlow whose value is a bare Object, so
+        // the gate has to be stubbed rather than left to the default. See
+        // InputDispatcher.mappoInForeground.
+        every { dispatcher.mappoInForeground } returns MutableStateFlow(false)
         every { emitter.emitPress(any()) } returns true  // default to "has release" semantics
         subject = InputEvaluator(dispatcher, emitter, mouseEmitter, gamepadEmitter, haptics, testScope)
         // NOTE: tests intentionally do NOT call subject.start() — that
@@ -1899,6 +1904,54 @@ class InputEvaluatorTest {
         subject.handleRawKeyReading(linuxKeyCode = 0x130, pressed = true, timestampNs = 0L)
 
         verify(exactly = 1) { gamepadEmitter.setButton(0x130, true) }
+    }
+
+
+    // ── Mappo's own UI runs on the device's own controls (Dylan, 2026-09-25) ──────────────────
+
+    /**
+     * While Mappo is the app in front, nothing new starts: the gamepad belongs to Mappo, not to
+     * the active application's layout — otherwise the remapping you are sitting there editing is
+     * what you have to drive the editor with.
+     */
+    @Test
+    fun rawKeyPress_whileMappoIsInFront_startsNothing() {
+        every { dispatcher.mappoInForeground } returns MutableStateFlow(true)
+        compiledConfig.value = CompiledConfig(
+            startingActionSetId = 1L,
+            sets = mapOf(1L to CompiledActionSet(
+                actionSetId = 1L,
+                inputs = emptyMap(),
+                noneModeSources = emptySet(),
+            )),
+        )
+        subject.setPhysicalPassthroughEnabled(true)
+
+        subject.handleRawKeyReading(linuxKeyCode = 0x130, pressed = true, timestampNs = 0L)
+
+        verify(exactly = 0) { gamepadEmitter.setButton(0x130, true) }
+    }
+
+    /**
+     * A RELEASE still runs, though. A button held as Mappo came to the front has a DOWN the
+     * evaluator is still holding; dropping its release would strand whatever that DOWN started.
+     */
+    @Test
+    fun rawKeyRelease_whileMappoIsInFront_stillRuns() {
+        every { dispatcher.mappoInForeground } returns MutableStateFlow(true)
+        compiledConfig.value = CompiledConfig(
+            startingActionSetId = 1L,
+            sets = mapOf(1L to CompiledActionSet(
+                actionSetId = 1L,
+                inputs = emptyMap(),
+                noneModeSources = emptySet(),
+            )),
+        )
+        subject.setPhysicalPassthroughEnabled(true)
+
+        subject.handleRawKeyReading(linuxKeyCode = 0x130, pressed = false, timestampNs = 0L)
+
+        verify(exactly = 1) { gamepadEmitter.setButton(0x130, false) }
     }
 
     // ── Brick D.6: end-to-end gyro pipeline integration ──────────────────────

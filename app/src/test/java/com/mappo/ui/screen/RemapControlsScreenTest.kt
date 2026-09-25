@@ -30,6 +30,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
+import com.mappo.ui.screen.remap.ControllerImageTestTag
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
@@ -103,11 +104,9 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * A group box is a controller focus stop — which is also the gate on the right stick
-     * scrolling its rows (`LocalStickScroll`, published from the box's own focus state). If the
-     * box stops taking focus, the stick silently stops working, so this pins the gate rather
-     * than the scrolling (Robolectric measures text at ~zero width, so nothing here overflows
-     * to scroll in the first place).
+     * A group box is a controller focus stop. Beyond navigation, that is what tells the right
+     * stick the cursor is in the view rather than the chrome (see `StickScrollArbiter`), and
+     * what the camera and the edit-mode seating both follow, so it is pinned on its own.
      */
     @Test
     fun simpleView_groupBoxesTakeControllerFocus() {
@@ -319,6 +318,141 @@ class RemapControlsScreenTest {
         val after = maxScroll()
         assert(after > before) {
             "The face row grew by two commands and the body still scrolls $after (was $before)"
+        }
+    }
+
+    /**
+     * **The resting view is arranged around the CONTROLLER, and the scroll around the CONTENT.**
+     *
+     * Two claims that have to hold together, because either one alone is easy and wrong:
+     *
+     *  - the picture of the device sits dead centre in the window, whatever the two flanks
+     *    measure — it is what the whole view is an arrangement of, and it used to drift
+     *    whenever one side's rows were longer than the other's;
+     *  - and the scroll range still ends where the content does. The first fix for the centring
+     *    widened both side columns to the wider of the two, which centres the controller by
+     *    padding the short side with a slab of nothing — and that nothing was scrollable, so the
+     *    bar advertised content off to one side and scrolling there found blank plate (Dylan,
+     *    2026-09-25: "not at all acceptable or tenable").
+     *
+     * The grid is padded by the SHORTFALL against the window instead, which puts the
+     * controller-centred position at that end of the range: with a short right flank the resting
+     * view is already as far right as the scroller goes, so there is nothing to scroll into.
+     * That is what the last two assertions say.
+     */
+    @Test
+    fun restingView_centresTheController_withoutInventingScrollSpace() {
+        composeRule.setContent {
+            MaterialTheme {
+                // Small enough that the grid overflows, with the left flank carrying three
+                // commands on every row and the right flank one — the lopsided case.
+                Surface(modifier = androidx.compose.ui.Modifier.size(300.dp, 400.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig()
+                            .withPressStack(InputSource.DPAD, 7000L)
+                            .withPressStack(InputSource.LEFT_TRIGGER, 8000L)
+                            .withPressStack(InputSource.LEFT_JOYSTICK, 9000L),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        val body = composeRule
+            .onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val range = body.config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        val viewportLeft = body.positionInRoot.x
+        val viewportRight = viewportLeft + body.size.width
+
+        // The premise: this grid really is wider than the window, and really does hang off the
+        // left. Without both, everything below passes for the wrong reason.
+        assert(range.maxValue() > 0f) { "fixture does not overflow — nothing to scroll" }
+        val leftFlank = composeRule
+            .onNodeWithTag("simple-group:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        assert(leftFlank < viewportLeft) {
+            "fixture's left flank is not off-screen (at $leftFlank, window starts $viewportLeft)"
+        }
+
+        // boundsInRoot, not the semantics size: the stage measures its contents once and DRAWS
+        // them through a scaling layer, so the node's own width is the zoomed one.
+        val image = composeRule
+            .onNodeWithTag(ControllerImageTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val drift = image.center.x - (viewportLeft + viewportRight) / 2
+        assert(kotlin.math.abs(drift) <= 2f) {
+            "the controller sits ${"%.1f".format(drift)}px off the middle of the window"
+        }
+
+        assert(range.value() == range.maxValue()) {
+            "the resting view can still scroll toward the short flank: at ${range.value()} of " +
+                "${range.maxValue()}, so there is blank grid over there to scroll into"
+        }
+        // And the end of the range is the end of the CONTENT, give or take the grid's own margin.
+        val rightFlank = composeRule
+            .onNodeWithTag("simple-group:FACE", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val contentRight = rightFlank.positionInRoot.x + rightFlank.size.width
+        val slack = viewportRight - contentRight
+        assert(slack <= GridEdgeSlack) {
+            "at the end of the scroll the rightmost box stops ${"%.1f".format(slack)}px short " +
+                "of the window — that gap is padding the user can scroll into"
+        }
+    }
+
+    /**
+     * **The right stick moves the view's own scroller** — Mappo's one universal control (Dylan,
+     * 2026-09-25: "right stick = scrolls any container with a scrollbar"). This is the WIRING:
+     * the stage's body joins the arbitration and the winner is actually driven.
+     *
+     * Only the cursor-is-in-the-view case is reachable here — Compose seats the cursor on the
+     * first focusable when the window takes focus and it cannot be persuaded out of the view
+     * from a test. Which scroller wins in the other arrangements, the no-cursor one included,
+     * is pinned on the rule itself in `StickScrollArbiterTest`.
+     */
+    @Test
+    fun rightStick_movesTheViewsScroller() {
+        composeRule.mainClock.autoAdvance = false
+        val stick = androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero)
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.mappo.ui.component.LocalRightStick provides stick,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(300.dp, 400.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig()
+                                .withPressStack(InputSource.DPAD, 7000L)
+                                .withPressStack(InputSource.LEFT_TRIGGER, 8000L)
+                                .withPressStack(InputSource.LEFT_JOYSTICK, 9000L),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        repeat(8) { composeRule.mainClock.advanceTimeByFrame() }
+
+        fun scroll(): Float = composeRule
+            .onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+            .value()
+
+        val before = scroll()
+        assert(before > 0f) { "fixture is already at the near end — nothing to scroll back to" }
+        // Pushed left; the resting view sits at the far end, so this has somewhere to go.
+        stick.value = androidx.compose.ui.geometry.Offset(-1f, 0f)
+        repeat(30) { composeRule.mainClock.advanceTimeByFrame() }
+
+        assert(scroll() < before) {
+            "the right stick did not move the resting view (still at $before)"
         }
     }
 
@@ -1860,10 +1994,14 @@ class RemapControlsScreenTest {
             .onNodeWithTag("simple-group:LEFT_SHOULDER", useUnmergedTree = true)
             .fetchSemanticsNode().positionInRoot.x
 
-        // Hard to the right, as far as the body will go.
-        val before = leftShoulderX()
         val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
             .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        // From one end to the other. The resting view opens with the CONTROLLER centred, so it
+        // starts mid-range now — measuring from there would leave only half the travel and the
+        // premise below would be judging a scroll half as long as the one available.
+        composeRule.runOnUiThread { scrollBy?.invoke(-4000f, 0f) }
+        composeRule.waitForIdle()
+        val before = leftShoulderX()
         composeRule.runOnUiThread { scrollBy?.invoke(4000f, 0f) }
         composeRule.waitForIdle()
         // The premise: the view really is scrolled away from the group about to be opened.
@@ -2089,6 +2227,58 @@ class RemapControlsScreenTest {
                                             ),
                                         ),
                                     ),
+                                )
+                            },
+                        ),
+                    )
+                },
+            )
+        },
+    )
+
+    /** The grid's own margin — boxes stop this far short of its edge, so an outermost box being
+     *  this far from the window is the layout, not scrollable padding. */
+    private val GridEdgeSlack = 20f
+
+    /** Stack three press types onto every row of [source], which is how a group box is made
+     *  measurably wider than its opposite number under Robolectric — text measures at ~zero
+     *  width here, but each command's press and device glyphs are real dp. */
+    private fun ControllerConfig.withPressStack(
+        source: InputSource,
+        idBase: Long,
+    ): ControllerConfig = copy(
+        actionSets = actionSets.map { set ->
+            set.copy(
+                preset = set.preset.map { entry ->
+                    if (entry.inputSource != source) return@map entry
+                    entry.copy(
+                        group = entry.group.copy(
+                            inputs = entry.group.inputs.mapIndexed { position, input ->
+                                input.copy(
+                                    activators = listOf(
+                                        ActivatorType.FULL_PRESS to "ENTER",
+                                        ActivatorType.LONG_PRESS to "SPACE",
+                                        ActivatorType.DOUBLE_PRESS to "TAB",
+                                    ).mapIndexed { index, (type, key) ->
+                                        val activator = Activator(
+                                            id = idBase + position * 10 + index,
+                                            groupInputId = input.input.id,
+                                            type = type,
+                                            orderIndex = index,
+                                        )
+                                        val (outputType, args) = BindingOutput.KeyPress(key).toEntity()
+                                        ActivatorGraph(
+                                            activator,
+                                            listOf(
+                                                Binding(
+                                                    id = idBase + 5000L + position * 10 + index,
+                                                    activatorId = activator.id,
+                                                    outputType = outputType,
+                                                    args = args,
+                                                ),
+                                            ),
+                                        )
+                                    },
                                 )
                             },
                         ),

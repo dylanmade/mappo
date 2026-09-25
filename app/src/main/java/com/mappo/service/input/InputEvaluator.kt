@@ -737,6 +737,9 @@ class InputEvaluator @Inject constructor(
      * MotionEvent normally — Mappo doesn't consume the gesture, it just samples it.
      */
     fun handleMotion(event: MotionEvent): Boolean {
+        // Mappo's own UI runs on the device's own controls; passing the event through is also
+        // what lets the right stick reach the activity and scroll what is on screen.
+        if (dispatcher.mappoInForeground.value) return false
         val readings = MotionEventNormalizer.extract(event)
         // Per feedback_input_logging: input events always logged. Single line per
         // event keeps the volume manageable vs. one line per axis when the stick
@@ -763,6 +766,14 @@ class InputEvaluator @Inject constructor(
      */
     fun handleAnalogReadings(readings: List<AnalogEvent>) {
         if (readings.isEmpty()) return
+        // Mappo's own UI runs on the device's own controls — see InputDispatcher.mappoInForeground.
+        // The Shizuku reader and the sensor stay UP; only the evaluation stops, so coming back to
+        // a game costs nothing and the analog health notification keeps telling the truth while
+        // the user is in here configuring it. The EVIOCGRAB is released for the same window, so
+        // the OS is dispatching these sticks and triggers to Mappo's window natively — which is
+        // also how the right stick reaches the UI at all (a grabbed pad sends no MotionEvent to
+        // any window).
+        if (dispatcher.mappoInForeground.value) return
         val summary = readings.joinToString(" ") { r ->
             "${r.source}(${"%.3f".format(r.x)},${"%.3f".format(r.y)})"
         }
@@ -824,6 +835,15 @@ class InputEvaluator @Inject constructor(
      *    emit fire normally.
      */
     fun handleRawKeyReading(linuxKeyCode: Int, pressed: Boolean, @Suppress("UNUSED_PARAMETER") timestampNs: Long) {
+        // As in the accessibility service's own digital path: nothing new starts while Mappo is
+        // in front, but a release still runs, so a button held as it came up isn't left stuck.
+        //
+        // Returning is only safe because the grab is RELEASED while Mappo is in front (see
+        // ShizukuMotionCoordinator's grab clause), so the OS is delivering these keys to Mappo's
+        // window itself. Under grab it would not be: the passthrough below is the only thing
+        // that puts a DEVICE_DEFAULT button anywhere, and dropping out before it made the
+        // gamepad completely dead inside Mappo (Dylan, 2026-09-25).
+        if (dispatcher.mappoInForeground.value && pressed) return
         val address = LINUX_KEY_TO_ADDRESS[linuxKeyCode]
         if (address == null) {
             if (Log.isLoggable(TAG, Log.VERBOSE)) {
@@ -863,6 +883,7 @@ class InputEvaluator @Inject constructor(
     }
 
     fun handleGyroReading(reading: GyroEvent) {
+        if (dispatcher.mappoInForeground.value) return
         val analog = AnalogEvent(
             source = InputSource.GYRO,
             x = reading.xRadPerSec,

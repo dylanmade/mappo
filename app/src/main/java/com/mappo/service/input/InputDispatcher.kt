@@ -135,6 +135,24 @@ class InputDispatcher @Inject constructor() {
     private val _remapEnabled = MutableStateFlow(true)
     val remapEnabled: StateFlow<Boolean> = _remapEnabled.asStateFlow()
 
+    /**
+     * **Mappo's own UI runs on Mappo's controls** (Dylan, 2026-09-25).
+     *
+     * While the app itself is in front, the gamepad belongs to Mappo and not to whatever the
+     * active application's layout says a button means — otherwise the very remapping you are
+     * sitting there editing is what you have to navigate the editor with. Mappo's defaults are
+     * the device's own defaults: this suspends remapping rather than swapping in another layout.
+     *
+     * Deliberately NOT folded into [remapEnabled], which is the user's kill switch and has a UI
+     * showing its state; this is a separate condition, consulted alongside it.
+     *
+     * **Suspending remapping has to include releasing the Shizuku EVIOCGRAB** — a grabbed pad
+     * reaches no window at all, so the app whose remapping just stood down would be left with
+     * no gamepad. See `ShizukuMotionCoordinator`'s grab clause.
+     */
+    private val _mappoInForeground = MutableStateFlow(false)
+    val mappoInForeground: StateFlow<Boolean> = _mappoInForeground.asStateFlow()
+
     private val _overlayFocus = MutableStateFlow(OverlayFocusKind.NONE)
     val overlayFocus: StateFlow<OverlayFocusKind> = _overlayFocus.asStateFlow()
 
@@ -253,6 +271,11 @@ class InputDispatcher @Inject constructor() {
 
     fun setRemapEnabled(enabled: Boolean) {
         _remapEnabled.value = enabled
+    }
+
+    /** Called from the activity's resume/pause. See [mappoInForeground]. */
+    fun setMappoInForeground(value: Boolean) {
+        _mappoInForeground.value = value
     }
 
     fun setOverlayFocus(kind: OverlayFocusKind) {

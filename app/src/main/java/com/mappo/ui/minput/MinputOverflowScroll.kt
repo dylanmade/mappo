@@ -33,8 +33,9 @@ import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Lucide
-import com.mappo.ui.component.LocalStickScroll
-import com.mappo.ui.component.rightStickScroll
+import androidx.compose.runtime.CompositionLocalProvider
+import com.mappo.ui.component.LocalStickScrollDepth
+import com.mappo.ui.component.stickScrollable
 
 /**
  * A scroll container that signals overflow with edge fades and chevrons instead of a scrollbar.
@@ -57,8 +58,9 @@ import com.mappo.ui.component.rightStickScroll
  * [reverseScrolling] as on the foundation modifiers: value 0 shows the FAR end. The cues follow
  * what's actually on screen either way — an edge fades when there is content past THAT edge.
  *
- * The right stick scrolls it while the enclosing focusable marks its subtree as the one in
- * hand ([LocalStickScroll]); see [scrollStick].
+ * The right stick scrolls it when the arbiter picks it out of the scrollers on screen —
+ * nearest the cursor, or the only one there is; see [scrollStick] and
+ * [com.mappo.ui.component.StickScrollArbiter].
  *
  * [chevronOutset] pushes each chevron outward past the container's edge, into whatever padding
  * surrounds it, so the glyph can sit nearer the visible rim of an enclosing card than the
@@ -78,10 +80,10 @@ fun MinputOverflowScroll(
     reverseScrolling: Boolean = false,
     chevronOutset: Dp = 0.dp,
     chevronTint: Color = MaterialTheme.colorScheme.onSurface,
-    // Whether the right stick scrolls this container while its subtree holds controller focus
-    // ([LocalStickScroll]). On by default: a scroller that overflows should answer the stick,
-    // and the cue it shows — bar, fade, chevron, none — has nothing to do with it (Dylan,
-    // 2026-09-19). Pass false for a container the stick must never move.
+    // Whether this container is a candidate for the right stick at all. On by default: a
+    // scroller that overflows should answer the stick, and the cue it shows — bar, fade,
+    // chevron, none — has nothing to do with it (Dylan, 2026-09-19). Pass false for a container
+    // the stick must never move; WHICH candidate wins is the arbiter's call, not the caller's.
     scrollStick: Boolean = true,
     // Modifiers for the SCROLLING node itself, as opposed to [modifier], which frames the
     // container and its cues. Test tags and anything else that has to sit where the scroll
@@ -112,15 +114,17 @@ fun MinputOverflowScroll(
         label = "minput-overflow-trailing",
     )
     val horizontal = orientation == Orientation.Horizontal
-    // The right stick is a prototyping stand-in for real scroll controls (see rightStickScroll);
-    // the focusable that OWNS this container says whether the stick belongs to it.
-    rightStickScroll(
+    // The right stick is one of Mappo's universal controls: every scroller that can scroll puts
+    // itself forward and the arbiter decides. The modifier this hands back is how it finds out
+    // whether the cursor is inside — it has to sit on a node enclosing the content.
+    val stick = stickScrollable(
         state = state,
         orientation = orientation,
-        enabled = scrollStick && LocalStickScroll.current,
+        enabled = scrollStick,
         invert = reverseScrolling,
     )
-    Box(modifier) {
+    val depth = LocalStickScrollDepth.current
+    Box(modifier.then(stick)) {
         Box(
             Modifier
                 .overflowFade(horizontal, leading = { leadingCue }, trailing = { trailingCue })
@@ -133,7 +137,11 @@ fun MinputOverflowScroll(
                 )
                 .then(scrollModifier),
         ) {
-            content()
+            // A scroller nested inside this one is nearer the cursor than this one is, and
+            // outranks it when both hold focus.
+            CompositionLocalProvider(LocalStickScrollDepth provides depth + 1) {
+                content()
+            }
         }
         OverflowChevron(
             icon = if (horizontal) Lucide.ChevronLeft else Lucide.ChevronUp,

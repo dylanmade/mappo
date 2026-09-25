@@ -459,6 +459,54 @@ class ShizukuMotionCoordinatorTest {
         assertTrue(breakdown.anyShizukuModeConfigured)
     }
 
+    // ── The grab, while Mappo itself is in front ─────────────────────────────
+
+    /**
+     * **Suspending remapping has to release the grab too** (Dylan, 2026-09-25).
+     *
+     * EVIOCGRAB takes the physical pad away from the OS entirely — while it is held the only
+     * gamepad any window sees is Mappo's virtual one, and that exists only because the evaluator
+     * writes to it. Standing the evaluator down while Mappo is in front WITHOUT releasing the
+     * grab left the gamepad completely dead inside Mappo: "they were partially working before I
+     * re-granted permissions to Shizuku, but now with Shizuku active, they're no longer working
+     * at all". Touch still worked, which is the tell — touchscreens are never grabbed.
+     */
+    @Test
+    fun mappoInForeground_releasesTheGrab() {
+        val grabbing = coordinator.evaluatePredicate(
+            compiled = analogConfig(),
+            activeSetId = 1L,
+            activeLayers = emptyList(),
+            remapEnabled = true,
+            shizukuReady = true,
+        )
+        assertTrue("fixture should grab in the first place", coordinator.shouldGrab(grabbing))
+
+        val inMappo = grabbing.copy(mappoInForeground = true)
+
+        assertFalse(coordinator.shouldGrab(inMappo))
+    }
+
+    /**
+     * And ONLY the grab: the reader, the gyro sensor and the analog health notification all hang
+     * off `shouldEnable`, and the user sitting in Mappo's Shizuku setup screen needs it to keep
+     * telling the truth — plus returning to a game then costs no re-enumeration.
+     */
+    @Test
+    fun mappoInForeground_leavesEnumerationRunning() {
+        val inMappo = coordinator.evaluatePredicate(
+            compiled = analogConfig(),
+            activeSetId = 1L,
+            activeLayers = emptyList(),
+            remapEnabled = true,
+            shizukuReady = true,
+            mappoInForeground = true,
+        )
+
+        assertTrue(inMappo.shouldEnable)
+        assertFalse(coordinator.shouldGrab(inMappo))
+    }
+
     private fun configWithSourceMode(source: InputSource, mode: BindingMode): CompiledConfig {
         val address = InputAddress(source, "")
         val input = CompiledInput(groupInputId = 1L, activators = emptyList(), mode = mode)

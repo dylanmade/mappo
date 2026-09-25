@@ -24,10 +24,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import android.view.MotionEvent
 import com.mappo.ui.component.LocalRightStick
+import com.mappo.ui.component.LocalStickScrollArbiter
+import com.mappo.ui.component.StickScrollArbiter
 import com.mappo.ui.component.rightStickFrom
 import com.themestudio.core.ThemeStudioProvider
 import com.themestudio.persistence.SharedPrefsThemeOverridesStorage
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.ui.screen.MainScreen
 import com.mappo.ui.theme.MappoTheme
@@ -37,6 +40,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject
+    lateinit var inputDispatcher: com.mappo.service.input.InputDispatcher
+
 
     // Deep-route request from the toolbar overlay (OVERLAY_TOOLBAR_PLAN.md, Brick 2). The
     // overlay launches us with EXTRA_ROUTE naming a NavHost destination; MainScreen navigates
@@ -49,6 +56,9 @@ class MainActivity : ComponentActivity() {
     // The window is the only place joystick axes are observable — they arrive as generic
     // motion events, which Compose's pointer pipeline never sees.
     private val rightStick = mutableStateOf(Offset.Zero)
+
+    // Which scroller that stick means, arbitrated across this window's whole tree.
+    private val stickScroll = StickScrollArbiter()
 
     override fun attachBaseContext(newBase: Context) {
         // App-level text size: the whole UI is tuned against the OS "Small" font scale, so
@@ -91,7 +101,13 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .windowInsetsPadding(WindowInsets.systemBars),
                         ) {
-                            CompositionLocalProvider(LocalRightStick provides rightStick) {
+                            // The stick, and the arbiter that decides which scroller it means.
+                            // Scoped to this window: an overlay composes its own tree and must
+                            // not be weighed against the activity's scrollers.
+                            CompositionLocalProvider(
+                                LocalRightStick provides rightStick,
+                                LocalStickScrollArbiter provides stickScroll,
+                            ) {
                                 MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
                             }
                         }
@@ -122,11 +138,16 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         inForeground = true
+        // Mappo's own UI runs on the device's own controls while it is in front — see
+        // InputDispatcher.mappoInForeground. Published here rather than read off [inForeground]
+        // so the service side has one gate to consult instead of a static reach-around.
+        inputDispatcher.setMappoInForeground(true)
     }
 
     override fun onPause() {
         super.onPause()
         inForeground = false
+        inputDispatcher.setMappoInForeground(false)
     }
 
     private fun consumeRouteExtra(intent: Intent?) {
