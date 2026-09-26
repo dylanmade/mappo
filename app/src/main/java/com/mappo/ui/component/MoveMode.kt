@@ -279,7 +279,24 @@ fun <K : Any> Modifier.moveModeLongPressSource(
     val haptic = LocalHapticFeedback.current
     val viewConfiguration = LocalViewConfiguration.current
     if (!enabled) return@composed this
-    this.pointerInput(key, state) {
+    // **A LIVE handle to this node, not a remembered rect.** The window-space pointer position
+    // used to be reconstructed as "the cell's registered top-left, plus the pointer's node-local
+    // position", and those two are not the same age: the rect is a snapshot taken whenever
+    // `onGloballyPositioned` last fired, while the local position is measured against wherever
+    // the node is NOW. Scroll the container under the finger and they disagree by however far
+    // the node moved in between — the faster the scroll, the bigger the lie (Dylan, 2026-09-25:
+    // "the offset seems to occur at the exact moment the scroll speed increases").
+    //
+    // The registered rect is also `boundsInWindow()`, which is CLIPPED: as a cell slides past
+    // the viewport's edge its clipped top-left stops moving and pins to that edge, while the
+    // local position keeps growing — so the reconstruction drifts by exactly the amount clipped
+    // away, precisely when the tile is at the edge and the carry scroll is running hardest.
+    //
+    // `localToWindow` walks the current layout tree at call time, so it has neither problem.
+    var coordinates by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    this.onGloballyPositioned { coordinates = it }.pointerInput(key, state) {
+        fun windowPositionOf(local: Offset): Offset =
+            coordinates?.takeIf { it.isAttached }?.localToWindow(local) ?: local
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val touchSlop = viewConfiguration.touchSlop
@@ -322,13 +339,11 @@ fun <K : Any> Modifier.moveModeLongPressSource(
                 }
                 if (lifted) {
                     // The registry is keyed in WINDOW space but pointer changes arrive in this
-                    // node's LOCAL space, so lift the local position by this cell's own
-                    // registered origin. (This node is itself a registered cell — the gesture
-                    // and the bounds modifier always sit on the same node.)
-                    val nodeOrigin = state.boundsOf(key)?.topLeft ?: Offset.Zero
+                    // node's LOCAL space. Converted through the node's live coordinates — see
+                    // [windowPositionOf] for why the cell's registered rect can't do this job.
                     state.dragTo(
                         offset = change.position - downPos,
-                        pointerWindowPos = nodeOrigin + change.position,
+                        pointerWindowPos = windowPositionOf(change.position),
                     )
                 }
             }
