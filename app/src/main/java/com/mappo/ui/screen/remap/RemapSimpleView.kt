@@ -25,6 +25,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -634,11 +636,11 @@ internal fun GroupRows(
     val order = LocalCommandOrder.current
     val density = LocalDensity.current
     if (edit != null) {
-        // The rows have gutters between them, and the tiles gaps between those — air that
-        // belongs to no cell. Without a tolerance a finger crossing one resolves to nothing and
-        // the drop target snaps back to the origin, visible as the landing marker flickering
-        // home mid-drag. Same bargain the advanced table strikes.
-        edit.moveState.hitTolerancePx = with(density) { rowTileGap().toPx() }
+        // Always the nearest cell. A tolerance sized to the gap BETWEEN TILES covered the
+        // gutters inside a group and nothing else, so carrying a tile across the empty space
+        // between two input groups resolved to no cell at all and the target snapped home
+        // (Dylan, 2026-09-25 — the same complaint the row gutters produced, one scale up).
+        edit.moveState.hitTolerancePx = MoveModeState.AlwaysNearest
     }
     val rows = group.summaryRows.map { spec ->
         simpleRowFor(group, spec, viewingSet, viewingLayer, config, edit != null, order)
@@ -793,10 +795,19 @@ private fun RowCommandTile(
         edit.moveState.origin == slot.key -> extras.dropZoneOrigin.copy(alpha = MoveMarkerAlpha)
         else -> null
     }
+    val markerShape = RoundedCornerShape(look.corner)
     Box(
         modifier = modifier.then(
+            // OVER the tile, not behind it (Dylan, 2026-09-25): during a move the pair of
+            // washes is what says which tile is going where, and a marker under the tile
+            // standing in that slot says it to nobody. Drawn after the content rather than as a
+            // background, which keeps it in the draw phase and out of hit testing.
             if (marker != null) {
-                Modifier.clip(RoundedCornerShape(look.corner)).background(marker)
+                Modifier.drawWithContent {
+                    drawContent()
+                    val outline = markerShape.createOutline(size, layoutDirection, this)
+                    drawOutline(outline, color = marker)
+                }
             } else Modifier,
         ),
     ) {

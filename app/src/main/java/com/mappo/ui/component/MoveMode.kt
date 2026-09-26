@@ -110,6 +110,10 @@ class MoveModeState<K : Any> {
      * finger crossing the gutter between two rows lands on nothing, the target collapses back
      * to the origin, and the drop indicator flickers. Set this to at least the widest gutter
      * and the gap resolves to whichever cell it is nearest.
+     *
+     * [AlwaysNearest] gives up on a limit altogether — see its own note. That is what the remap
+     * grids use: once cells are spread across a whole screen the "widest gutter" isn't a gutter
+     * any more, it is the empty space between one input group and the next.
      */
     var hitTolerancePx: Float = 0f
 
@@ -176,7 +180,8 @@ class MoveModeState<K : Any> {
     }
 
     /** The cell under the pointer, or the nearest one within [hitTolerancePx]. Null when the
-     *  pointer is genuinely away from the grid, which keeps a drop into dead space a no-op. */
+     *  pointer is genuinely away from the grid, which keeps a drop into dead space a no-op —
+     *  unless the tolerance is [AlwaysNearest], in which case there is no dead space. */
     private fun cellAtPointer(): K? {
         bounds.entries.firstOrNull { it.value.contains(pointerWindow) }?.let { return it.key }
         if (hitTolerancePx <= 0f) return null
@@ -214,6 +219,23 @@ class MoveModeState<K : Any> {
     }
 
     fun cancel() = end(settle = true)
+
+    companion object {
+        /**
+         * **A tolerance with no limit: the nearest cell, always** (Dylan, 2026-09-25).
+         *
+         * For a grid whose cells are spread over a whole screen, a tolerance sized to the gutter
+         * between tiles leaves most of the screen resolving to nothing — so carrying a tile
+         * across the empty space between two input groups made the target collapse back to the
+         * origin, and the tile "doesn't know where it should go". A carried tile is always
+         * heading SOMEWHERE; the nearest cell is that somewhere.
+         *
+         * The cost is deliberate: with no dead space, a finger drop can no longer be a no-op by
+         * missing. Putting a tile back where it came from is how a pointer move is called off
+         * (the controller path still has B / Escape).
+         */
+        const val AlwaysNearest: Float = Float.POSITIVE_INFINITY
+    }
 
     private fun end(settle: Boolean) {
         val from = origin

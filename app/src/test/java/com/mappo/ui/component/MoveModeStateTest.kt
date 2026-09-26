@@ -109,4 +109,43 @@ class MoveModeStateTest {
         assertEquals(Offset(12f, 6f), state.grabPoint)
         assertEquals(Offset(288f, 84f), state.carriedTopLeft(Offset.Zero))
     }
+
+    // ── Dead space between groups ────────────────────────────────────────────
+
+    /**
+     * **A carried tile is always heading somewhere** (Dylan, 2026-09-25).
+     *
+     * A tolerance sized to the gap between tiles covers the gutters inside one input group and
+     * nothing else, so a tile carried across the empty space between two GROUPS resolved to no
+     * cell at all and the target collapsed back to its origin — the tile "doesn't know where it
+     * should go". [MoveModeState.AlwaysNearest] removes the limit.
+     */
+    @Test
+    fun withAlwaysNearest_theVoidBetweenGroupsStillResolves() {
+        val state = state()
+        state.registerBounds("left", Rect(0f, 0f, 60f, 40f))
+        state.registerBounds("right", Rect(400f, 0f, 460f, 40f))
+        state.pickUp("left", byPointer = true)
+
+        // Far out in the open, but nearer the right-hand cell.
+        state.hitTolerancePx = MoveModeState.AlwaysNearest
+        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
+
+        assertEquals("right", state.target)
+    }
+
+    /** The behaviour it replaces, kept here to show what changed: a gap-sized tolerance leaves
+     *  most of the screen resolving to nothing, and the target falls back to the origin. */
+    @Test
+    fun withAGapSizedTolerance_theSameVoidFallsBackToTheOrigin() {
+        val state = state()
+        state.registerBounds("left", Rect(0f, 0f, 60f, 40f))
+        state.registerBounds("right", Rect(400f, 0f, 460f, 40f))
+        state.pickUp("left", byPointer = true)
+
+        state.hitTolerancePx = 8f
+        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
+
+        assertEquals("left", state.target)
+    }
 }

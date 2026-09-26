@@ -389,6 +389,7 @@ internal fun RemapStage(
         // content moves beneath it, and what is under the finger changes without the finger.
         val carryingByPointer = moveState.pointerDriven && moveState.active
         val carryBandPx = with(density) { CarryEdgeBand.toPx() }
+        val carryPlateauPx = with(density) { CarryEdgePlateau.toPx() }
         val carrySpeedPx = with(density) { CarryEdgeSpeed.toPx() }
         LaunchedEffect(carryingByPointer) {
             if (!carryingByPointer) return@LaunchedEffect
@@ -401,13 +402,15 @@ internal fun RemapStage(
                 // only the last few pixels of the rim travel at speed.
                 val seconds = (now - previous) / 1_000_000_000f
                 previous = now
-                val x = moveState.pointerWindow.x - stageOrigin.x
-                val ramp = when {
-                    x < carryBandPx -> -(carryBandPx - x) / carryBandPx
-                    x > viewportWPx - carryBandPx -> (x - (viewportWPx - carryBandPx)) / carryBandPx
-                    else -> 0f
-                }.coerceIn(-1f, 1f)
+                val ramp = carryEdgePush(
+                    x = moveState.pointerWindow.x - stageOrigin.x,
+                    viewportW = viewportWPx.toFloat(),
+                    band = carryBandPx,
+                    plateau = carryPlateauPx,
+                )
                 if (ramp != 0f) {
+                    // Squared over the ramp so the outer part of the band still creeps; the
+                    // plateau is already saturated, so this costs nothing at speed.
                     bodyScroll.scrollBy(ramp * abs(ramp) * carrySpeedPx * seconds)
                     // The cells moved under a stationary finger, so the drop target has to be
                     // re-resolved. The tile itself needs nothing: it is drawn from the finger's
@@ -1450,9 +1453,35 @@ private fun StageAdvancedContent(
     }
 }
 
-/** How near the window's edge a carried tile starts pulling the body along, and how fast it
- *  travels at the very rim, PER SECOND. See the carry edge-scroll in [RemapStage]. */
-private val CarryEdgeBand = 56.dp
+/**
+ * How hard a carried tile at [x] pulls the body along, in [-1, 1] — negative toward the start.
+ *
+ * Zero outside [band]. Inside it, the pull grows from nothing at the band's inner lip to FULL by
+ * the time the finger is within [plateau] of the edge, and stays there — including past the edge
+ * entirely, which is where a finger that has run out of glass ends up. See [CarryEdgeBand] for
+ * why the plateau exists.
+ */
+internal fun carryEdgePush(x: Float, viewportW: Float, band: Float, plateau: Float): Float {
+    val fromEdge = minOf(x, viewportW - x)
+    if (fromEdge >= band) return 0f
+    // A plateau as wide as the band would leave no ramp at all to divide by.
+    val reach = (band - plateau).coerceAtLeast(1f)
+    val depth = ((band - fromEdge) / reach).coerceIn(0f, 1f)
+    return if (x < viewportW - x) -depth else depth
+}
+
+/**
+ * The carry edge-scroll's shape (see [RemapStage]).
+ *
+ * [CarryEdgeBand] is how near the window's edge a carried tile starts pulling the body along;
+ * [CarryEdgePlateau] is the inner strip of that band where the pull is already at FULL speed,
+ * so topping out doesn't mean putting the finger on the glass at the very rim — which, with a
+ * tile held under it, is somewhere between awkward and impossible (Dylan, 2026-09-25: "it feels
+ * a little difficult to achieve full drag scroll speed"). [CarryEdgeSpeed] is that full speed,
+ * per second.
+ */
+private val CarryEdgeBand = 120.dp
+private val CarryEdgePlateau = 44.dp
 private val CarryEdgeSpeed = 400.dp
 
 /** The body's one scroller — the handle a test drives it by. */

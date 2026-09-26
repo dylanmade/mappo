@@ -569,7 +569,9 @@ private fun AdvancedTable(
     // The grid has gutters between rows (and between tiles), which belong to no cell. Without
     // a tolerance a finger crossing one resolves to nothing and the drop target snaps back to
     // the origin — visible as the landing marker flickering home mid-drag.
-    moveState.hitTolerancePx = with(density) { maxOf(TileRowGap, TileGap).toPx() }
+    // Always the nearest cell — the cards are spread across the zoomed scene with air between
+    // them, and a tile carried over that air is still on its way somewhere.
+    moveState.hitTolerancePx = MoveModeState.AlwaysNearest
     // What the "Label" and "Type" verbs are editing. Both are summoned from a tile's menu, and
     // both live here rather than on the tile so they survive the menu closing.
     var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
@@ -847,35 +849,7 @@ private fun AdvancedTable(
                     .weight(1f, fill = false)
                     .onGloballyPositioned { p.onViewport(it.boundsInWindow()) },
             ) {
-                // LAYER 0 — the move markers, drawn beneath EVERY tile.
-                //
-                // They live in their own layer rather than on the cells because z-order
-                // between tiles is per-Row (zIndex only orders siblings), so a marker drawn on
-                // the origin CELL sat above the tile sliding into it. Down here nothing can get
-                // underneath a tile.
-                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                    p.rows.forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                            slotOrder(row, p.mirrored).forEach { slot ->
-                                val marker = moveMarkerFor(CellKey(group, row.spec, slot))
-                                Box(
-                                    modifier = Modifier
-                                        .width(TileWidth)
-                                        .height(TileHeight)
-                                        .then(
-                                            if (marker != null) {
-                                                Modifier
-                                                    .clip(RoundedCornerShape(TileCorner))
-                                                    .background(marker)
-                                            } else Modifier,
-                                        ),
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // LAYER 1 — the tiles themselves.
+                // LAYER 0 — the tiles themselves.
                 Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                     p.rows.forEach { row ->
                         val spec = row.spec
@@ -959,6 +933,40 @@ private fun AdvancedTable(
                             }
                         }
                     }
+
+                // LAYER 1 — the move markers, drawn OVER every tile (Dylan, 2026-09-25).
+                //
+                // They were underneath until now, on the theory that a marker belongs to the
+                // SLOT rather than to whatever is standing in it. Over the top reads better
+                // during a move: the pair of washes says which tile is going where, instead of
+                // being hidden by the two tiles trading places on top of them.
+                //
+                // Still their own layer rather than a per-cell background: z-order between
+                // tiles is per-Row (zIndex only orders siblings), so a marker drawn on a cell
+                // could still end up under a neighbour sliding across it. Up here nothing can
+                // get over one. Purely decorative — no pointer input, so it takes no touches
+                // off the tiles beneath it.
+                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                    p.rows.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                            slotOrder(row, p.mirrored).forEach { slot ->
+                                val marker = moveMarkerFor(CellKey(group, row.spec, slot))
+                                Box(
+                                    modifier = Modifier
+                                        .width(TileWidth)
+                                        .height(TileHeight)
+                                        .then(
+                                            if (marker != null) {
+                                                Modifier
+                                                    .clip(RoundedCornerShape(TileCorner))
+                                                    .background(marker)
+                                            } else Modifier,
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
                 }
             }
             if (p.mirrored) {
