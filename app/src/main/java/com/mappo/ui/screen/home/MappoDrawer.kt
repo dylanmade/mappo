@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mappo.data.settings.MoveCommitGesture
 import com.mappo.data.settings.TextSize
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelHeaderHeight
@@ -30,6 +31,7 @@ import com.mappo.ui.screen.remap.PanelContentPadding
 import com.mappo.ui.screen.remap.PanelDivider
 import com.mappo.ui.screen.remap.PowerRow
 import com.mappo.ui.screen.remap.RemapOptionEntry
+import com.mappo.ui.screen.remap.MoveCommitRow
 import com.mappo.ui.screen.remap.TextSizeRow
 
 /**
@@ -49,6 +51,9 @@ fun MappoDrawerContent(
     onAutoDetectChange: (Boolean) -> Unit,
     textSize: TextSize,
     onTextSizeChange: (TextSize) -> Unit,
+    // How a controller move is confirmed. Global, and not layout-scoped, so it lives here.
+    moveCommit: MoveCommitGesture,
+    onMoveCommitChange: (MoveCommitGesture) -> Unit,
     // Dev tooling: the floating Theme Studio font picker in the window corner.
     fontDebugEnabled: Boolean,
     onFontDebugChange: (Boolean) -> Unit,
@@ -94,6 +99,9 @@ fun MappoDrawerContent(
                 }
                 item(key = "auto_detect") {
                     AutoDetectRow(enabled = autoDetectEnabled, onEnabledChange = onAutoDetectChange)
+                }
+                item(key = "move_commit") {
+                    MoveCommitRow(current = moveCommit, onPick = onMoveCommitChange)
                 }
                 item(key = "text_size") {
                     TextSizeRow(current = textSize, onPick = onTextSizeChange)

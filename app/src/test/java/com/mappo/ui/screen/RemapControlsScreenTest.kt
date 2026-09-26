@@ -28,6 +28,8 @@ import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
@@ -580,6 +582,66 @@ class RemapControlsScreenTest {
         }
     }
 
+
+    /**
+     * **A lift SPENDS the press that caused it** (Dylan, 2026-09-26).
+     *
+     * Under "release to place", holding the activate button until a tile lifts and then letting
+     * go over its own slot puts it back and ends the move. It did — and then the next direction
+     * pressed lifted the tile all over again, because the tile was still holding the timestamp
+     * of the press that had lifted it, and coyote time reads exactly that. Doing the same thing
+     * with a detour (steer away, steer back, release) never showed it: stepping the drop target
+     * moves FOCUS, and losing focus disarms the tile.
+     *
+     * Asserted through the button rather than through the state: once the move is over, an
+     * activate press must open the tile's menu. While a move is live it commits instead, so the
+     * menu appearing is the whole claim.
+     */
+    @Test
+    fun releasingALiftedTileOnItsOwnSlot_endsTheGesture_soSteeringAfterwardDoesNotReliftIt() {
+        composeRule.mainClock.autoAdvance = false
+        setScreenLocal(seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L))
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1_200L)
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.waitForIdle()
+        }
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        settle()
+
+        // Key input goes to whatever holds focus, so seat the cursor deliberately: this has to
+        // be a tile that HOLDS something, because an empty slot never lifts.
+        val tile = "cell:FACE:BUTTON_DIAMOND:button_a:0"
+        composeRule.onNodeWithTag(tile).requestFocus()
+        settle()
+        composeRule.onNodeWithTag(tile).assertIsFocused()
+
+        // Hold until it lifts — the lift is a delayed effect, so the clock has to run for it.
+        composeRule.onNodeWithTag(tile).performKeyInput { keyDown(Key.ButtonA) }
+        settle()
+        // Let go without having gone anywhere: placed back where it started, move over.
+        composeRule.onNodeWithTag(tile).performKeyInput { keyUp(Key.ButtonA) }
+        settle()
+
+        // Now steer. Nothing here may pick the tile up again.
+        composeRule.onNodeWithTag(tile).performKeyInput {
+            keyDown(Key.DirectionRight)
+            keyUp(Key.DirectionRight)
+        }
+        settle()
+
+        // An activate press with no move in flight opens the focused tile's menu. While a move
+        // IS in flight it commits instead and no menu appears, which is what the stale lifting
+        // press used to cause.
+        composeRule.onNodeWithTag(tile).performKeyInput {
+            keyDown(Key.ButtonA)
+            keyUp(Key.ButtonA)
+        }
+        settle()
+
+        composeRule.onAllNodesWithText("Clear", useUnmergedTree = true).assertCountEquals(1)
+    }
 
     /**
      * **Clearing a tile must not snap the view across.**

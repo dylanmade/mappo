@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.mappo.R
 import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
+import com.mappo.data.settings.MoveCommitGesture
 import com.mappo.data.settings.TextSize
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Radar
@@ -363,6 +365,46 @@ internal fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
                 },
             )
         }
+    }
+}
+
+/**
+ * How a controller move is confirmed: let go of the activate button, or press it again. See
+ * [MoveCommitGesture] — it settles what the three ways of PICKING a tile up used to each decide
+ * for themselves.
+ *
+ * Here in the wordmark drawer because that is where the global options live until a real options
+ * screen exists; it is not layout-scoped, so it does not belong in Layout settings.
+ */
+@Composable
+internal fun MoveCommitRow(current: MoveCommitGesture, onPick: (MoveCommitGesture) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            Icons.Filled.OpenWith,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Place a moved tile",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        MinputPillDropdown(
+            current = current,
+            options = MoveCommitGesture.entries,
+            optionLabel = { it.label },
+            onPick = onPick,
+            onClickLabel = "Change how a moved tile is placed",
+        )
     }
 }
 

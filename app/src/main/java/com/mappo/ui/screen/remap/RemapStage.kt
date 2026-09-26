@@ -250,6 +250,7 @@ internal fun RemapStage(
     var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
     var typeTarget by remember { mutableStateOf<TypeEdit?>(null) }
     var liftPress by remember { mutableStateOf(LiftPress.None) }
+    val commitGesture = LocalMoveCommitGesture.current
     val haptic = LocalHapticFeedback.current
     val commitMove: (Pair<CellKey, CellKey>?) -> Unit = { pair ->
         liftPress = LiftPress.None
@@ -707,6 +708,7 @@ internal fun RemapStage(
                         owns = { true },
                         liftPress = liftPress,
                         onLiftPress = { liftPress = it },
+                        gesture = commitGesture,
                         onStep = { dRow, dCol ->
                             stepMoveTargetBy(moveState, stepTarget, focusHandle, haptic, dRow, dCol)
                         },

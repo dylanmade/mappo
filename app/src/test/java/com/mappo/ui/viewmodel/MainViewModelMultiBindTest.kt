@@ -17,6 +17,7 @@ import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.FrameStyle
 import com.mappo.data.settings.TextSize
+import com.mappo.data.settings.MoveSettings
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.service.autoswitch.ApplicationAutoSwitcher
@@ -151,6 +152,9 @@ class MainViewModelMultiBindTest {
             activeApplicationStore = activeAppStore,
             frameSettings = frameSettings,
             textSizeSettings = textSizeSettings,
+            moveSettings = mockk(relaxed = true) {
+                every { commitGesture } returns MutableStateFlow(MoveSettings.Default)
+            },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,

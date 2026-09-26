@@ -116,6 +116,7 @@ import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.displayNameFor
 import com.mappo.data.model.steam.InputSource
 import com.mappo.service.input.modes.SourceModeCatalog
+import com.mappo.data.settings.MoveCommitGesture
 import com.mappo.ui.component.MoveModeState
 import com.mappo.ui.component.moveModeCell
 import com.mappo.ui.component.moveModeLongPressSource
@@ -661,6 +662,7 @@ private fun AdvancedTable(
     // at a different tile than the one that was lifted — there is no single tile that can
     // reliably see both ends of the press. The table sees all of it.
     var liftPress by remember { mutableStateOf(LiftPress.None) }
+    val commitGesture = LocalMoveCommitGesture.current
 
     fun commitMove(pair: Pair<CellKey, CellKey>?) {
         val (from, to) = pair ?: return
@@ -1006,6 +1008,7 @@ private fun AdvancedTable(
                         owns = { it.group == group },
                         liftPress = liftPress,
                         onLiftPress = { liftPress = it },
+                        gesture = commitGesture,
                         onStep = { dRow, dCol -> stepMoveTarget(dRow, dCol) },
                         onCommit = { commitMove(it) },
                     )
@@ -1389,7 +1392,16 @@ internal fun CommandTile(
         if (keyDownAt != 0L && !moveState.active) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             moveState.pickUp(cellKey, byPointer = false)
-            onControllerLift(LiftPress.CommitsOnRelease)
+            onControllerLift(LiftPress.Held)
+            // The lift SPENDS the press. From here the button belongs to the move — its release
+            // is the host's to read ([moveModeKeyEvent]), and this tile must not still be
+            // holding a claim on it. Leaving the timestamp armed is what made "release to place"
+            // look broken: you lifted a tile, released over its own slot, which placed it — and
+            // then the next direction you pressed found this timer still set and coyote-lifted
+            // the tile all over again (Dylan, 2026-09-26). Clearing the claim also keeps a
+            // cancelled move (B, then let go of activate) from opening the menu on the way out.
+            keyDownAt = 0L
+            sawOwnKeyDown = false
         }
     }
 
@@ -1462,16 +1474,17 @@ internal fun CommandTile(
                     // to distrust a control, so a user who has clearly committed — button down,
                     // already steering — gets the lift they were heading for.
                     //
-                    // The lift is [LiftPress.Spent]: the press that caused it is still down, but
-                    // they are done with it, so its release must not confirm anything. Returning
-                    // false hands this very keystroke on to the host's move handler, which walks
-                    // the drop target — so the first press both lifts and steps, which is what
-                    // it would have done had the hold already ripened.
+                    // The lift is an ordinary one — the press that caused it is still down, and
+                    // what its release means is the user's setting, exactly as for a lift they
+                    // did wait out ([MoveCommitGesture]). Returning false hands this very
+                    // keystroke on to the host's move handler, which walks the drop target, so
+                    // the first press both lifts and steps: what it would have done had the hold
+                    // already ripened.
                     val steering = event.type == KeyEventType.KeyDown && event.key in MoveStepKeys
                     if (steering && movable && keyDownAt != 0L && !moveState.active) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         moveState.pickUp(cellKey, byPointer = false)
-                        onControllerLift(LiftPress.Spent)
+                        onControllerLift(LiftPress.Held)
                         keyDownAt = 0L
                         sawOwnKeyDown = false
                         return@onKeyEvent false
@@ -2227,19 +2240,16 @@ internal fun stepMoveTargetBy(
 }
 
 /**
- * **What the release of the activate button that LIFTED a tile will mean** — the three ways a
- * controller move can be driven (Dylan, 2026-09-26).
+ * **Whether the activate button that LIFTED the current tile is still down.**
  *
- *  - [CommitsOnRelease]: held through the lift and still held. Let go over a new slot and the
- *    move confirms — ordinary drag and drop.
- *  - [None]: no lifting press outstanding, either because it was released without moving (the
- *    user picked a tile up to look around with) or because the lift came some other way. A press
- *    now is the confirm.
- *  - [Spent]: the tile was lifted by a press the user had ALREADY stopped waiting on — they
- *    started navigating before the hold ripened, so the lift happened under them. Its release
- *    means nothing; a later press confirms, as in [None].
+ * There are three ways into a move — hold until it lifts and keep holding, hold until it lifts and
+ * let go, or start steering before the hold ripens, which lifts the tile under you — and for a day
+ * each implied its own way out. Dylan settled that 2026-09-26: the way IN no longer decides, a
+ * single setting does ([MoveCommitGesture]), and all this has to remember is whether there is a
+ * lifting press still outstanding, because that is the one press whose release might not mean
+ * "place it".
  */
-internal enum class LiftPress { None, CommitsOnRelease, Spent }
+internal enum class LiftPress { None, Held }
 
 /**
  * The keyboard while a CONTROLLER move is in flight: arrows walk the drop target, B / Escape
@@ -2258,9 +2268,11 @@ internal fun moveModeKeyEvent(
     moveState: MoveModeState<CellKey>,
     /** Is the current drop target one this handler speaks for? */
     owns: (CellKey) -> Boolean,
-    /** What the release of the still-held lifting press will mean. */
+    /** Is the activate button that lifted the tile still down? */
     liftPress: LiftPress,
     onLiftPress: (LiftPress) -> Unit,
+    /** The user's choice of how a move is confirmed. */
+    gesture: MoveCommitGesture,
     onStep: (dRow: Int, dCol: Int) -> Unit,
     onCommit: (Pair<CellKey, CellKey>?) -> Unit,
 ): Boolean {
@@ -2274,18 +2286,17 @@ internal fun moveModeKeyEvent(
         if (event.type == KeyEventType.KeyUp) {
             val press = liftPress
             onLiftPress(LiftPress.None)
-            val confirms = when (press) {
-                // A press made AFTER the lift: pressing again is the confirm.
-                LiftPress.None -> true
-                // Releasing the button that LIFTED the tile confirms, provided the target moved
-                // while it was held — ordinary drag-and-drop. Released without having moved, it
-                // reads as the user taking their thumb off a tile they've picked up to look
-                // around with, so the move stays live and a later press confirms.
-                LiftPress.CommitsOnRelease -> moveState.target != moveState.origin
-                // The lift the user never waited for: they were already navigating when it
-                // happened, so this release is just the tail of a press they are done with.
-                LiftPress.Spent -> false
-            }
+            // Under "release to place", EVERY release places — including a release straight back
+            // onto the tile's own slot, which puts it down where it started and ends the move
+            // (Dylan, 2026-09-26). An earlier version made that case stay live, on the theory
+            // that it read as picking a tile up to look around with; but that is the OTHER
+            // setting's job, and having one mode quietly behave like the other is exactly the
+            // inconsistency the setting was added to remove.
+            //
+            // Under "press again to place", the lifting press's own release never places
+            // anything, which is what lets a carry survive any amount of looking around. Any
+            // LATER press does.
+            val confirms = press == LiftPress.None || gesture == MoveCommitGesture.ON_RELEASE
             if (confirms) onCommit(moveState.commit())
         }
         return true

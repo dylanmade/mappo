@@ -3,6 +3,7 @@ package com.mappo.ui.screen.remap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.NativeKeyEvent
+import com.mappo.data.settings.MoveCommitGesture
 import com.mappo.ui.component.MoveModeState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,19 +15,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * **The three ways a controller move can be driven** (Dylan, 2026-09-26), as seen by
- * [moveModeKeyEvent] — which owns them because a held button auto-repeats while focus moves, so
- * no single tile sees both ends of the gesture.
+ * **How a controller move is confirmed**, as seen by [moveModeKeyEvent] — which owns the question
+ * because a held button auto-repeats while focus moves, so no single tile sees both ends of the
+ * gesture.
  *
- *  1. Hold through the lift, keep holding, navigate, release → commits.
- *  2. Hold through the lift, release without moving, navigate, press → commits.
- *  3. Hold, but start navigating BEFORE the hold ripens → the tile lifts under you, and the
- *     release of that now-spent press must NOT commit; a later press does.
- *
- * The third is the one that needed a third state. It looks exactly like (1) from the handler's
- * seat — a lifting press still down, and a target that has moved — so a boolean "is it held"
- * could not tell them apart, and the coyote lift committed the moment the user let go of a
- * button they had already finished with.
+ * There are three ways to pick a tile up: hold the activate button until it lifts and keep
+ * holding; hold until it lifts and let go; or start steering before the hold has ripened, which
+ * lifts the tile under you (coyote time). For a day each implied its own way out. Dylan settled
+ * that 2026-09-26 — the way IN no longer decides, one setting does — so what these pin is the
+ * setting, not the engager.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -39,7 +36,7 @@ class LiftPressTest {
         CellKey(group, group.rows[row], slot)
 
     /** A tiny harness standing in for the host: it holds the lift state and records commits. */
-    private class Host {
+    private class Host(val gesture: MoveCommitGesture) {
         val moveState = MoveModeState<CellKey>()
         var liftPress = LiftPress.None
         var commits = 0
@@ -51,38 +48,27 @@ class LiftPressTest {
             owns = { true },
             liftPress = liftPress,
             onLiftPress = { liftPress = it },
+            gesture = gesture,
             onStep = { _, _ -> },
             onCommit = { pair -> commits++; committed = pair },
         )
     }
 
-    @Test
-    fun heldThroughTheLift_andMoved_commitsOnRelease() {
-        val host = Host()
+    /** A tile already lifted, with the lifting press still down — every engager's end state. */
+    private fun lifted(gesture: MoveCommitGesture): Host {
+        val host = Host(gesture)
         host.moveState.pickUp(from, byPointer = false)
-        host.liftPress = LiftPress.CommitsOnRelease
-        host.moveState.moveTargetTo(to)
-
-        host.send(Key.ButtonA, down = false)
-
-        assertEquals(1, host.commits)
-        assertEquals(from to to, host.committed)
+        host.liftPress = LiftPress.Held
+        return host
     }
 
-    /** Released without having moved: the user picked a tile up to look around with. The move
-     *  stays live, and the NEXT press is the confirm. */
+    // ── Release to place (the default — it is what the touchscreen already does) ─────────────
+
     @Test
-    fun releasedWithoutMoving_staysLive_untilTheNextPress() {
-        val host = Host()
-        host.moveState.pickUp(from, byPointer = false)
-        host.liftPress = LiftPress.CommitsOnRelease
-
-        host.send(Key.ButtonA, down = false)
-        assertEquals(0, host.commits)
-        assertTrue("the tile must still be in hand", host.moveState.active)
-        assertEquals(LiftPress.None, host.liftPress)
-
+    fun onRelease_lettingGoOverANewSlot_places() {
+        val host = lifted(MoveCommitGesture.ON_RELEASE)
         host.moveState.moveTargetTo(to)
+
         host.send(Key.ButtonA, down = false)
 
         assertEquals(1, host.commits)
@@ -90,70 +76,104 @@ class LiftPressTest {
     }
 
     /**
-     * The coyote lift. Its press is spent — the user was already steering when the tile came up
-     * under them — so letting go of it means nothing, however far the target has travelled.
+     * **Released onto its own slot still places it** — back where it started, move over (Dylan,
+     * 2026-09-26). An earlier version left this case live, reading it as picking a tile up to
+     * look around with; but that is what the other setting is for, and a mode that quietly
+     * behaves like the other one is the inconsistency the setting exists to remove.
+     *
+     * Put down where it already was, so there is nothing to relocate: the commit reports null and
+     * the tile flies home rather than teleporting.
      */
     @Test
-    fun aSpentPress_doesNotCommitWhenItIsReleased() {
-        val host = Host()
-        host.moveState.pickUp(from, byPointer = false)
-        host.liftPress = LiftPress.Spent
+    fun onRelease_lettingGoOnItsOwnSlot_putsItBackAndEndsTheMove() {
+        val host = lifted(MoveCommitGesture.ON_RELEASE)
+
+        host.send(Key.ButtonA, down = false)
+
+        assertEquals("the release must be acted on", 1, host.commits)
+        assertNull("nothing moved, so there is nothing to report", host.committed)
+        assertFalse("the move is over", host.moveState.active)
+        assertEquals(from to from, host.moveState.returning)
+        assertEquals(LiftPress.None, host.liftPress)
+    }
+
+    // ── Press again to place ─────────────────────────────────────────────────────────────────
+
+    /** The lifting press's release never places anything here, however far the target has
+     *  travelled — which is what lets the carry survive any amount of looking around. */
+    @Test
+    fun onPress_lettingGoOfTheLiftingPress_placesNothing() {
+        val host = lifted(MoveCommitGesture.ON_PRESS)
         host.moveState.moveTargetTo(to)
 
         host.send(Key.ButtonA, down = false)
 
-        assertEquals("releasing a spent press must not confirm", 0, host.commits)
+        assertEquals(0, host.commits)
         assertTrue(host.moveState.active)
-        // ...and from there it is the press-again mode.
+    }
+
+    @Test
+    fun onPress_theNextPress_places() {
+        val host = lifted(MoveCommitGesture.ON_PRESS)
+        host.moveState.moveTargetTo(to)
         host.send(Key.ButtonA, down = false)
+
+        host.send(Key.ButtonA, down = false)
+
         assertEquals(1, host.commits)
         assertEquals(from to to, host.committed)
     }
 
-    /** B / Escape calls the whole thing off and clears the lift state with it, whichever kind of
-     *  press is outstanding. */
+    // ── Shared ───────────────────────────────────────────────────────────────────────────────
+
+    /** B / Escape calls the whole thing off and clears the lift state with it, either way. */
     @Test
     fun cancelling_clearsTheLiftState() {
-        val host = Host()
-        host.moveState.pickUp(from, byPointer = false)
-        host.liftPress = LiftPress.Spent
-        host.moveState.moveTargetTo(to)
+        for (gesture in MoveCommitGesture.entries) {
+            val host = lifted(gesture)
+            host.moveState.moveTargetTo(to)
 
-        assertTrue(host.send(Key.ButtonB, down = true))
+            assertTrue(host.send(Key.ButtonB, down = true))
 
-        assertFalse(host.moveState.active)
-        assertEquals(LiftPress.None, host.liftPress)
-        assertEquals(0, host.commits)
-        assertEquals("the tile flies home rather than teleporting", from to to, host.moveState.returning)
+            assertFalse("$gesture", host.moveState.active)
+            assertEquals("$gesture", LiftPress.None, host.liftPress)
+            assertEquals("$gesture", 0, host.commits)
+            assertEquals(
+                "the tile flies home rather than teleporting ($gesture)",
+                from to to,
+                host.moveState.returning,
+            )
+        }
     }
 
-    /** Auto-repeat of a still-held activate button must do nothing at all: only the release (or a
-     *  fresh press's release) decides. Otherwise a coyote lift would confirm itself instantly. */
+    /**
+     * Auto-repeat of a still-held activate button must do nothing at all. Under "press again" in
+     * particular, a repeat that counted as a press would place the tile the instant a coyote lift
+     * happened — the button is already down when the lift occurs.
+     */
     @Test
     fun repeatsOfTheHeldButton_doNothing() {
-        val host = Host()
-        host.moveState.pickUp(from, byPointer = false)
-        host.liftPress = LiftPress.Spent
-        host.moveState.moveTargetTo(to)
+        for (gesture in MoveCommitGesture.entries) {
+            val host = lifted(gesture)
+            host.moveState.moveTargetTo(to)
 
-        repeat(5) { assertTrue("must be consumed", host.send(Key.ButtonA, down = true)) }
+            repeat(5) { assertTrue("must be consumed ($gesture)", host.send(Key.ButtonA, down = true)) }
 
-        assertEquals(0, host.commits)
-        assertTrue(host.moveState.active)
+            assertEquals("$gesture", 0, host.commits)
+            assertTrue("$gesture", host.moveState.active)
+        }
     }
 
     /** Nothing lifted: the handler is not in the conversation and everything passes through. */
     @Test
     fun withNoMoveInFlight_nothingIsConsumed() {
-        val host = Host()
+        val host = Host(MoveCommitGesture.ON_RELEASE)
         assertFalse(host.send(Key.ButtonA, down = false))
         assertFalse(host.send(Key.DirectionRight, down = true))
         assertNull(host.committed)
     }
 }
 
-/** The five-argument constructor, not the two-argument one: under Robolectric the short form
- *  leaves both the action and the key code at zero. */
 private fun keyEvent(key: Key, down: Boolean): KeyEvent = KeyEvent(
     NativeKeyEvent(
         /* downTime = */ 0L,

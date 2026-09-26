@@ -55,6 +55,18 @@ internal enum class CommandOrder {
 internal val LocalCommandOrder = staticCompositionLocalOf { CommandOrder.PRESS_TYPE }
 
 /**
+ * **How a controller move is confirmed** — the user's setting, carried down to the tiles.
+ *
+ * A CompositionLocal for the same reason [LocalCommandOrder] is one: it is read deep inside the
+ * tile hierarchy by code that has no other business knowing about settings, and threading it
+ * through every composable between here and there would be a parameter per layer. Provided by
+ * `MainScreen` from [com.mappo.data.settings.MoveSettings]; the default matches that store's, so a
+ * surface composed outside the app window still behaves like the app.
+ */
+internal val LocalMoveCommitGesture =
+    staticCompositionLocalOf { com.mappo.data.settings.MoveSettings.Default }
+
+/**
  * The commands on one input row, in display order.
  *
  * Unbound bindings are left out: "New" creates the binding BEFORE the picker opens, so a

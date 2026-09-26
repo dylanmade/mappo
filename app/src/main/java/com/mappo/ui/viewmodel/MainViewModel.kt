@@ -108,6 +108,7 @@ class MainViewModel @Inject constructor(
     private val activeApplicationStore: ActiveApplicationStore,
     private val frameSettings: FrameSettings,
     private val textSizeSettings: TextSizeSettings,
+    private val moveSettings: com.mappo.data.settings.MoveSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ApplicationAutoSwitcher,
@@ -217,6 +218,10 @@ class MainViewModel @Inject constructor(
     val frameStyle: StateFlow<FrameStyle> = frameSettings.style
 
     /** App-level text size (options panel dropdown); applied via context wrapping. */
+    /** How a controller tile move is confirmed — release, or press again. See MoveSettings. */
+    val moveCommitGesture: StateFlow<com.mappo.data.settings.MoveCommitGesture> =
+        moveSettings.commitGesture
+
     val textSize: StateFlow<TextSize> = textSizeSettings.size
 
     val appLayoutBindings: StateFlow<ImmutableList<AppLayoutBinding>> =
@@ -612,6 +617,9 @@ class MainViewModel @Inject constructor(
      * root — the caller recreates the activity; overlay windows pick it up on next mount.
      */
     fun setTextSize(size: TextSize) = textSizeSettings.set(size)
+
+    fun setMoveCommitGesture(gesture: com.mappo.data.settings.MoveCommitGesture) =
+        moveSettings.setCommitGesture(gesture)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

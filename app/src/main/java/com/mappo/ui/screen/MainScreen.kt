@@ -150,6 +150,8 @@ import com.mappo.ui.nav.MappoRoute
 import com.mappo.ui.screen.home.MappoDrawerContent
 import com.mappo.ui.screen.home.ScreenFrame
 import com.mappo.ui.screen.home.ScreenFrameFadeMillis
+import androidx.compose.runtime.CompositionLocalProvider
+import com.mappo.ui.screen.remap.LocalMoveCommitGesture
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
@@ -248,6 +250,7 @@ fun MainScreen(
     val remapEnabled by viewModel.remapEnabled.collectAsStateWithLifecycle()
     val overlayShowing by viewModel.overlayShowing.collectAsStateWithLifecycle()
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
+    val moveCommitGesture by viewModel.moveCommitGesture.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -366,7 +369,7 @@ fun MainScreen(
     // canvas (the frame is mounted at the bottom of this function). The canvas itself paints
     // the opaque surfaceContainerLowest "lit screen" base, so the NavHost no longer needs a
     // per-route background. Declared as a lambda so the frame call site stays readable.
-    val screenContent: @Composable () -> Unit = {
+    val routes: @Composable () -> Unit = {
         NavHost(
             navController = navController,
             // The home: the controls view of the active layout (no layoutId arg).
@@ -1056,6 +1059,14 @@ fun MainScreen(
         }
     }
 
+    // The move-commit setting reaches the remap tiles as a CompositionLocal: it is read at the
+    // very bottom of the tile hierarchy, and threading it through every composable in between
+    // would be a parameter per layer (see LocalMoveCommitGesture). Wrapped around the routes
+    // rather than declared inside them so the NavHost block stays where it is.
+    val screenContent: @Composable () -> Unit = {
+        CompositionLocalProvider(LocalMoveCommitGesture provides moveCommitGesture) { routes() }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // ── The screen frame: the canvas hosting every route (compact 1:1 preview by
         // default, expandable to the full display) + the wordmark bottom bar. Fades in on
@@ -1085,6 +1096,8 @@ fun MainScreen(
                     // until 2026-08-30.
                     autoDetectEnabled = autoSwitchEnabled,
                     onAutoDetectChange = viewModel::setAutoSwitchEnabled,
+                    moveCommit = moveCommitGesture,
+                    onMoveCommitChange = viewModel::setMoveCommitGesture,
                     textSize = textSize,
                     onTextSizeChange = { size ->
                         if (size != textSize) {
