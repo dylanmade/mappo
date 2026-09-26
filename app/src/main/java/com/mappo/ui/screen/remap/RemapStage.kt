@@ -249,10 +249,10 @@ internal fun RemapStage(
     // tile is in flight.
     var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
     var typeTarget by remember { mutableStateOf<TypeEdit?>(null) }
-    var liftHeld by remember { mutableStateOf(false) }
+    var liftPress by remember { mutableStateOf(LiftPress.None) }
     val haptic = LocalHapticFeedback.current
     val commitMove: (Pair<CellKey, CellKey>?) -> Unit = { pair ->
-        liftHeld = false
+        liftPress = LiftPress.None
         pair?.let { (from, to) -> onMoveCommitted(from, to) }
     }
     val editHost = editGroup?.let {
@@ -260,7 +260,7 @@ internal fun RemapStage(
             moveState = moveState,
             focusHandle = focusHandle,
             onCommitMove = commitMove,
-            onControllerLift = { liftHeld = true },
+            onControllerLift = { liftPress = it },
             callbacks = callbacks,
             editable = viewingLayer == null,
             onLabel = { labelTarget = it },
@@ -705,8 +705,8 @@ internal fun RemapStage(
                         event = event,
                         moveState = moveState,
                         owns = { true },
-                        liftHeld = liftHeld,
-                        onLiftHeld = { liftHeld = it },
+                        liftPress = liftPress,
+                        onLiftPress = { liftPress = it },
                         onStep = { dRow, dCol ->
                             stepMoveTargetBy(moveState, stepTarget, focusHandle, haptic, dRow, dCol)
                         },

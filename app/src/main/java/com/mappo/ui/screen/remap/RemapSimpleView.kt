@@ -692,7 +692,7 @@ internal class RowEditHost(
     val moveState: MoveModeState<CellKey>,
     val focusHandle: (CellKey) -> FocusRequester,
     val onCommitMove: (Pair<CellKey, CellKey>?) -> Unit,
-    val onControllerLift: () -> Unit,
+    val onControllerLift: (LiftPress) -> Unit,
     val callbacks: RemapGroupEditorCallbacks,
     /** False in layer view, where the tiles are read-only and route edits to the full editor. */
     val editable: Boolean,

@@ -3,7 +3,6 @@ package com.mappo.ui.screen.remap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -661,11 +660,11 @@ private fun AdvancedTable(
     // because a held activate button auto-repeats while focus moves, so the release can arrive
     // at a different tile than the one that was lifted — there is no single tile that can
     // reliably see both ends of the press. The table sees all of it.
-    var liftHeld by remember { mutableStateOf(false) }
+    var liftPress by remember { mutableStateOf(LiftPress.None) }
 
     fun commitMove(pair: Pair<CellKey, CellKey>?) {
         val (from, to) = pair ?: return
-        liftHeld = false
+        liftPress = LiftPress.None
         onMoveCommitted(from, to)
         // No focus handling here, deliberately. On the controller path focus already TRACKS the
         // drop target (see stepMoveTarget), so by the time a move commits it is on the
@@ -906,7 +905,7 @@ private fun AdvancedTable(
                                     displacement = displacementFor(cellKey),
                                     previewOrigin = previewOrigin,
                                     onCommitMove = { commitMove(it) },
-                                    onControllerLift = { liftHeld = true },
+                                    onControllerLift = { liftPress = it },
                                     actions = {
                                         commandCellActions(
                                             cellKey = cellKey,
@@ -1005,8 +1004,8 @@ private fun AdvancedTable(
                         // The target may have been carried into another group's table, which
                         // then owns the keys (focus followed it there).
                         owns = { it.group == group },
-                        liftHeld = liftHeld,
-                        onLiftHeld = { liftHeld = it },
+                        liftPress = liftPress,
+                        onLiftPress = { liftPress = it },
                         onStep = { dRow, dCol -> stepMoveTarget(dRow, dCol) },
                         onCommit = { commitMove(it) },
                     )
@@ -1324,7 +1323,7 @@ internal fun CommandTile(
     onCommitMove: (Pair<CellKey, CellKey>?) -> Unit,
     /** Reports a controller-driven lift, so the table can track whether the button that
      *  started it is still held. */
-    onControllerLift: () -> Unit,
+    onControllerLift: (LiftPress) -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
     /** How big this tile is and how much it says — the table's, or the basic view's row tile. */
@@ -1366,11 +1365,6 @@ internal fun CommandTile(
     LaunchedEffect(previewOrigin, slideTarget) {
         if (previewing) slide.animateTo(slideTarget, tween(MoveSlideMillis))
     }
-    // The lifted tile swells slightly — the "picked up" read.
-    val lift by animateFloatAsState(
-        if (isOrigin) MoveLiftScale else 1f,
-        label = "cell-lift",
-    )
 
     // The tint's own alpha IS the strength (see PressTypePalette); a fully transparent tint
     // leaves the plain elevated container, which is exactly what the Press column wants.
@@ -1395,7 +1389,7 @@ internal fun CommandTile(
         if (keyDownAt != 0L && !moveState.active) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             moveState.pickUp(cellKey, byPointer = false)
-            onControllerLift()
+            onControllerLift(LiftPress.CommitsOnRelease)
         }
     }
 
@@ -1460,6 +1454,28 @@ internal fun CommandTile(
                 // its handler. Returning false lets them bubble up to it.
                 if (moveState.active && !moveState.pointerDriven) return@onKeyEvent false
                 if (event.key !in TileActivateKeys) {
+                    // ── Coyote time (Dylan, 2026-09-26) ──
+                    //
+                    // A DIRECTION pressed while the hold is still ripening lifts the tile NOW
+                    // rather than throwing the gesture away. Waiting out the long-press before
+                    // you are allowed to start moving is the kind of delay that teaches people
+                    // to distrust a control, so a user who has clearly committed — button down,
+                    // already steering — gets the lift they were heading for.
+                    //
+                    // The lift is [LiftPress.Spent]: the press that caused it is still down, but
+                    // they are done with it, so its release must not confirm anything. Returning
+                    // false hands this very keystroke on to the host's move handler, which walks
+                    // the drop target — so the first press both lifts and steps, which is what
+                    // it would have done had the hold already ripened.
+                    val steering = event.type == KeyEventType.KeyDown && event.key in MoveStepKeys
+                    if (steering && movable && keyDownAt != 0L && !moveState.active) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        moveState.pickUp(cellKey, byPointer = false)
+                        onControllerLift(LiftPress.Spent)
+                        keyDownAt = 0L
+                        sawOwnKeyDown = false
+                        return@onKeyEvent false
+                    }
                     // ANY other key while the activate button is held abandons the press
                     // entirely — both the pending hold and the claim on the eventual release. A
                     // half-committed lift is the worst state this control can be in, so the
@@ -1529,8 +1545,6 @@ internal fun CommandTile(
                         translationY = slide.value.y
                     }
                 }
-                scaleX = lift
-                scaleY = lift
                 if (carried) alpha = 0f
             }
             .minputInteractiveMotion(pressInteraction)
@@ -1768,26 +1782,31 @@ internal fun MoveOverlay(
                 command = command,
                 config = config,
                 position = lerp(home, originHome, slide.value),
-                scale = 1f,
                 look = look,
             )
-        }
-        if (live != null) {
-            MoveMarker(extras.dropZoneOrigin, originHome, look)
-            // No destination to mark while the move is out of range — it is going home.
-            if (!outOfRange && hovered != origin) MoveMarker(extras.dropZoneValid, aimHome, look)
         }
         FloatingTile(
             command = lifted,
             config = config,
             position = aimHome + carriedResidual.value,
-            // The swell goes as the move does: a tile flying home has already been put down.
-            scale = if (live != null) MoveLiftScale else 1f,
             look = look,
             // Carried out past the grid's reach: letting go now puts it back, and saying so on
             // the tile itself is the only place the user is actually looking.
             wash = extras.dropZoneInvalid.takeIf { outOfRange },
         )
+        // BOTH markers over the carried tile, drawn last (Dylan, 2026-09-25 / 09-26).
+        //
+        // The tile in your hand sits right on the slot it is landing in, so underneath it the
+        // green was the one marker you could never see. And the blue over the ORIGIN slot is what
+        // now says "this is the tile you just picked up" — at the instant of a lift the carried
+        // tile is still on that slot, so it wears the blue. That replaced a slight upscale on
+        // the lifted tile, which read oddly once the washes went on top of it.
+        if (live != null) {
+            MoveMarker(extras.dropZoneOrigin, originHome, look)
+            // No destination to mark while the move is out of range: it is going home, and it is
+            // wearing red instead.
+            if (!outOfRange && hovered != origin) MoveMarker(extras.dropZoneValid, aimHome, look)
+        }
     }
 }
 
@@ -1810,7 +1829,6 @@ private fun FloatingTile(
     command: RowCommand,
     config: ControllerConfig?,
     position: Offset,
-    scale: Float,
     look: TileLook = TableTileLook,
     /** Painted over the tile — the cancel signal, when the carry has left the grid's reach. */
     wash: Color? = null,
@@ -1824,10 +1842,6 @@ private fun FloatingTile(
             .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
             .width(look.width)
             .height(look.height)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
             .clip(shape)
             .background(container, shape)
             .then(tileOutline(container, defined = true, shape = shape, corner = look.corner))
@@ -2213,6 +2227,21 @@ internal fun stepMoveTargetBy(
 }
 
 /**
+ * **What the release of the activate button that LIFTED a tile will mean** — the three ways a
+ * controller move can be driven (Dylan, 2026-09-26).
+ *
+ *  - [CommitsOnRelease]: held through the lift and still held. Let go over a new slot and the
+ *    move confirms — ordinary drag and drop.
+ *  - [None]: no lifting press outstanding, either because it was released without moving (the
+ *    user picked a tile up to look around with) or because the lift came some other way. A press
+ *    now is the confirm.
+ *  - [Spent]: the tile was lifted by a press the user had ALREADY stopped waiting on — they
+ *    started navigating before the hold ripened, so the lift happened under them. Its release
+ *    means nothing; a later press confirms, as in [None].
+ */
+internal enum class LiftPress { None, CommitsOnRelease, Spent }
+
+/**
  * The keyboard while a CONTROLLER move is in flight: arrows walk the drop target, B / Escape
  * calls it off, the activate keys confirm.
  *
@@ -2229,9 +2258,9 @@ internal fun moveModeKeyEvent(
     moveState: MoveModeState<CellKey>,
     /** Is the current drop target one this handler speaks for? */
     owns: (CellKey) -> Boolean,
-    /** Is the button that LIFTED the tile still held? */
-    liftHeld: Boolean,
-    onLiftHeld: (Boolean) -> Unit,
+    /** What the release of the still-held lifting press will mean. */
+    liftPress: LiftPress,
+    onLiftPress: (LiftPress) -> Unit,
     onStep: (dRow: Int, dCol: Int) -> Unit,
     onCommit: (Pair<CellKey, CellKey>?) -> Unit,
 ): Boolean {
@@ -2243,14 +2272,21 @@ internal fun moveModeKeyEvent(
     // filter below.
     if (event.key in TileActivateKeys) {
         if (event.type == KeyEventType.KeyUp) {
-            val wasLiftingPress = liftHeld
-            onLiftHeld(false)
-            // Releasing the button that LIFTED the tile confirms, provided the target moved
-            // while it was held — ordinary drag-and-drop. Released without having moved, it
-            // reads as the user taking their thumb off a tile they've picked up to look around
-            // with, so the move stays live and a later press confirms.
-            val movedWhileHeld = moveState.target != moveState.origin
-            if (!wasLiftingPress || movedWhileHeld) onCommit(moveState.commit())
+            val press = liftPress
+            onLiftPress(LiftPress.None)
+            val confirms = when (press) {
+                // A press made AFTER the lift: pressing again is the confirm.
+                LiftPress.None -> true
+                // Releasing the button that LIFTED the tile confirms, provided the target moved
+                // while it was held — ordinary drag-and-drop. Released without having moved, it
+                // reads as the user taking their thumb off a tile they've picked up to look
+                // around with, so the move stays live and a later press confirms.
+                LiftPress.CommitsOnRelease -> moveState.target != moveState.origin
+                // The lift the user never waited for: they were already navigating when it
+                // happened, so this release is just the tail of a press they are done with.
+                LiftPress.Spent -> false
+            }
+            if (confirms) onCommit(moveState.commit())
         }
         return true
     }
@@ -2263,7 +2299,7 @@ internal fun moveModeKeyEvent(
         Key.DirectionRight -> { onStep(0, 1); true }
         Key.Back, Key.Escape, Key.ButtonB -> {
             moveState.cancel()
-            onLiftHeld(false)
+            onLiftPress(LiftPress.None)
             true
         }
         else -> true // swallow the rest so focus can't wander mid-move
@@ -2301,6 +2337,12 @@ internal fun editorTableTestTag(group: RemapSimpleGroup): String = "group-editor
 
 /** Keys that activate a focused tile. Mirrors what Compose's own `clickable` accepts, plus the
  *  gamepad A button so a controller's primary action works without a d-pad center. */
+/** The keys that walk a move's drop target — and, before a hold has ripened, the ones that mean
+ *  "I have started moving, lift it now". See the coyote branch in [CommandTile]. */
+internal val MoveStepKeys = setOf(
+    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
+)
+
 internal val TileActivateKeys = setOf(
     Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.ButtonA,
 )
@@ -2644,9 +2686,6 @@ private const val EmptyTileOutlineAlpha = 0.22f
 
 /** How long a displaced tile takes to slide aside during a swap preview. */
 private const val MoveSlideMillis = 200
-
-/** How much a lifted tile swells while it's being carried. */
-private const val MoveLiftScale = 1.06f
 
 /**
  * How far a carried tile may stray from every cell before the move reads as ABANDONED — carry it
