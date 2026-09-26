@@ -2661,7 +2661,7 @@ private const val MoveLiftScale = 1.06f
  * tile whose rim is within this of a slot is claimed by that slot even while most of it hangs
  * over the gap.
  */
-internal val MoveCancelDistance = 56.dp
+internal val MoveCancelDistance = 23.dp
 /** How strongly the origin / landing markers wash their cell. Low enough to read as a marked
  *  SLOT rather than a filled tile. */
 internal const val MoveMarkerAlpha = 0.3f
