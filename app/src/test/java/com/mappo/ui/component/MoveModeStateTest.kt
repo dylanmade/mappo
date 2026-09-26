@@ -204,4 +204,42 @@ class MoveModeStateTest {
         state.pickUp("left", byPointer = true)
         return state
     }
+
+    // ── Tiles the DRAWER is still flying ─────────────────────────────────────
+
+    /**
+     * **Who is mid-flight is the drawer's to declare** (Dylan, 2026-09-25).
+     *
+     * Walking a carry across three occupied slots disturbs three tiles, and each has to get back
+     * to its own slot rather than teleporting when it stops being the target. While one is on its
+     * way the grid tile in that slot must stay invisible, or two things claim it — and only the
+     * drawer knows how long its own animation lasts, exactly as with [MoveModeState.returning].
+     */
+    @Test
+    fun cellsHeldInFlight_areDeclaredAndReleasedByTheDrawer() {
+        val state = state()
+        state.pickUp("a", byPointer = true)
+
+        state.holdInFlight("b")
+        state.holdInFlight("c")
+        assertEquals(setOf("b", "c"), state.inFlight)
+
+        state.releaseInFlight("b")
+        assertEquals(setOf("c"), state.inFlight)
+    }
+
+    /** Ending the move must NOT clear them: that is the moment the tiles start flying home, and
+     *  dropping the hold there is precisely the teleport this exists to prevent. */
+    @Test
+    fun endingTheMove_leavesTilesStillInFlight() {
+        val state = state()
+        state.pickUp("a", byPointer = true)
+        state.holdInFlight("b")
+
+        state.commit()
+
+        assertEquals(setOf("b"), state.inFlight)
+        state.clearInFlight()
+        assertEquals(emptySet<String>(), state.inFlight)
+    }
 }

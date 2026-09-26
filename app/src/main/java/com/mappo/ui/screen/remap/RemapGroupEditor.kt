@@ -1,6 +1,7 @@
 package com.mappo.ui.screen.remap
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -62,6 +63,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -1642,26 +1644,60 @@ internal fun MoveOverlay(
     val order = LocalCommandOrder.current
     val lifted = rowCommandsFor(viewingSet, viewingLayer, origin.row, order).getOrNull(origin.slot)
         ?: return
-    // Null when the target is a row's "+": that is an ADD, and nothing comes back the other way.
-    val displaced = if (hovered == origin) {
-        null
-    } else {
-        rowCommandsFor(viewingSet, viewingLayer, hovered.row, order).getOrNull(hovered.slot)
-    }
+    fun commandAt(key: CellKey): RowCommand? =
+        rowCommandsFor(viewingSet, viewingLayer, key.row, order).getOrNull(key.slot)
 
     fun homeOf(key: CellKey): Offset? =
         moveState.boundsOf(key)?.takeIf { !it.isEmpty }?.topLeft?.minus(stageOrigin)
 
     val start = homeOf(origin) ?: Offset.Zero
     var originHome by remember(origin) { mutableStateOf(start) }
-    var hoveredHome by remember(origin) { mutableStateOf(start) }
     /** Where the carried tile is aimed — the slot it is measured FROM. */
     var aimHome by remember(origin) { mutableStateOf(start) }
     /** How far the carried tile still is from that slot. Always decaying toward zero. */
     val carriedResidual = remember(origin) { Animatable(Offset.Zero, Offset.VectorConverter) }
 
+    /**
+     * **Every cell this move has displaced, and how far each one is into the vacated slot** —
+     * 1 sitting in it, 0 back where it belongs (Dylan, 2026-09-25).
+     *
+     * Only the CURRENT target used to be drawn, so walking the carry from one occupied slot to
+     * the next made the previous tile teleport home the instant it stopped being the target. A
+     * cell that stops being the target retreats instead, and the same Animatable is re-aimed
+     * rather than restarted, so re-entering a slot mid-retreat reverses it from where it is.
+     */
+    val retreat = remember(origin) { mutableStateMapOf<CellKey, Animatable<Float, AnimationVector1D>>() }
+    /** Their slots, re-read every frame exactly as [originHome] is. */
+    val homes = remember(origin) { mutableStateMapOf<CellKey, Offset>() }
+
+    LaunchedEffect(hovered, origin) {
+        // A row's "+" displaces nothing: that is an ADD, and nothing comes back the other way.
+        val displaced = hovered.takeIf { it != origin && commandAt(it) != null }
+        if (displaced != null) {
+            moveState.holdInFlight(displaced)
+            // Seed its slot before the first frame: the grid tile is already hidden by the hold,
+            // so a frame where this one has no position to draw at is a blink.
+            homeOf(displaced)?.let { homes[displaced] = it }
+            val slide = retreat.getOrPut(displaced) { Animatable(0f) }
+            launch { slide.animateTo(1f, tween(MoveSlideMillis)) }
+        }
+        retreat.keys.toList().forEach { key ->
+            if (key == displaced) return@forEach
+            val slide = retreat.getValue(key)
+            launch {
+                slide.animateTo(0f, tween(MoveSlideMillis))
+                retreat.remove(key)
+                moveState.releaseInFlight(key)
+            }
+        }
+    }
+    // Whatever is still held when the overlay stops drawing has nobody left to release it, and a
+    // cell held in flight forever is a permanently invisible tile.
+    DisposableEffect(moveState) { onDispose { moveState.clearInFlight() } }
+
     LaunchedEffect(origin, stageOrigin) {
         var aimed = origin
+        var wasLive = true
         while (isActive) {
             withFrameNanos { }
             val liveNow = moveState.origin
@@ -1673,8 +1709,14 @@ internal fun MoveOverlay(
             // A cell scrolled entirely out of its viewport registers an empty rect; keeping the
             // last real one stops a tile in flight from snapping to the stage's corner.
             homeOf(origin)?.let { originHome = it }
-            homeOf(hoveredNow)?.let { hoveredHome = it }
+            retreat.keys.toList().forEach { key -> homeOf(key)?.let { homes[key] = it } }
             val next = homeOf(aimNow) ?: aimHome
+            // **The move ENDING is a hand-off too.** Released back onto its own slot, the aim
+            // never changed, so nothing launched the decay: the tile hung in mid-air for the
+            // length of the slide and then teleported home when the overlay stopped drawing it
+            // (Dylan, 2026-09-25).
+            val ended = wasLive && liveNow == null
+            wasLive = liveNow != null
             when {
                 // Under the finger: the residual is simply whatever separates the finger from
                 // the slot it happens to be over, so releasing anywhere leaves the tile exactly
@@ -1687,7 +1729,7 @@ internal fun MoveOverlay(
                     aimed = aimNow
                     carriedResidual.snapTo(moveState.carriedTopLeft(stageOrigin) - next)
                 }
-                aimNow != aimed -> {
+                aimNow != aimed || ended -> {
                     // Re-anchor onto the new slot WITHOUT moving the tile: everything it still
                     // has to travel becomes residual.
                     carriedResidual.snapTo(aimHome + carriedResidual.value - next)
@@ -1698,13 +1740,6 @@ internal fun MoveOverlay(
             aimHome = next
         }
     }
-
-    // The displaced tile takes the vacated slot — and gives it back if the move is called off.
-    // A PROGRESS value rather than an animated offset, so both of its endpoints can keep moving
-    // without the animation restarting from wherever it began.
-    val swapping = live != null && displaced != null
-    val swap = remember(origin, hovered) { Animatable(0f) }
-    LaunchedEffect(swap, swapping) { swap.animateTo(if (swapping) 1f else 0f, tween(MoveSlideMillis)) }
 
     // The tiles have arrived; let the state machine forget the move.
     LaunchedEffect(settling) {
@@ -1719,15 +1754,20 @@ internal fun MoveOverlay(
     val extras = LocalMappoExtraColors.current
     val outOfRange = live != null && moveState.outOfRange
     Box(modifier.fillMaxSize()) {
-        // The displaced tile first, then the markers, then the carried one. That order is the
-        // whole point: the tile sliding into the vacated slot must read as going UNDER the blue
+        // The displaced tiles first, then the markers, then the carried one. That order is the
+        // whole point: a tile sliding into the vacated slot must read as going UNDER the blue
         // marker, so which slot it is heading for is visible — while the tile in your hand stays
         // on top of everything, because it is the thing you are holding.
-        if (displaced != null) {
+        //
+        // A PROGRESS value rather than an animated offset, so both endpoints can keep moving
+        // (the camera pans, the cards scroll) without the animation restarting.
+        retreat.forEach { (key, slide) ->
+            val command = commandAt(key) ?: return@forEach
+            val home = homes[key] ?: return@forEach
             FloatingTile(
-                command = displaced,
+                command = command,
                 config = config,
-                position = lerp(hoveredHome, originHome, swap.value),
+                position = lerp(home, originHome, slide.value),
                 scale = 1f,
                 look = look,
             )
@@ -2234,9 +2274,14 @@ internal fun moveModeKeyEvent(
  * Is the stage's [MoveOverlay] standing in for the tile at [key] — and should the one in the
  * grid therefore go invisible?
  *
- * Two tiles are ever in flight: the one being carried, and the one it would displace. A move
- * that has been CALLED OFF still counts — its tiles are flying home, and they would flash back
- * into their slots the instant the state cleared.
+ * The tile being carried, the one it would displace, and any the carry has ALREADY displaced and
+ * is still flying home ([MoveModeState.inFlight]) — walk a tile across three occupied slots and
+ * all three of the tiles it disturbed are in the air at once. A move that has been CALLED OFF
+ * still counts: its tiles are flying home and would flash back into their slots the instant the
+ * state cleared.
+ *
+ * The current target is named explicitly as well as being held in flight, because the drawer
+ * takes hold of it a frame after the target changes and a one-frame double is a flicker.
  */
 internal fun MoveModeState<CellKey>.carriedByOverlay(
     key: CellKey,
@@ -2247,6 +2292,7 @@ internal fun MoveModeState<CellKey>.carriedByOverlay(
     val flightOrigin = origin ?: returning?.first ?: return false
     val flightHovered = target ?: returning?.second
     return key == flightOrigin ||
+        (hasCommand && key in inFlight) ||
         (hasCommand && key == flightHovered && flightHovered != flightOrigin)
 }
 
@@ -2606,12 +2652,16 @@ private const val MoveLiftScale = 1.06f
  * How far a carried tile may stray from every cell before the move reads as ABANDONED — carry it
  * further and the tile goes red, and letting go puts it back (Dylan, 2026-09-25).
  *
- * It has to clear the widest stretch of nothing a legitimate move crosses, which in the remap
- * grid is the controller's own column: dragging from the left flank to the right passes straight
- * over it and must not flicker into a cancel on the way. Measured from the tile's EDGES, so
- * crossing a gap costs about half the gap less half the tile.
+ * **Deliberately smaller than a tile**, so the open middle of the grid — the controller's own
+ * column — is the cancel. That is the gesture: carry a tile out over the controller and let go.
+ * Dylan asked for it explicitly after a first pass at 160dp, which was wide enough to reach
+ * across that column and so left touch moves with no way to call them off at all.
+ *
+ * Measured from the tile's EDGES, not its centre, so "close-ish to a tile" still lands on it: a
+ * tile whose rim is within this of a slot is claimed by that slot even while most of it hangs
+ * over the gap.
  */
-internal val MoveCancelDistance = 160.dp
+internal val MoveCancelDistance = 56.dp
 /** How strongly the origin / landing markers wash their cell. Low enough to read as a marked
  *  SLOT rather than a filled tile. */
 internal const val MoveMarkerAlpha = 0.3f

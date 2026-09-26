@@ -94,6 +94,25 @@ class MoveModeState<K : Any> {
     var outOfRange by mutableStateOf(false)
         private set
 
+    /**
+     * Cells the DRAWER is still animating and is therefore standing in for, beyond [origin] and
+     * [target] — so the ones left in the grid know to stay invisible.
+     *
+     * A swap preview displaces whichever cell the carry is currently over, and moving on to the
+     * next one leaves the previous tile having to get back to its own slot. Until it has, two
+     * things believe they own that slot. Which cells are mid-flight is something only the drawer
+     * knows — it owns the animations and their durations — so it declares them here, exactly as
+     * it declares when [returning] has landed via [settled].
+     */
+    var inFlight: Set<K> by mutableStateOf(emptySet())
+        private set
+
+    fun holdInFlight(key: K) { inFlight = inFlight + key }
+
+    fun releaseInFlight(key: K) { inFlight = inFlight - key }
+
+    fun clearInFlight() { inFlight = emptySet() }
+
     val active: Boolean get() = origin != null
 
     /**
