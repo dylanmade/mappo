@@ -74,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -569,9 +570,10 @@ private fun AdvancedTable(
     // The grid has gutters between rows (and between tiles), which belong to no cell. Without
     // a tolerance a finger crossing one resolves to nothing and the drop target snaps back to
     // the origin — visible as the landing marker flickering home mid-drag.
-    // Always the nearest cell — the cards are spread across the zoomed scene with air between
-    // them, and a tile carried over that air is still on its way somewhere.
-    moveState.hitTolerancePx = MoveModeState.AlwaysNearest
+    // The radius within which the grid claims a carried tile. Generous: the cards are spread
+    // across the zoomed scene with air between them, and a tile crossing that air is still on
+    // its way somewhere. Past it the move reads as abandoned — see [MoveModeState.outOfRange].
+    moveState.hitTolerancePx = with(density) { MoveCancelDistance.toPx() }
     // What the "Label" and "Type" verbs are editing. Both are summoned from a tile's menu, and
     // both live here rather than on the tile so they survive the menu closing.
     var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
@@ -674,7 +676,10 @@ private fun AdvancedTable(
     val extras = LocalMappoExtraColors.current
     fun moveMarkerFor(key: CellKey): Color? = when {
         !moveState.active -> null
-        moveState.target == key -> extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
+        // Out of range there is no destination to mark — the tile is going back where it came
+        // from, so the origin reads BLUE and the carried tile carries the red.
+        moveState.target == key && !moveState.outOfRange ->
+            extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
         previewOrigin == key -> extras.dropZoneOrigin.copy(alpha = MoveMarkerAlpha)
         else -> null
     }
@@ -946,7 +951,11 @@ private fun AdvancedTable(
                 // could still end up under a neighbour sliding across it. Up here nothing can
                 // get over one. Purely decorative — no pointer input, so it takes no touches
                 // off the tiles beneath it.
-                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
+                //
+                // While the HOST is drawing the tiles in flight, it draws the markers too: its
+                // overlay sits above this whole card, so a marker down here would be under the
+                // very tiles it is trying to describe. Drawing both would also double the wash.
+                if (!overlayInFlight) Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
                     p.rows.forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
                             slotOrder(row, p.mirrored).forEach { slot ->
@@ -1704,7 +1713,16 @@ internal fun MoveOverlay(
         moveState.settled()
     }
 
+    // Where the exchange's two ends are marked, in this overlay's own space. The stage draws
+    // them here rather than leaving them to the cards because this layer is ABOVE every card:
+    // a marker inside one would sit under the tiles it is describing (Dylan, 2026-09-25).
+    val extras = LocalMappoExtraColors.current
+    val outOfRange = live != null && moveState.outOfRange
     Box(modifier.fillMaxSize()) {
+        // The displaced tile first, then the markers, then the carried one. That order is the
+        // whole point: the tile sliding into the vacated slot must read as going UNDER the blue
+        // marker, so which slot it is heading for is visible — while the tile in your hand stays
+        // on top of everything, because it is the thing you are holding.
         if (displaced != null) {
             FloatingTile(
                 command = displaced,
@@ -1714,6 +1732,11 @@ internal fun MoveOverlay(
                 look = look,
             )
         }
+        if (live != null) {
+            MoveMarker(extras.dropZoneOrigin, originHome, look)
+            // No destination to mark while the move is out of range — it is going home.
+            if (!outOfRange && hovered != origin) MoveMarker(extras.dropZoneValid, aimHome, look)
+        }
         FloatingTile(
             command = lifted,
             config = config,
@@ -1721,8 +1744,24 @@ internal fun MoveOverlay(
             // The swell goes as the move does: a tile flying home has already been put down.
             scale = if (live != null) MoveLiftScale else 1f,
             look = look,
+            // Carried out past the grid's reach: letting go now puts it back, and saying so on
+            // the tile itself is the only place the user is actually looking.
+            wash = extras.dropZoneInvalid.takeIf { outOfRange },
         )
     }
+}
+
+/** One of the exchange's ends, washed over whatever is standing in it. */
+@Composable
+private fun MoveMarker(color: Color, position: Offset, look: TileLook) {
+    Box(
+        Modifier
+            .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+            .width(look.width)
+            .height(look.height)
+            .clip(RoundedCornerShape(look.corner))
+            .background(color.copy(alpha = MoveMarkerAlpha)),
+    )
 }
 
 /** One tile in flight: the same face it wears in the grid, placed in the overlay's own space. */
@@ -1733,6 +1772,8 @@ private fun FloatingTile(
     position: Offset,
     scale: Float,
     look: TileLook = TableTileLook,
+    /** Painted over the tile — the cancel signal, when the carry has left the grid's reach. */
+    wash: Color? = null,
 ) {
     val display = commandDisplay(command.binding, listOf(command.output), config)
     val colors = command.type.columnColors()
@@ -1749,7 +1790,17 @@ private fun FloatingTile(
             }
             .clip(shape)
             .background(container, shape)
-            .then(tileOutline(container, defined = true, shape = shape, corner = look.corner)),
+            .then(tileOutline(container, defined = true, shape = shape, corner = look.corner))
+            .then(
+                if (wash != null) {
+                    // Over the content, inside the clip: the tile itself goes the wash's colour
+                    // rather than wearing a badge.
+                    Modifier.drawWithContent {
+                        drawContent()
+                        drawRect(wash.copy(alpha = MoveWashAlpha))
+                    }
+                } else Modifier,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         TileContent(
@@ -2550,9 +2601,24 @@ private const val MoveSlideMillis = 200
 
 /** How much a lifted tile swells while it's being carried. */
 private const val MoveLiftScale = 1.06f
+
+/**
+ * How far a carried tile may stray from every cell before the move reads as ABANDONED — carry it
+ * further and the tile goes red, and letting go puts it back (Dylan, 2026-09-25).
+ *
+ * It has to clear the widest stretch of nothing a legitimate move crosses, which in the remap
+ * grid is the controller's own column: dragging from the left flank to the right passes straight
+ * over it and must not flicker into a cancel on the way. Measured from the tile's EDGES, so
+ * crossing a gap costs about half the gap less half the tile.
+ */
+internal val MoveCancelDistance = 160.dp
 /** How strongly the origin / landing markers wash their cell. Low enough to read as a marked
  *  SLOT rather than a filled tile. */
 internal const val MoveMarkerAlpha = 0.3f
+
+/** How strongly the cancel wash covers the tile it is refusing. Stronger than a slot marker —
+ *  it has to change what the tile READS as, not annotate the space around it. */
+private const val MoveWashAlpha = 0.55f
 
 /** How close to the viewport edge a dragging finger must get before the table scrolls under
  *  it, and how far it scrolls per frame while it stays there. */

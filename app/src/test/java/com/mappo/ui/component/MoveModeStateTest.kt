@@ -2,9 +2,11 @@ package com.mappo.ui.component
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.IntSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -113,39 +115,93 @@ class MoveModeStateTest {
     // ── Dead space between groups ────────────────────────────────────────────
 
     /**
-     * **A carried tile is always heading somewhere** (Dylan, 2026-09-25).
+     * **A carried tile is always heading somewhere — within reach** (Dylan, 2026-09-25).
      *
      * A tolerance sized to the gap between tiles covers the gutters inside one input group and
      * nothing else, so a tile carried across the empty space between two GROUPS resolved to no
-     * cell at all and the target collapsed back to its origin — the tile "doesn't know where it
-     * should go". [MoveModeState.AlwaysNearest] removes the limit.
+     * cell at all and the target collapsed back to its origin: the tile "doesn't know where it
+     * should go". The tolerance is now the radius within which the grid claims a tile.
      */
     @Test
-    fun withAlwaysNearest_theVoidBetweenGroupsStillResolves() {
-        val state = state()
-        state.registerBounds("left", Rect(0f, 0f, 60f, 40f))
-        state.registerBounds("right", Rect(400f, 0f, 460f, 40f))
-        state.pickUp("left", byPointer = true)
-
-        // Far out in the open, but nearer the right-hand cell.
-        state.hitTolerancePx = MoveModeState.AlwaysNearest
+    fun theVoidBetweenGroups_stillResolves() {
+        val state = twoCellsApart()
+        state.hitTolerancePx = 400f
+        // Out in the open between them, but nearer the right-hand cell.
         state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
 
         assertEquals("right", state.target)
+        assertFalse(state.outOfRange)
     }
 
-    /** The behaviour it replaces, kept here to show what changed: a gap-sized tolerance leaves
-     *  most of the screen resolving to nothing, and the target falls back to the origin. */
+    /**
+     * **Which cell is nearest cannot depend on where the tile was GRABBED** (Dylan, 2026-09-25).
+     *
+     * Measuring from the fingertip made it: the same tile in the same place resolved to different
+     * neighbours depending on whether it had been picked up by its left edge or its right. The
+     * tile is what the user aims; the finger is only how they hold it. Both lifts here put the
+     * tile in exactly the same place, so both must answer the same.
+     */
     @Test
-    fun withAGapSizedTolerance_theSameVoidFallsBackToTheOrigin() {
+    fun whereTheTileWasGrabbed_doesNotChangeWhatItIsOver() {
+        fun targetAfterGrabbingAt(grabX: Float): String? {
+            val state = twoCellsApart()
+            state.hitTolerancePx = 400f
+            state.pickUp("left", byPointer = true, grab = Offset(grabX, 20f), size = IntSize(60, 40))
+            // The finger is placed so the TILE lands in the same spot either way — left edge at
+            // 210, right edge at 270, so a 130px gap to "right" against 150px to "left". A
+            // fingertip measured instead sits at 212 or 268 and flips the answer between them.
+            state.dragTo(Offset.Zero, pointerWindowPos = Offset(210f + grabX, 20f))
+            return state.target
+        }
+
+        assertEquals(targetAfterGrabbingAt(2f), targetAfterGrabbingAt(58f))
+    }
+
+    /** Beyond the tolerance the move reads as abandoned: the target sits on the origin so the
+     *  release is a no-op, and [MoveModeState.outOfRange] says so loudly enough to draw. */
+    @Test
+    fun farFromEverything_theMoveIsAbandoned() {
+        val state = twoCellsApart()
+        state.hitTolerancePx = 80f
+        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
+
+        assertTrue(state.outOfRange)
+        assertEquals("the release has to be a no-op", "left", state.target)
+        assertNull(state.commit())
+    }
+
+    /** Coming back into reach clears it again — it is a live readout, not a latch. */
+    @Test
+    fun comingBackIntoReach_clearsTheAbandonedFlag() {
+        val state = twoCellsApart()
+        state.hitTolerancePx = 80f
+        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
+        assertTrue(state.outOfRange)
+
+        state.dragTo(offset = Offset(400f, 0f), pointerWindowPos = Offset(410f, 20f))
+
+        assertFalse(state.outOfRange)
+        assertEquals("right", state.target)
+    }
+
+    /** A cell clipped entirely out of its viewport registers an empty rect. It is not a place a
+     *  tile can be put, and it must not win on its collapsed geometry either. */
+    @Test
+    fun aCellScrolledOutOfView_isNotATarget() {
+        val state = twoCellsApart()
+        state.hitTolerancePx = 400f
+        state.registerBounds("right", Rect.Zero)
+
+        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
+
+        assertEquals("left", state.target)
+    }
+
+    private fun twoCellsApart(): MoveModeState<String> {
         val state = state()
         state.registerBounds("left", Rect(0f, 0f, 60f, 40f))
         state.registerBounds("right", Rect(400f, 0f, 460f, 40f))
         state.pickUp("left", byPointer = true)
-
-        state.hitTolerancePx = 8f
-        state.dragTo(offset = Offset(300f, 0f), pointerWindowPos = Offset(300f, 20f))
-
-        assertEquals("left", state.target)
+        return state
     }
 }

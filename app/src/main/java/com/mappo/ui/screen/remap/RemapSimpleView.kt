@@ -636,11 +636,10 @@ internal fun GroupRows(
     val order = LocalCommandOrder.current
     val density = LocalDensity.current
     if (edit != null) {
-        // Always the nearest cell. A tolerance sized to the gap BETWEEN TILES covered the
-        // gutters inside a group and nothing else, so carrying a tile across the empty space
-        // between two input groups resolved to no cell at all and the target snapped home
-        // (Dylan, 2026-09-25 — the same complaint the row gutters produced, one scale up).
-        edit.moveState.hitTolerancePx = MoveModeState.AlwaysNearest
+        // The radius within which the grid claims a carried tile — generous, because the thing
+        // it has to span is the air between one input group and the next, not the cracks between
+        // tiles. Past it the move reads as abandoned; see [MoveModeState.outOfRange].
+        edit.moveState.hitTolerancePx = with(density) { MoveCancelDistance.toPx() }
     }
     val rows = group.summaryRows.map { spec ->
         simpleRowFor(group, spec, viewingSet, viewingLayer, config, edit != null, order)
@@ -789,9 +788,15 @@ private fun RowCommandTile(
     // GREEN marks where the lifted tile will land, BLUE where it came from; green wins when
     // they're the same cell, which is how "put it back" reads as a destination rather than an
     // absence of one.
+    // While the stage draws the tiles in flight it draws the markers too — its overlay is above
+    // this whole view, so a marker here would sit under the very tiles it describes, and drawing
+    // both would double the wash (see [MoveOverlay]).
     val marker = when {
+        LocalMoveOverlay.current -> null
         !edit.moveState.active -> null
-        edit.moveState.target == slot.key -> extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
+        // Out of range there is no destination: the tile is going home, and it carries the red.
+        edit.moveState.target == slot.key && !edit.moveState.outOfRange ->
+            extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
         edit.moveState.origin == slot.key -> extras.dropZoneOrigin.copy(alpha = MoveMarkerAlpha)
         else -> null
     }

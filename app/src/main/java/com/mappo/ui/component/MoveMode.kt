@@ -14,12 +14,14 @@ import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationExceptio
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.unit.IntSize
 import com.mappo.ui.MappoGesture
 import kotlin.math.hypot
 import kotlinx.coroutines.withTimeout
@@ -73,6 +75,25 @@ class MoveModeState<K : Any> {
     var grabPoint by mutableStateOf(Offset.Zero)
         private set
 
+    /** The lifted cell's own size, so the thing being hit-tested can be the TILE rather than
+     *  the fingertip. Fixed for the gesture; zero on the controller path, which never hit-tests. */
+    var carriedSize by mutableStateOf(IntSize.Zero)
+        private set
+
+    /**
+     * **Would releasing right now call the move off?** True while the carried tile is further
+     * from every cell than [hitTolerancePx].
+     *
+     * A pointer move needs a way to say "never mind", and once every scrap of screen resolves
+     * to some nearest cell there is no dead space left to drop into (Dylan, 2026-09-25). So the
+     * far field becomes the cancel: carry the tile well away from the grid and it reads as
+     * abandoned — which the drawer is expected to SHOW, since a cancel the user can't see coming
+     * is worse than no cancel at all. [target] stays on [origin] meanwhile, so the release is a
+     * no-op through the ordinary path.
+     */
+    var outOfRange by mutableStateOf(false)
+        private set
+
     val active: Boolean get() = origin != null
 
     /**
@@ -104,16 +125,16 @@ class MoveModeState<K : Any> {
     private val bounds = LinkedHashMap<K, Rect>()
 
     /**
-     * How far outside a cell the pointer may stray and still resolve to it, in pixels.
+     * How far the carried tile may sit from a cell and still resolve to it, in pixels — and so
+     * also the distance beyond which a release CANCELS ([outOfRange]).
      *
-     * Zero means strict containment, which is wrong for any grid with GAPS between cells: a
-     * finger crossing the gutter between two rows lands on nothing, the target collapses back
-     * to the origin, and the drop indicator flickers. Set this to at least the widest gutter
-     * and the gap resolves to whichever cell it is nearest.
-     *
-     * [AlwaysNearest] gives up on a limit altogether — see its own note. That is what the remap
-     * grids use: once cells are spread across a whole screen the "widest gutter" isn't a gutter
-     * any more, it is the empty space between one input group and the next.
+     * Zero means strict overlap, which is wrong for any grid with gaps: a tile crossing the
+     * gutter between two rows resolves to nothing, the target collapses back to the origin, and
+     * the drop indicator flickers. Sizing it to the gutter turned out to be equally wrong once
+     * the cells were spread over a whole screen — then the "widest gutter" is not a gutter at
+     * all, it is the empty space between one input group and the next, and a tile carried across
+     * it forgot where it was going (Dylan, 2026-09-25). Set it generously: it is the radius
+     * within which the grid still claims a tile, not the size of the cracks in it.
      */
     var hitTolerancePx: Float = 0f
 
@@ -125,14 +146,22 @@ class MoveModeState<K : Any> {
     internal fun boundsOf(key: K): Rect? = bounds[key]
 
     /** Lift [key]. [byPointer] distinguishes a finger drag from a controller lift. [grab] is
-     *  where in the cell the finger landed; see [grabPoint]. */
-    fun pickUp(key: K, byPointer: Boolean, grab: Offset = Offset.Zero) {
+     *  where in the cell the finger landed and [size] how big the cell is; see [grabPoint] and
+     *  [carriedSize]. */
+    fun pickUp(
+        key: K,
+        byPointer: Boolean,
+        grab: Offset = Offset.Zero,
+        size: IntSize = IntSize.Zero,
+    ) {
         origin = key
         target = key
         dragOffset = Offset.Zero
         pointerDriven = byPointer
         pointerWindow = Offset.Zero
         grabPoint = grab
+        carriedSize = size
+        outOfRange = false
         // A new lift supersedes any tile still drifting home from the last one.
         returning = null
     }
@@ -165,6 +194,12 @@ class MoveModeState<K : Any> {
      */
     fun carriedTopLeft(spaceOrigin: Offset): Offset = pointerWindow - grabPoint - spaceOrigin
 
+    /** The carried tile's rect in WINDOW space — what the drop target is resolved against. */
+    private fun carriedRect(): Rect {
+        val topLeft = carriedTopLeft(Offset.Zero)
+        return Rect(topLeft, Size(carriedSize.width.toFloat(), carriedSize.height.toFloat()))
+    }
+
     /**
      * Re-run the hit test against the LAST known pointer position. Needed when the cells move
      * under a stationary finger — an edge-scrolling container slides new cells beneath it, and
@@ -176,27 +211,45 @@ class MoveModeState<K : Any> {
     }
 
     private fun resolveTargetAtPointer() {
-        target = cellAtPointer() ?: origin
+        val nearest = cellAtPointer()
+        outOfRange = nearest == null
+        target = nearest ?: origin
     }
 
-    /** The cell under the pointer, or the nearest one within [hitTolerancePx]. Null when the
-     *  pointer is genuinely away from the grid, which keeps a drop into dead space a no-op —
-     *  unless the tolerance is [AlwaysNearest], in which case there is no dead space. */
+    /**
+     * The cell the carried TILE is on, or nearest to, within [hitTolerancePx]. Null when it is
+     * beyond that — which is the cancel ([outOfRange]).
+     *
+     * **Measured from the tile, not the fingertip** (Dylan, 2026-09-25). Distance from the
+     * pointer made the answer depend on WHERE IN THE TILE the user had grabbed it: the same tile
+     * in the same place resolved to different neighbours depending on whether it had been picked
+     * up by its left edge or its right. The tile is what the user is aiming; the finger is just
+     * how they hold it.
+     *
+     * Gap distance between the two rects, so an overlap is zero and ties — a tile straddling
+     * several cells, which is most of the time — break on centre-to-centre. Cells whose
+     * registered rect is EMPTY are skipped: a cell scrolled out of its viewport clips to nothing
+     * and isn't somewhere a tile can be put.
+     */
     private fun cellAtPointer(): K? {
-        bounds.entries.firstOrNull { it.value.contains(pointerWindow) }?.let { return it.key }
-        if (hitTolerancePx <= 0f) return null
+        val tile = carriedRect()
         var best: K? = null
-        var bestDistance = Float.MAX_VALUE
+        var bestGap = Float.MAX_VALUE
+        var bestCentre = Float.MAX_VALUE
         bounds.forEach { (key, rect) ->
-            val dx = maxOf(rect.left - pointerWindow.x, 0f, pointerWindow.x - rect.right)
-            val dy = maxOf(rect.top - pointerWindow.y, 0f, pointerWindow.y - rect.bottom)
-            val distance = hypot(dx, dy)
-            if (distance < bestDistance) {
-                bestDistance = distance
+            if (rect.isEmpty) return@forEach
+            val gap = hypot(
+                maxOf(rect.left - tile.right, tile.left - rect.right, 0f),
+                maxOf(rect.top - tile.bottom, tile.top - rect.bottom, 0f),
+            )
+            val centre = (rect.center - tile.center).getDistance()
+            if (gap < bestGap || (gap == bestGap && centre < bestCentre)) {
+                bestGap = gap
+                bestCentre = centre
                 best = key
             }
         }
-        return best.takeIf { bestDistance <= hitTolerancePx }
+        return best.takeIf { bestGap <= hitTolerancePx }
     }
 
     /** Controller path: the caller resolved a directional step to [key]. */
@@ -220,22 +273,6 @@ class MoveModeState<K : Any> {
 
     fun cancel() = end(settle = true)
 
-    companion object {
-        /**
-         * **A tolerance with no limit: the nearest cell, always** (Dylan, 2026-09-25).
-         *
-         * For a grid whose cells are spread over a whole screen, a tolerance sized to the gutter
-         * between tiles leaves most of the screen resolving to nothing — so carrying a tile
-         * across the empty space between two input groups made the target collapse back to the
-         * origin, and the tile "doesn't know where it should go". A carried tile is always
-         * heading SOMEWHERE; the nearest cell is that somewhere.
-         *
-         * The cost is deliberate: with no dead space, a finger drop can no longer be a no-op by
-         * missing. Putting a tile back where it came from is how a pointer move is called off
-         * (the controller path still has B / Escape).
-         */
-        const val AlwaysNearest: Float = Float.POSITIVE_INFINITY
-    }
 
     private fun end(settle: Boolean) {
         val from = origin
@@ -244,6 +281,7 @@ class MoveModeState<K : Any> {
         target = null
         dragOffset = Offset.Zero
         pointerDriven = false
+        outOfRange = false
     }
 }
 
@@ -357,7 +395,7 @@ fun <K : Any> Modifier.moveModeLongPressSource(
                 }
                 if (!lifted && (change.position - downPos).getDistance() > reorderSlop) {
                     lifted = true
-                    state.pickUp(key, byPointer = true, grab = downPos)
+                    state.pickUp(key, byPointer = true, grab = downPos, size = size)
                 }
                 if (lifted) {
                     // The registry is keyed in WINDOW space but pointer changes arrive in this
