@@ -68,6 +68,11 @@ class MoveModeState<K : Any> {
     var pointerWindow by mutableStateOf(Offset.Zero)
         private set
 
+    /** Where inside the lifted cell the finger came down, in that cell's local space. Fixed for
+     *  the life of the gesture — it is the part of the tile the user is holding. */
+    var grabPoint by mutableStateOf(Offset.Zero)
+        private set
+
     val active: Boolean get() = origin != null
 
     /**
@@ -115,13 +120,15 @@ class MoveModeState<K : Any> {
      *  gesture's node-local pointer position into the window space the registry is keyed on. */
     internal fun boundsOf(key: K): Rect? = bounds[key]
 
-    /** Lift [key]. [byPointer] distinguishes a finger drag from a controller lift. */
-    fun pickUp(key: K, byPointer: Boolean) {
+    /** Lift [key]. [byPointer] distinguishes a finger drag from a controller lift. [grab] is
+     *  where in the cell the finger landed; see [grabPoint]. */
+    fun pickUp(key: K, byPointer: Boolean, grab: Offset = Offset.Zero) {
         origin = key
         target = key
         dragOffset = Offset.Zero
         pointerDriven = byPointer
         pointerWindow = Offset.Zero
+        grabPoint = grab
         // A new lift supersedes any tile still drifting home from the last one.
         returning = null
     }
@@ -138,6 +145,21 @@ class MoveModeState<K : Any> {
         pointerWindow = pointerWindowPos
         resolveTargetAtPointer()
     }
+
+    /**
+     * **Where a tile carried by a FINGER should be drawn**, in the coordinate space whose origin
+     * in window space is [spaceOrigin].
+     *
+     * The finger is the authority, not the slot the tile was lifted from. Drawing it as
+     * "the lifted slot's current position, plus how far the finger has travelled" holds only
+     * while that slot stays put: an edge-scrolling container slides it out from underneath, so
+     * the tile drifts away from the finger by however far the content moved, and once the slot
+     * leaves the viewport entirely its registered rect goes empty and the tile is stranded
+     * somewhere off screen (Dylan, 2026-09-25: "can flit around the screen or otherwise become
+     * offset to the point where it is no longer visible"). [pointerWindow] and [grabPoint] are
+     * both independent of what the content is doing, so this simply doesn't have that failure.
+     */
+    fun carriedTopLeft(spaceOrigin: Offset): Offset = pointerWindow - grabPoint - spaceOrigin
 
     /**
      * Re-run the hit test against the LAST known pointer position. Needed when the cells move
@@ -296,7 +318,7 @@ fun <K : Any> Modifier.moveModeLongPressSource(
                 }
                 if (!lifted && (change.position - downPos).getDistance() > reorderSlop) {
                     lifted = true
-                    state.pickUp(key, byPointer = true)
+                    state.pickUp(key, byPointer = true, grab = downPos)
                 }
                 if (lifted) {
                     // The registry is keyed in WINDOW space but pointer changes arrive in this

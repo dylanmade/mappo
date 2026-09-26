@@ -126,6 +126,9 @@ interface InputSink {
  * - **Actions** (key/gesture injection, drag) are forwarded to the registered
  *   [InputSink]; when the service isn't connected the calls are silent no-ops.
  */
+/** The buttons Mappo's own Select + A shortcut is made of. See [InputDispatcher.noteShortcutButton]. */
+enum class ShortcutButton { SELECT, A }
+
 @Singleton
 class InputDispatcher @Inject constructor() {
 
@@ -152,6 +155,47 @@ class InputDispatcher @Inject constructor() {
      */
     private val _mappoInForeground = MutableStateFlow(false)
     val mappoInForeground: StateFlow<Boolean> = _mappoInForeground.asStateFlow()
+
+    // ── Mappo's own universal shortcut: Select + A ───────────────────────────────────────────
+    //
+    // **It lives here because neither input path can own it alone** (2026-09-25). The chord used
+    // to be detected inline in `InputAccessibilityService.onKeyEvent`, which cannot see it
+    // whenever the Shizuku UserService holds EVIOCGRAB: the physical pad is gone from the OS,
+    // and the virtual gamepad's echo of it is deliberately skipped by that method's own
+    // feedback-loop guard. Since a Mappo-managed layout almost always configures a gamepad
+    // output, the grab is almost always on — so the one shortcut that is supposed to be
+    // universal was unreachable in practice (Dylan: "does not seem to work anywhere").
+    //
+    // The state is shared so a Select held across a grab transition isn't lost. WHICH path
+    // reports the buttons is mutually exclusive by construction — the raw reader only reports
+    // the chord while grabbed, which is exactly when the accessibility filter is blind — so the
+    // chord cannot fire twice for one press.
+    private var shortcutSelectHeld = false
+    private var shortcutListener: (() -> Unit)? = null
+
+    /** The action the chord performs, installed by whoever can actually perform it (the
+     *  accessibility service — it is the piece that can launch the activity). */
+    fun setShortcutListener(listener: (() -> Unit)?) {
+        shortcutListener = listener
+        if (listener == null) shortcutSelectHeld = false
+    }
+
+    /**
+     * Report a chord-relevant button edge.
+     *
+     * @return true when the chord just FIRED, so the caller can consume the press. A release,
+     *   the Select edge itself, and a repeat all return false.
+     */
+    fun noteShortcutButton(button: ShortcutButton, pressed: Boolean, repeat: Boolean = false): Boolean {
+        if (button == ShortcutButton.SELECT) {
+            shortcutSelectHeld = pressed
+            return false
+        }
+        if (!pressed || repeat || !shortcutSelectHeld) return false
+        val listener = shortcutListener ?: return false
+        listener()
+        return true
+    }
 
     private val _overlayFocus = MutableStateFlow(OverlayFocusKind.NONE)
     val overlayFocus: StateFlow<OverlayFocusKind> = _overlayFocus.asStateFlow()

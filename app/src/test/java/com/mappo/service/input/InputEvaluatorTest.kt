@@ -1907,6 +1907,46 @@ class InputEvaluatorTest {
     }
 
 
+    /**
+     * **The raw reader is the ONLY path that can see Select + A while the grab is held.**
+     *
+     * Grabbed, the physical pad is gone from the OS and the accessibility filter deliberately
+     * skips the virtual gamepad's echo of its own output — so the chord that is supposed to be
+     * universal had nowhere left to be detected (Dylan, 2026-09-25: "the Mappo shortcut key
+     * (select + A currently) does not seem to work anywhere").
+     */
+    @Test
+    fun handleRawKeyReading_underGrab_firesTheMappoShortcut() {
+        var fired = 0
+        val chord = InputDispatcher()
+        chord.setShortcutListener { fired++ }
+        every { dispatcher.noteShortcutButton(any(), any(), any()) } answers {
+            chord.noteShortcutButton(firstArg(), secondArg(), thirdArg())
+        }
+        subject.setPhysicalPassthroughEnabled(true)
+
+        subject.handleRawKeyReading(linuxKeyCode = 0x13a, pressed = true, timestampNs = 0L)
+        subject.handleRawKeyReading(linuxKeyCode = 0x130, pressed = true, timestampNs = 0L)
+
+        assertEquals(1, fired)
+        // Consumed: the A that opened Mappo must not also reach the game as a button press.
+        verify(exactly = 0) { gamepadEmitter.setButton(0x130, true) }
+    }
+
+    /**
+     * And ONLY while grabbed. Ungrabbed the accessibility filter sees the physical buttons
+     * itself and owns the chord; both paths running it would fire the shortcut twice per press.
+     */
+    @Test
+    fun handleRawKeyReading_withoutGrab_leavesTheShortcutToTheAccessibilityFilter() {
+        subject.setPhysicalPassthroughEnabled(false)
+
+        subject.handleRawKeyReading(linuxKeyCode = 0x13a, pressed = true, timestampNs = 0L)
+        subject.handleRawKeyReading(linuxKeyCode = 0x130, pressed = true, timestampNs = 0L)
+
+        verify(exactly = 0) { dispatcher.noteShortcutButton(any(), any(), any()) }
+    }
+
     // ── Mappo's own UI runs on the device's own controls (Dylan, 2026-09-25) ──────────────────
 
     /**

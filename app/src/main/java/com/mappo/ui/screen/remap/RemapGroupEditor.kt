@@ -1662,9 +1662,13 @@ internal fun MoveOverlay(
                 // Under the finger: the residual is simply whatever separates the finger from
                 // the slot it happens to be over, so releasing anywhere leaves the tile exactly
                 // where it is and the decay below carries it from there.
+                //
+                // Measured from the FINGER, not from the slot the tile was lifted out of — see
+                // [MoveModeState.carriedTopLeft]. The lifted slot moves while the body
+                // edge-scrolls under the carry, and can leave the viewport altogether.
                 liveNow != null && moveState.pointerDriven -> {
                     aimed = aimNow
-                    carriedResidual.snapTo(originHome + moveState.dragOffset - next)
+                    carriedResidual.snapTo(moveState.carriedTopLeft(stageOrigin) - next)
                 }
                 aimNow != aimed -> {
                     // Re-anchor onto the new slot WITHOUT moving the tile: everything it still

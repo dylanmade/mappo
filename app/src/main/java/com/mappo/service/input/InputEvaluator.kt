@@ -835,6 +835,24 @@ class InputEvaluator @Inject constructor(
      *    emit fire normally.
      */
     fun handleRawKeyReading(linuxKeyCode: Int, pressed: Boolean, @Suppress("UNUSED_PARAMETER") timestampNs: Long) {
+        // ── Mappo's own universal shortcut, above every gate ──
+        //
+        // ONLY while the grab is held, and that condition is what keeps it from firing twice:
+        // grabbed, the accessibility filter sees neither the physical pad (it is gone from the
+        // OS) nor the virtual gamepad's echo of it (its own feedback-loop guard skips Mappo's
+        // devices), so this is the only path that can see the chord at all. Ungrabbed, the
+        // accessibility filter owns it and this stands down. The two are never both live.
+        if (physicalPassthroughEnabled.get()) {
+            val shortcut = when (linuxKeyCode) {
+                LINUX_KEY_SELECT -> ShortcutButton.SELECT
+                LINUX_KEY_A -> ShortcutButton.A
+                else -> null
+            }
+            if (shortcut != null && dispatcher.noteShortcutButton(shortcut, pressed)) {
+                Log.i(TAG, "rawKey: Select+A → Mappo shortcut")
+                return
+            }
+        }
         // As in the accessibility service's own digital path: nothing new starts while Mappo is
         // in front, but a release still runs, so a button held as it came up isn't left stuck.
         //
@@ -2164,6 +2182,10 @@ class InputEvaluator @Inject constructor(
             0x222 to InputAddress(InputSource.DPAD, "dpad_left"),
             0x223 to InputAddress(InputSource.DPAD, "dpad_right"),
         )
+
+        /** The two Linux EV_KEY codes Mappo's own Select + A shortcut is made of. */
+        private const val LINUX_KEY_A = 0x130
+        private const val LINUX_KEY_SELECT = 0x13a
 
         /**
          * Linux EV_KEY → virtual-gamepad BTN_* code for the DEVICE_DEFAULT

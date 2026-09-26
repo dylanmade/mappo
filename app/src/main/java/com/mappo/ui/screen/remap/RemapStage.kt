@@ -90,6 +90,7 @@ import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.screen.softDropShadow
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -388,21 +389,30 @@ internal fun RemapStage(
         // content moves beneath it, and what is under the finger changes without the finger.
         val carryingByPointer = moveState.pointerDriven && moveState.active
         val carryBandPx = with(density) { CarryEdgeBand.toPx() }
-        val carryStepPx = with(density) { CarryEdgeSpeed.toPx() }
+        val carrySpeedPx = with(density) { CarryEdgeSpeed.toPx() }
         LaunchedEffect(carryingByPointer) {
             if (!carryingByPointer) return@LaunchedEffect
+            var previous = withFrameNanos { it }
             while (true) {
-                withFrameNanos { }
+                val now = withFrameNanos { it }
+                // Per SECOND, off the frame clock — the first cut moved a fixed step per frame,
+                // which is both frame-rate dependent and, at 60fps, a sprint (Dylan: "scrolls
+                // too quickly"). SQUARED across the band as well, so most of the band creeps and
+                // only the last few pixels of the rim travel at speed.
+                val seconds = (now - previous) / 1_000_000_000f
+                previous = now
                 val x = moveState.pointerWindow.x - stageOrigin.x
-                // Ramped across the band, so the edge of the window nudges and the very rim runs.
-                val push = when {
+                val ramp = when {
                     x < carryBandPx -> -(carryBandPx - x) / carryBandPx
                     x > viewportWPx - carryBandPx -> (x - (viewportWPx - carryBandPx)) / carryBandPx
                     else -> 0f
                 }.coerceIn(-1f, 1f)
-                if (push != 0f) {
-                    bodyScroll.scrollBy(push * carryStepPx)
-                    moveState.dragTo(moveState.dragOffset, moveState.pointerWindow)
+                if (ramp != 0f) {
+                    bodyScroll.scrollBy(ramp * abs(ramp) * carrySpeedPx * seconds)
+                    // The cells moved under a stationary finger, so the drop target has to be
+                    // re-resolved. The tile itself needs nothing: it is drawn from the finger's
+                    // own position (see MoveModeState.carriedTopLeft).
+                    moveState.refreshTargetAtPointer()
                 }
             }
         }
@@ -1440,10 +1450,10 @@ private fun StageAdvancedContent(
     }
 }
 
-/** How near the window's edge a carried tile starts pulling the body along, and how hard at
- *  the very rim (per frame). See the carry edge-scroll in [RemapStage]. */
+/** How near the window's edge a carried tile starts pulling the body along, and how fast it
+ *  travels at the very rim, PER SECOND. See the carry edge-scroll in [RemapStage]. */
 private val CarryEdgeBand = 56.dp
-private val CarryEdgeSpeed = 16.dp
+private val CarryEdgeSpeed = 400.dp
 
 /** The body's one scroller — the handle a test drives it by. */
 internal const val ControlsBodyTestTag = "controls-body"

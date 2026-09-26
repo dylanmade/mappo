@@ -23,6 +23,7 @@ import com.mappo.data.model.steam.InputSource
 import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.InputAddress
 import com.mappo.service.input.InputDispatcher
+import com.mappo.service.input.ShortcutButton
 import com.mappo.service.input.InputEvaluator
 import com.mappo.service.input.InputSink
 import com.mappo.service.input.OverlayFocusKind
@@ -169,7 +170,6 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
      * currently held so a following A press can enter gamepad nav of the toolbar overlay.
      * Brick-3 MVP; Brick 5 migrates the trigger to the configurable activator flow.
      */
-    private var selectHeld = false
 
     private val inputEventSetDisplayIdMethod: java.lang.reflect.Method? by lazy {
         try {
@@ -196,6 +196,19 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
     override fun onServiceConnected() {
         super.onServiceConnected()
         dispatcher.register(this)
+        // Mappo's own universal shortcut. The dispatcher runs the chord (both input paths feed
+        // it); performing it is ours, because launching the activity needs a Context.
+        dispatcher.setShortcutListener {
+            if (MainActivity.inForeground) {
+                Log.i(TAG, "Select+A → toggle home frame in place")
+                MainActivity.requestHomeToggle()
+            } else {
+                Log.i(TAG, "Select+A → launch home frame")
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
         val info = serviceInfo
         info.flags = info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         setServiceInfo(info)
@@ -228,6 +241,7 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
+        dispatcher.setShortcutListener(null)
         shizukuMotionCoordinator.stop()
         evaluator.stop()
         dispatcher.unregister()
@@ -515,7 +529,7 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
         // the chord after exiting nav (observed on-device 2026-06-19).
         val downEdge = event.action == KeyEvent.ACTION_DOWN
         if (event.keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
-            selectHeld = downEdge
+            dispatcher.noteShortcutButton(ShortcutButton.SELECT, downEdge)
         }
 
         // PROMPT and the toolbar's gamepad-nav mode (TOOLBAR) are handled identically: the overlay
@@ -539,21 +553,14 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
             }
         }
 
-        // ── Home chord (Select + A): reveal or dismiss the handheld home frame ──
+        // ── Home chord (Select + A) ──
         // Placed BEFORE the remap-enabled gate so the home is reachable even with remap off.
-        // Foreground → MainScreen toggles the frame in place (dismiss slides it down and
-        // backgrounds the task); background → launch the activity (frame slides up on resume).
-        // Chord detected inline (Brick-5 MVP); migrates to the configurable activator flow later.
-        if (selectHeld && event.keyCode == KeyEvent.KEYCODE_BUTTON_A && downEdge && event.repeatCount == 0) {
-            if (MainActivity.inForeground) {
-                Log.i(TAG, "onKeyEvent: Select+A → toggle home frame in place")
-                MainActivity.requestHomeToggle()
-            } else {
-                Log.i(TAG, "onKeyEvent: Select+A → launch home frame")
-                startActivity(
-                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            }
+        // The chord itself now lives on the dispatcher, because this method cannot see it while
+        // the Shizuku grab is held — see [InputDispatcher.noteShortcutButton]. The ACTION is
+        // still ours (installed in onServiceConnected); only the state machine moved.
+        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A &&
+            dispatcher.noteShortcutButton(ShortcutButton.A, downEdge, event.repeatCount > 0)
+        ) {
             return true
         }
 
