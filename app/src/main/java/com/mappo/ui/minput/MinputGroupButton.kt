@@ -1,10 +1,8 @@
 package com.mappo.ui.minput
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -67,13 +65,16 @@ import androidx.compose.ui.unit.dp
  *
  * @param equalWidths stretch every segment to an equal share of the group's width (the
  *   pre-2026-08-29 behavior); default wraps each label.
- * @param container fill for the UNSELECTED segments (and the trailing action segment) —
- *   surface 2 by default, overrideable for a group riding a plane where that would vanish
- *   (the minput coloration rule: theme-derived, overrideable per view).
- * @param trailingActionIcon optional ACTION segment closing the group — a deliberate break
- *   from single-choice convention: a narrow fixed-width segment (it takes the group's outer
- *   end rounding) that fires [onTrailingAction] instead of selecting. Born for the action-set
- *   row's "+" (add a set).
+ * **Every segment SELECTS.** An optional trailing ACTION segment existed from 2026-08-29 to
+ * 2026-09-27 — a narrow fixed-width segment that fired instead of selecting, born for the
+ * layout-set row's "+" — and it is gone: a group button is a single-choice control, and a row that
+ * is mostly choices with one verb on the end asks the eye to read one silhouette as two kinds of
+ * thing (Dylan, who moved that "+" into the kebab beside it). A verb belongs next to the group, or
+ * in a menu, not in it.
+ *
+ * @param container fill for the UNSELECTED segments — surface 2 by default, overrideable for a
+ *   group riding a plane where that would vanish (the minput coloration rule: theme-derived,
+ *   overrideable per view).
  */
 @Composable
 fun <T> MinputGroupButton(
@@ -90,9 +91,6 @@ fun <T> MinputGroupButton(
     enabled: Boolean = true,
     equalWidths: Boolean = false,
     container: Color = MinputElevatedContainer,
-    trailingActionIcon: ImageVector? = null,
-    trailingActionDescription: String? = null,
-    onTrailingAction: () -> Unit = {},
 ) {
     val outerCorner = MinputPillHeight / 2
     Row(
@@ -101,7 +99,7 @@ fun <T> MinputGroupButton(
             .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(GroupSegmentGap),
     ) {
-        val lastRoundedIndex = if (trailingActionIcon != null) -1 else options.lastIndex
+        val lastRoundedIndex = options.lastIndex
         options.forEachIndexed { i, option ->
             val shape = RoundedCornerShape(
                 topStart = if (i == 0) outerCorner else GroupInnerCorner,
@@ -224,60 +222,6 @@ fun <T> MinputGroupButton(
                 }
             }
         }
-        if (trailingActionIcon != null) {
-            // The action segment: fixed narrow width (never a selection peer), wearing the
-            // unselected surface-2 treatment and the group's outer end rounding.
-            val shape = RoundedCornerShape(
-                topStart = GroupInnerCorner,
-                bottomStart = GroupInnerCorner,
-                topEnd = outerCorner,
-                bottomEnd = outerCorner,
-            )
-            val interaction = remember { MutableInteractionSource() }
-            Surface(
-                shape = shape,
-                color = container,
-                border = minputBevelBorder(
-                    container,
-                    cornerRadius = GroupInnerCorner,
-                    endCornerRadius = outerCorner,
-                ),
-                modifier = Modifier
-                    .width(GroupActionSegmentWidth)
-                    .minputInteractiveMotion(interaction)
-                    .fillMaxHeight()
-                    .then(
-                        if (enabled) {
-                            Modifier.clip(shape).clickable(
-                                interactionSource = interaction,
-                                indication = minputIndication(),
-                                role = Role.Button,
-                                onClick = onTrailingAction,
-                            )
-                        } else Modifier.alpha(0.55f),
-                    ),
-            ) {
-                Box(
-                    // The same optical rule as the segments above, which this is where it was
-                    // first tuned (Dylan, 2026-08-29): a full pill arc at the end, a square
-                    // start, so the glyph is pushed off the curve by half the end's allowance.
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(
-                            start = minputRoundEndBias(GroupInnerCorner, MinputPillHeight),
-                            end = minputRoundEndBias(outerCorner, MinputPillHeight),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        trailingActionIcon,
-                        contentDescription = trailingActionDescription,
-                        modifier = Modifier.size(MinputPillIconSize),
-                        tint = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -287,8 +231,4 @@ private val GroupSegmentGap = 4.dp
 /** Segment inner corners: perfectly square (outer ends stay full pill) — the M2 side. */
 private val GroupInnerCorner = 2.dp
 
-/** Fixed width of the trailing ACTION segment — icon-only, deliberately narrower than a
- *  LABELLED selection segment so it reads as an appendix, not a peer. (It comes out the same as
- *  an icon-only selection segment with one pill end, which is what it is.) */
-private val GroupActionSegmentWidth = 26.dp
 

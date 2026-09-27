@@ -112,7 +112,10 @@ class ControllerConfigRepository @Inject constructor(
             ActionSet(
                 controllerProfileId = controllerProfileId,
                 name = "default",
-                title = "Default Map",
+                // What the controls bar's switcher shows. "Layout Set 1" (Dylan, 2026-09-27) —
+                // it was "Default Map", which named a Steam concept nobody here uses and read as
+                // a fallback rather than as the first of however many the user goes on to make.
+                title = "Layout Set 1",
                 legacy = true,
                 orderIndex = 0,
             )

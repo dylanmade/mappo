@@ -3,6 +3,7 @@ package com.mappo.ui.screen.remap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,7 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +40,8 @@ import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.NameableText
 import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputAction
+import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputBar
 import com.mappo.ui.minput.MinputBarIconTextGap
 import com.mappo.ui.minput.MinputBarStackGap
@@ -224,14 +230,14 @@ private fun BarIdentityButton(
 }
 
 /**
- * The action-set switcher: one segment per set on a [MinputGroupButton], closed by the "+"
- * action segment (add a set — the library's sanctioned convention break), then the set-
- * management kebab.
+ * The layout-set switcher: one segment per set on a [MinputGroupButton], then the set-management
+ * kebab that carries everything which isn't a choice.
  *
- * The kebab is the standard vertical "more" glyph, bare (no fill, no ring) — a dormant utility
- * affordance, not a peer of the segments beside it (Dylan, 2026-09-26; it was a chromed cog).
- * Rename / duplicate / delete / layers land on it. Layers are deliberately absent from the
- * segments themselves.
+ * **"New layout set" lives in the KEBAB** (Dylan, 2026-09-27). It used to be a "+" action segment
+ * closing the group — which the library called a sanctioned convention break and Dylan called what
+ * it is: a group button is a single-CHOICE control, and a segment that fires instead of selecting
+ * asks the eye to read one row as two kinds of thing. The kebab was sitting there empty next to it.
+ * Rename / duplicate / delete / layers join it there as they land.
  *
  * Segments take the library's default surface-2 fill: the bar is a real surface again, so the
  * old `minputBoxContainer()` override — which existed because the cluster rode a pod — went
@@ -247,6 +253,7 @@ private fun ActionSetCluster(
 ) {
     val sets = config?.actionSets.orEmpty()
     if (sets.isEmpty()) return
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
@@ -257,16 +264,23 @@ private fun ActionSetCluster(
             selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
             onSelect = onSelectActionSet,
             optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
-            trailingActionIcon = Lucide.Plus,
-            trailingActionDescription = "Add action set",
-            onTrailingAction = onAddSet,
         )
-        MinputIconButton(
-            icon = Icons.Filled.MoreVert,
-            contentDescription = "Manage action sets",
-            onClick = {},
-            enabled = false,
-        )
+        // The menu hangs off the kebab's own Box (MinputActionMenu measures its anchor itself).
+        Box {
+            MinputIconButton(
+                icon = Icons.Filled.MoreVert,
+                contentDescription = "Manage layout sets",
+                onClick = { menuOpen = !menuOpen },
+                modifier = Modifier.testTag("bar:sets-menu"),
+            )
+            MinputActionMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                actions = if (menuOpen) {
+                    listOf(MinputAction("New layout set", Lucide.Plus, onClick = onAddSet))
+                } else emptyList(),
+            )
+        }
     }
 }
 
@@ -314,9 +328,17 @@ private enum class EditorKind(
     val description: String,
     val iconSize: Dp,
 ) {
-    PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor", MinputIconButtonIconSize),
-    VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor", MinputPillIconSize),
+    PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor", EditorGlyphSizeSolid),
+    VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor", EditorGlyphSizeStroke),
 }
+
+/**
+ * The editor switch's glyph sizes: the family's utility and pill scales, each a dp up (Dylan,
+ * 2026-09-27 — "just the tiniest bit bigger"). The pair keeps its own step between them, because
+ * the filled silhouette and the stroke mark do not read alike at one size.
+ */
+private val EditorGlyphSizeSolid = MinputIconButtonIconSize + 1.dp
+private val EditorGlyphSizeStroke = MinputPillIconSize + 1.dp
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */
 private val SlotGap = 8.dp

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -58,6 +59,7 @@ import com.mappo.R
 import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.MoveCommitGesture
+import com.mappo.data.settings.TileReveal
 import com.mappo.data.settings.TextSize
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Radar
@@ -404,6 +406,45 @@ internal fun MoveCommitRow(current: MoveCommitGesture, onPick: (MoveCommitGestur
             optionLabel = { it.label },
             onPick = onPick,
             onClickLabel = "Change how a moved tile is placed",
+        )
+    }
+}
+
+/**
+ * How much of the controls view turns into tiles when a group is opened — every group, or just
+ * the one being worked on. See [TileReveal]; it is an experiment on top of the edit-mode
+ * experiment, kept as a setting precisely so the two can be compared on the device.
+ *
+ * Global rather than layout-scoped, so it sits in the wordmark drawer beside its neighbours.
+ */
+@Composable
+internal fun TileRevealRow(current: TileReveal, onPick: (TileReveal) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            Icons.Filled.GridView,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Show tiles for",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        MinputPillDropdown(
+            current = current,
+            options = TileReveal.entries,
+            optionLabel = { it.label },
+            onPick = onPick,
+            onClickLabel = "Change which groups show tiles",
         )
     }
 }

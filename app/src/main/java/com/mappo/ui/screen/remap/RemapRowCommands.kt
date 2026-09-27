@@ -67,6 +67,17 @@ internal val LocalMoveCommitGesture =
     staticCompositionLocalOf { com.mappo.data.settings.MoveSettings.Default }
 
 /**
+ * **How many groups show their tiles at once** — the user's setting, carried down the same way
+ * [LocalMoveCommitGesture] is and for the same reason.
+ *
+ * Read by the basic view when it works out which groups' rows are tiles (see `EditReveal`).
+ * Provided by `MainScreen` from [com.mappo.data.settings.TileRevealSettings]; the default matches
+ * that store's, so a surface composed outside the app window still behaves like the app.
+ */
+internal val LocalTileReveal =
+    staticCompositionLocalOf { com.mappo.data.settings.TileRevealSettings.Default }
+
+/**
  * The commands on one input row, in display order.
  *
  * Unbound bindings are left out: "New" creates the binding BEFORE the picker opens, so a

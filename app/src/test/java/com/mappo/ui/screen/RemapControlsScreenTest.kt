@@ -33,7 +33,9 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
+import com.mappo.data.settings.TileReveal
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
+import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.GroupOutlineEndInset
 import com.mappo.ui.screen.remap.GroupOutlineInset
 import com.mappo.ui.screen.remap.groupBackingTestTag
@@ -445,21 +447,27 @@ class RemapControlsScreenTest {
         val live = androidx.compose.runtime.mutableStateOf(seedShapedConfig())
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = live.value,
-                        onOpenInputEditor = { _, _, _ -> },
-                        // Stand in for the repository: make the command, hand back its id. The
-                        // picker it would open next is not part of what this asserts.
-                        onAddRowCommand = { _, inputKey, _, onReady ->
-                            live.value = live.value.withTwoCommands(
-                                InputSource.BUTTON_DIAMOND, inputKey, 900L,
-                            )
-                            onReady(950L)
-                        },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
+                // EVERY group tiled, which is what makes acting on a row in a group other than
+                // the one edit mode was entered from reachable at all (see [TileReveal]).
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.ALL_GROUPS,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = live.value,
+                            onOpenInputEditor = { _, _, _ -> },
+                            // Stand in for the repository: make the command, hand back its id.
+                            // The picker it would open next is not part of what this asserts.
+                            onAddRowCommand = { _, inputKey, _, onReady ->
+                                live.value = live.value.withTwoCommands(
+                                    InputSource.BUTTON_DIAMOND, inputKey, 900L,
+                                )
+                                onReady(950L)
+                            },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
@@ -731,18 +739,24 @@ class RemapControlsScreenTest {
         )
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
-                    RemapControlsScreen(
-                        config = live.value,
-                        onOpenInputEditor = { _, _, _ -> },
-                        onAddRowCommand = { _, inputKey, _, onReady ->
-                            live.value = seedShapedConfig()
-                                .withTwoCommands(InputSource.BUTTON_DIAMOND, inputKey, 900L)
-                            onReady(950L)
-                        },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
+                // EVERY group tiled: the command lands in a group other than the one edit mode
+                // was entered from, which only that reveal makes reachable (see [TileReveal]).
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.ALL_GROUPS,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                        RemapControlsScreen(
+                            config = live.value,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onAddRowCommand = { _, inputKey, _, onReady ->
+                                live.value = seedShapedConfig()
+                                    .withTwoCommands(InputSource.BUTTON_DIAMOND, inputKey, 900L)
+                                onReady(950L)
+                            },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
@@ -948,8 +962,8 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().boundsInRoot
         val identity = bounds("bar:identity")
         val editors = bounds("bar:editors")
-        val sets = composeRule.onNodeWithContentDescription("Add action set", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
+        // The cluster's end is its kebab now — the "+" action segment retired 2026-09-27.
+        val sets = bounds("bar:sets-menu")
 
         assert(identity.right <= sets.left) {
             "the identity widget ran under the action sets: $identity vs $sets"
@@ -1034,7 +1048,13 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
+        // Adding a set is the sets KEBAB's menu now, not a "+" segment closing the group
+        // (2026-09-27): a group button is single-choice, and a verb in it reads as a peer.
+        composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(0)
+        composeRule.onNodeWithTag("bar:sets-menu").assertExists()
+        composeRule.onNodeWithTag("bar:sets-menu").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("New layout set", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -1538,6 +1558,85 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **A 4:3 screen opens a group with nothing left to scroll** (Dylan, 2026-09-27).
+     *
+     * The controller's column is sized from the grid's HEIGHT, which says nothing about how much
+     * width the flanks need — so the two together can outgrow the window and light the body's fade
+     * and chevron over a view with nothing more to show. Going immersive surfaced it: the system
+     * bars' height came back to the grid, 40% of it went into the column, and a 4:3 screen that
+     * used to fit started overflowing by a few dp.
+     *
+     * The column gives that ground back now (`spanOf`'s squeeze). Asserted on the EDIT end, where
+     * the numbers are real: a tile's width is a fixed dp, so this measures the actual grid rather
+     * than Robolectric's idea of how wide a word is.
+     */
+    @Test
+    fun aFourThreeScreen_opensAGroupWithoutOverflowing() {
+        composeRule.setContent {
+            MaterialTheme {
+                // 4:3, and the size class this regressed on: big enough that the flanks and the
+                // picture both fit at the height the bars used to leave, small enough that they
+                // do not at the full height.
+                Surface(modifier = androidx.compose.ui.Modifier.size(632.dp, 474.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        fun range() = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+
+        assert(range().maxValue() == 0f) { "the resting view already overflows: ${range().maxValue()}" }
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(1_200L)
+        composeRule.waitForIdle()
+
+        assert(range().maxValue() == 0f) {
+            "opening a group overflowed by ${range().maxValue()}px — the fade and chevron would " +
+                "be up over a view with nothing more to show"
+        }
+    }
+
+    /**
+     * **Tapping a group's PANEL opens it** (Dylan, 2026-09-27): "I can't actually tap the
+     * background rectangles to open an input group, and I would expect to be able to".
+     *
+     * A box is only as wide as its own text, so most of the rectangle it sits on — a surface that
+     * plainly reads as part of the group — did nothing. The panel carries the box's two gestures
+     * now. Tapped OUTSIDE the box's own bounds, so it is the panel's hit area under test and not
+     * the box's.
+     */
+    @Test
+    fun simpleView_tappingAGroupsPanel_opensThatGroup() {
+        setScreenLocal(seedShapedConfig())
+        val box = composeRule.onNodeWithTag("simple-group:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+
+        // The left column's panel runs off the LEFT edge, so anywhere left of the box at the
+        // box's own height is panel and nothing else.
+        composeRule.onNodeWithTag(groupBackingTestTag(RemapSimpleGroup.DPAD), useUnmergedTree = true)
+            .performTouchInput {
+                val spot = androidx.compose.ui.geometry.Offset(2f, height / 2f)
+                down(spot)
+                up()
+            }
+        composeRule.waitForIdle()
+
+        // Edit mode: the d-pad's rows are command TILES now, addressable by cell tag.
+        composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true).assertExists()
+        // And the tap landed off the box, which is what makes this the panel's doing.
+        assert(box.left > 2f) { "the box should not reach the screen edge: $box" }
+    }
+
+    /**
      * **Each utility group sits at the bottom of its OWN column** (Dylan, 2026-09-26).
      *
      * Select and Start used to be one card in the centre column, seated between the two stick
@@ -1949,24 +2048,36 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * EDIT MODE is view-WIDE (Dylan, 2026-09-22): selecting one group tiles EVERY group's rows,
-     * so the whole controller stays legible and a command can be carried from any group to any
-     * other. And it does not travel — the advanced card is not opened.
+     * A screen with a reveal scope chosen for it — the experiment's two behaviours (see
+     * [TileReveal]) are otherwise indistinguishable from the outside.
      */
-    @Test
-    fun simpleView_selectingAGroup_tilesEveryGroupsRows_withoutZooming() {
+    private fun setScreenRevealing(reveal: TileReveal, config: ControllerConfig = seedShapedConfig()) {
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = config,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
+        composeRule.waitForIdle()
+    }
+
+    /**
+     * EDIT MODE is view-WIDE (Dylan, 2026-09-22): the mode itself belongs to the whole view, so a
+     * command can be carried from any group to any other. On [TileReveal.ALL_GROUPS] that shows
+     * as every group's rows tiling at once. And it does not travel — the advanced card is not
+     * opened.
+     */
+    @Test
+    fun simpleView_selectingAGroup_tilesEveryGroupsRows_withoutZooming() {
+        setScreenRevealing(TileReveal.ALL_GROUPS)
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
 
@@ -1976,6 +2087,91 @@ class RemapControlsScreenTest {
         // Every row ends in its "+", exactly as the table's rows do.
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").assertExists()
         composeRule.onAllNodesWithTag("group-editor").assertCountEquals(0)
+    }
+
+    /**
+     * **Revealing ONE group at a time** (Dylan, 2026-09-27, the default while the experiment
+     * runs): "entering edit mode via an input group only reveals the tiles for that input group".
+     *
+     * Everything else about the mode is unchanged — the group opened is fully tiled, "+" and all,
+     * and the view has not travelled anywhere.
+     */
+    @Test
+    fun editMode_revealingOneGroup_tilesThatGroupAlone() {
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertExists()
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").assertExists()
+        // Every OTHER group is still the resting view.
+        composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("group-editor").assertCountEquals(0)
+    }
+
+    /**
+     * **Moving to another group reveals it and collapses the one left behind.**
+     *
+     * A collapsed group keeps its BOX — that is what the cursor walks onto, and what a finger
+     * taps — so the mode stays navigable with only one group's tiles on screen. Driven here by
+     * the box's own click, which is the same path the d-pad takes (both seat the cursor in the
+     * group and then open it).
+     */
+    @Test
+    fun editMode_movingToAnotherGroup_revealsItAndCollapsesTheLast() {
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertExists()
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0").assertExists()
+        composeRule.onAllNodesWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertCountEquals(0)
+    }
+
+    /**
+     * **A tile in flight reveals everything** (Dylan, 2026-09-27: "if a tile has been grabbed,
+     * all of the tiles should become visible") — and when it lands, the group it landed in is
+     * the one left open.
+     *
+     * The tile is lifted by the controller path, which is the one that can be driven from here:
+     * hold the activate button until the lift ripens.
+     */
+    @Test
+    fun editMode_liftingATile_revealsEveryGroup_thenCollapsesAroundWhereItLands() {
+        composeRule.mainClock.autoAdvance = false
+        setScreenRevealing(
+            TileReveal.FOCUSED_GROUP,
+            seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L),
+        )
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1_200L)
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.waitForIdle()
+        }
+        settle()
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        settle()
+        val tile = "cell:FACE:BUTTON_DIAMOND:button_a:0"
+        composeRule.onNodeWithTag(tile).requestFocus()
+        settle()
+        composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0").assertCountEquals(0)
+
+        // Hold until it lifts — the lift is a delayed effect, so the clock has to run for it.
+        composeRule.onNodeWithTag(tile).performKeyInput { keyDown(Key.ButtonA) }
+        settle()
+        composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0").assertExists()
+
+        // Put it straight back down. The group it landed in stays open; the rest collapse again.
+        composeRule.onNodeWithTag(tile).performKeyInput { keyUp(Key.ButtonA) }
+        settle()
+        composeRule.onNodeWithTag(tile).assertExists()
+        composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0").assertCountEquals(0)
+        composeRule.mainClock.autoAdvance = true
     }
 
     /**
@@ -2028,7 +2224,60 @@ class RemapControlsScreenTest {
      * jittered: the scroller has a range, so the camera correction actually does something.
      */
     @Test
-    fun enteringEditMode_movesEveryGroupInOneDirection_withoutShaking() {
+    fun enteringEditMode_movesEveryGroupInOneDirection_withoutShaking() =
+        assertMorphDoesNotShake(TileReveal.FOCUSED_GROUP) { back ->
+            listOf(
+                "in" to { composeRule.onNodeWithTag("simple-group:FACE").performClick() },
+                // And out again — the leg that drifted, and so the one worth watching.
+                "out" to back,
+            )
+        }
+
+    /** The same, with every group revealing at once: every column changes width instead of one,
+     *  so the grid's own re-centring has the most to do. */
+    @Test
+    fun enteringEditMode_withEveryGroupRevealed_doesNotShake() =
+        assertMorphDoesNotShake(TileReveal.ALL_GROUPS) { back ->
+            listOf(
+                "in" to { composeRule.onNodeWithTag("simple-group:FACE").performClick() },
+                "out" to back,
+            )
+        }
+
+    /**
+     * **The travel that only revealing one group at a time has** (2026-09-27): a SWAP, one group
+     * opening as another closes, and across the two columns so both change width at once — the
+     * left giving up its wide box while the right takes one on.
+     *
+     * It is the case the two ends cannot describe between them: the box growing widens through
+     * act one of the morph and the one collapsing gives its width up in act two, so an
+     * interpolation of the two endpoint grids disagrees with the boxes in the middle. Hence the
+     * column floor in the stage's layout — and hence this, which is what would catch its absence.
+     */
+    @Test
+    fun switchingGroups_movesEveryGroupInOneDirection_withoutShaking() =
+        assertMorphDoesNotShake(
+            reveal = TileReveal.FOCUSED_GROUP,
+            // Two fat groups in the SAME column, which is the shape that needs the floor: the
+            // column is as wide as whichever of them is open, so it leaves and arrives at the very
+            // same width while the two boxes cross in the middle at four fifths of theirs. And fat
+            // enough that the grid overruns the window — a grid that fits is padded around the
+            // controller's middle and pins every box to it, so nothing moves to measure.
+            config = seedShapedConfig()
+                .withPressStack(InputSource.DPAD, 7000L)
+                .withPressStack(InputSource.LEFT_TRIGGER, 8000L),
+        ) { _ ->
+            listOf(
+                "in" to { composeRule.onNodeWithTag("simple-group:DPAD").performClick() },
+                "across" to { composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick() },
+            )
+        }
+
+    private fun assertMorphDoesNotShake(
+        reveal: TileReveal,
+        config: ControllerConfig = seedShapedConfig(),
+        legs: (back: () -> Unit) -> List<Pair<String, () -> Unit>>,
+    ) {
         composeRule.mainClock.autoAdvance = false
         var back: (() -> Unit)? = null
         composeRule.setContent {
@@ -2036,13 +2285,15 @@ class RemapControlsScreenTest {
                 ?.onBackPressedDispatcher
             back = { dispatcher?.onBackPressed() }
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(560.dp, 500.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(560.dp, 500.dp)) {
+                        RemapControlsScreen(
+                            config = config,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
@@ -2068,13 +2319,10 @@ class RemapControlsScreenTest {
             return frames
         }
 
-        val legs = mapOf(
-            "in" to travel { composeRule.onNodeWithTag("simple-group:FACE").performClick() },
-            // And out again — the leg that drifted, and so the one worth watching.
-            "out" to travel { composeRule.runOnUiThread { back?.invoke() } },
-        )
+        val walked = legs { composeRule.runOnUiThread { back?.invoke() } }
+            .map { (name, begin) -> name to travel(begin) }
 
-        for ((leg, frames) in legs) tracked.forEach { group ->
+        for ((leg, frames) in walked) tracked.forEach { group ->
             val path = frames.map { it.getValue(group) }
             val net = path.last() - path.first()
             val forward = if (net >= 0f) 1f else -1f
@@ -2175,7 +2423,12 @@ class RemapControlsScreenTest {
             MaterialTheme {
                 // Narrow enough, and with rows full enough, that the RESTING view already
                 // overruns it — so there is somewhere to be scrolled away from to begin with.
-                Surface(modifier = androidx.compose.ui.Modifier.size(300.dp, 500.dp)) {
+                // 250dp rather than the 300 it was: at 300 the controller's column now gives up
+                // enough of its own width to land the whole grid inside the window (2026-09-27's
+                // squeeze) and there would be nothing to scroll. The shoulder this opens still
+                // holds one command per row, so its edit-mode box fits the window — which the
+                // last assertion needs.
+                Surface(modifier = androidx.compose.ui.Modifier.size(250.dp, 500.dp)) {
                     RemapControlsScreen(
                         config = seedShapedConfig()
                             .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)

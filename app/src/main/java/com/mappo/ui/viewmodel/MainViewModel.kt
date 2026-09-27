@@ -109,6 +109,7 @@ class MainViewModel @Inject constructor(
     private val frameSettings: FrameSettings,
     private val textSizeSettings: TextSizeSettings,
     private val moveSettings: com.mappo.data.settings.MoveSettings,
+    private val tileRevealSettings: com.mappo.data.settings.TileRevealSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ApplicationAutoSwitcher,
@@ -221,6 +222,10 @@ class MainViewModel @Inject constructor(
     /** How a controller tile move is confirmed — release, or press again. See MoveSettings. */
     val moveCommitGesture: StateFlow<com.mappo.data.settings.MoveCommitGesture> =
         moveSettings.commitGesture
+
+    /** How many groups show their tiles in edit mode. See TileRevealSettings. */
+    val tileReveal: StateFlow<com.mappo.data.settings.TileReveal> =
+        tileRevealSettings.reveal
 
     val textSize: StateFlow<TextSize> = textSizeSettings.size
 
@@ -620,6 +625,9 @@ class MainViewModel @Inject constructor(
 
     fun setMoveCommitGesture(gesture: com.mappo.data.settings.MoveCommitGesture) =
         moveSettings.setCommitGesture(gesture)
+
+    fun setTileReveal(reveal: com.mappo.data.settings.TileReveal) =
+        tileRevealSettings.setReveal(reveal)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

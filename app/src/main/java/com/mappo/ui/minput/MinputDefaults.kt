@@ -451,8 +451,10 @@ fun minputRoundEndWidth(height: Dp, startCorner: Dp, endCorner: Dp): Dp =
     height + minputRoundEndBias(startCorner, height) + minputRoundEndBias(endCorner, height)
 
 /** The whole optical allowance a fully-rounded end takes; content shifts half of it away from
- *  the curve. Measured off the group button's action segment, where it was first tuned by eye. */
-val MinputRoundEndBias = 2.dp
+ *  the curve. First tuned by eye on the group button's action segment (2dp), widened to 3dp on
+ *  2026-09-27 — on an icon-only segment, whose glyph has no label to share the space with, 2dp
+ *  still read as crowding the arc. */
+val MinputRoundEndBias = 3.dp
 
 /** Track size of [MinputSwitch] — the bar-scale toggle. The height matches the mini text
  *  line ([minputMiniTextStyle]'s 14sp line at the app's 0.85 scale ≈ 12dp), so an

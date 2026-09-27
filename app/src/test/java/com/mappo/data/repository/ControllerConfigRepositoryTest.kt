@@ -115,7 +115,7 @@ class ControllerConfigRepositoryTest {
         val cpId = subject.seedDefaultConfig(layoutId = 1L)
         val sets = actionSetDao.getByControllerProfile(cpId)
         assertEquals(1, sets.size)
-        assertEquals("Default Map", sets[0].title)
+        assertEquals("Layout Set 1", sets[0].title)
         assertTrue(sets[0].legacy)
     }
 

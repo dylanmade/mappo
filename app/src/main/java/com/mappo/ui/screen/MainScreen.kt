@@ -152,6 +152,7 @@ import com.mappo.ui.screen.home.ScreenFrame
 import com.mappo.ui.screen.home.ScreenFrameFadeMillis
 import androidx.compose.runtime.CompositionLocalProvider
 import com.mappo.ui.screen.remap.LocalMoveCommitGesture
+import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
@@ -251,6 +252,7 @@ fun MainScreen(
     val overlayShowing by viewModel.overlayShowing.collectAsStateWithLifecycle()
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
     val moveCommitGesture by viewModel.moveCommitGesture.collectAsStateWithLifecycle()
+    val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -1064,7 +1066,10 @@ fun MainScreen(
     // would be a parameter per layer (see LocalMoveCommitGesture). Wrapped around the routes
     // rather than declared inside them so the NavHost block stays where it is.
     val screenContent: @Composable () -> Unit = {
-        CompositionLocalProvider(LocalMoveCommitGesture provides moveCommitGesture) { routes() }
+        CompositionLocalProvider(
+            LocalMoveCommitGesture provides moveCommitGesture,
+            LocalTileReveal provides tileReveal,
+        ) { routes() }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1098,6 +1103,8 @@ fun MainScreen(
                     onAutoDetectChange = viewModel::setAutoSwitchEnabled,
                     moveCommit = moveCommitGesture,
                     onMoveCommitChange = viewModel::setMoveCommitGesture,
+                    tileReveal = tileReveal,
+                    onTileRevealChange = viewModel::setTileReveal,
                     textSize = textSize,
                     onTextSizeChange = { size ->
                         if (size != textSize) {

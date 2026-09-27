@@ -67,7 +67,9 @@ fun AddSetDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Action Set") },
+        // Named as the control that opens it does (the sets kebab's "New layout set", 2026-09-27).
+        // "Action set" is Steam's word and stays in the code; the UI says layout set.
+        title = { Text("New layout set") },
         text = {
             Column {
                 OutlinedTextField(
@@ -79,7 +81,7 @@ fun AddSetDialog(
                     keyboardOptions = mappoKeyboardOptions(),
                 )
                 Text(
-                    text = "Shown on the Remap Controls tab.",
+                    text = "Shown on the controls bar's set switcher.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

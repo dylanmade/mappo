@@ -18,6 +18,7 @@ import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.FrameStyle
 import com.mappo.data.settings.TextSize
 import com.mappo.data.settings.MoveSettings
+import com.mappo.data.settings.TileRevealSettings
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.service.shizuku.ShizukuConnection
 import com.mappo.service.autoswitch.ApplicationAutoSwitcher
@@ -154,6 +155,9 @@ class MainViewModelMultiBindTest {
             textSizeSettings = textSizeSettings,
             moveSettings = mockk(relaxed = true) {
                 every { commitGesture } returns MutableStateFlow(MoveSettings.Default)
+            },
+            tileRevealSettings = mockk(relaxed = true) {
+                every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,

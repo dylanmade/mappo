@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mappo.data.settings.MoveCommitGesture
+import com.mappo.data.settings.TileReveal
 import com.mappo.data.settings.TextSize
 import com.mappo.ui.minput.MinputPanelDividerContentGap
 import com.mappo.ui.minput.MinputPanelHeaderHeight
@@ -33,6 +34,7 @@ import com.mappo.ui.screen.remap.PowerRow
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.MoveCommitRow
 import com.mappo.ui.screen.remap.TextSizeRow
+import com.mappo.ui.screen.remap.TileRevealRow
 
 /**
  * The wordmark drawer (2026-08-20 flow re-imagining): the traditional left navigation
@@ -54,6 +56,9 @@ fun MappoDrawerContent(
     // How a controller move is confirmed. Global, and not layout-scoped, so it lives here.
     moveCommit: MoveCommitGesture,
     onMoveCommitChange: (MoveCommitGesture) -> Unit,
+    // How many groups show their tiles in edit mode. Global, and an experiment — see TileReveal.
+    tileReveal: TileReveal,
+    onTileRevealChange: (TileReveal) -> Unit,
     // Dev tooling: the floating Theme Studio font picker in the window corner.
     fontDebugEnabled: Boolean,
     onFontDebugChange: (Boolean) -> Unit,
@@ -102,6 +107,9 @@ fun MappoDrawerContent(
                 }
                 item(key = "move_commit") {
                     MoveCommitRow(current = moveCommit, onPick = onMoveCommitChange)
+                }
+                item(key = "tile_reveal") {
+                    TileRevealRow(current = tileReveal, onPick = onTileRevealChange)
                 }
                 item(key = "text_size") {
                     TextSizeRow(current = textSize, onPick = onTextSizeChange)

@@ -24,6 +24,7 @@ import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.TextSize
 import com.mappo.data.settings.MoveSettings
+import com.mappo.data.settings.TileRevealSettings
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.settings.FrameStyle
 import com.mappo.service.autoswitch.ApplicationAutoSwitcher
@@ -164,6 +165,9 @@ class MainViewModelTest {
             textSizeSettings = textSizeSettings,
             moveSettings = mockk(relaxed = true) {
                 every { commitGesture } returns MutableStateFlow(MoveSettings.Default)
+            },
+            tileRevealSettings = mockk(relaxed = true) {
+                every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
@@ -505,6 +509,9 @@ class MainViewModelTest {
             textSizeSettings = textSizeSettings,
             moveSettings = mockk(relaxed = true) {
                 every { commitGesture } returns MutableStateFlow(MoveSettings.Default)
+            },
+            tileRevealSettings = mockk(relaxed = true) {
+                every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
@@ -921,6 +928,9 @@ class MainViewModelTest {
         textSizeSettings = textSizeSettings,
         moveSettings = mockk(relaxed = true) {
             every { commitGesture } returns MutableStateFlow(MoveSettings.Default)
+        },
+        tileRevealSettings = mockk(relaxed = true) {
+            every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
         },
         shizukuRequiredPreferences = shizukuRequiredPrefs,
         shizukuConnection = shizukuConnection,

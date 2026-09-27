@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -63,6 +64,7 @@ import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.InputSource
 import com.mappo.data.model.steam.displayNameFor
+import com.mappo.data.settings.TileReveal
 import com.mappo.ui.component.MoveModeState
 import com.mappo.ui.glyph.InputGlyphs
 import com.mappo.ui.screen.displayLabel as activatorDisplayLabel
@@ -160,45 +162,95 @@ internal fun RemapSimpleView(
      */
     var editGroup by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
     /**
-     * Edit mode as it is ON SCREEN, which outlives [editGroup] through the morph out — the same
-     * arrangement [visibleGroup] has for the zoom, and for the same reason: the rows are still
-     * travelling home after the intent has gone.
+     * **The group the CURSOR is in** — which, when only one group reveals its tiles, is the group
+     * revealed (Dylan, 2026-09-27). It follows focus rather than intent: the d-pad walks from a
+     * tile in one group straight into the next group's box, and arriving there is what opens it.
+     *
+     * Distinct from [editGroup] on purpose. That one is the group edit mode was ENTERED from, and
+     * Back still returns the cursor to it; this one moves as the user moves.
      */
-    var editVisible by remember { mutableStateOf(editGroup) }
-    /** 0 = the resting rows, 1 = tiles. The whole travel is this one number; see [EditPhase]. */
-    val editProgress = remember { Animatable(if (editGroup != null) 1f else 0f) }
-    var editSettled by remember { mutableStateOf(true) }
+    var editCursor by remember { mutableStateOf<RemapSimpleGroup?>(null) }
+    /**
+     * **A tile is in flight.** Every group reveals for as long as one is — asked for explicitly
+     * (Dylan, 2026-09-27: "if a tile has been grabbed, all of the tiles should become visible"),
+     * because a command being carried has to be able to see everywhere it could land. When it
+     * lands, the group it landed in is the one that stays open.
+     */
+    var carrying by remember { mutableStateOf(false) }
     /** One-shot: seat the cursor on this group's first tile, once there IS one to seat it on. */
     var editSeat by remember { mutableStateOf<RemapSimpleGroup?>(null) }
     // Bumped to re-seat the cursor on a tile after a tap has wiped focus. See [refocusTick].
     var editFocusTick by remember { mutableIntStateOf(0) }
 
-    // The morph in and out. Focus is seated only once the tiles are REAL — mid-travel they are
-    // inert ghosts with nothing to focus (see EditPhase).
-    LaunchedEffect(editGroup) {
-        val target = editGroup
-        if (target != null) {
-            editVisible = target
-            // **Only if there is a morph to run** (Dylan, 2026-09-25). Creating a command leaves
-            // for the full-screen picker, and the screen that comes back is already in edit mode
-            // with the travel at its end — but animating 1f to 1f still runs for the spec's full
-            // duration, holding `editSettled` false the whole time. Everything that waits for the
-            // tiles to be real waited with it: the cursor's seat, and the pan to the group the
-            // new command landed in, which is the "solid second" before the camera moved.
-            if (editProgress.value < 1f) {
-                editSettled = false
-                editProgress.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
-                editSettled = true
+    /** The group the tiles belong to: wherever the cursor is, falling back to the group edit
+     *  mode was opened from until focus has reported in. */
+    val editSubject = editCursor ?: editGroup
+    /** Which groups SHOULD be tiles right now — the whole of the reveal policy, in one place. */
+    val editTarget: Set<RemapSimpleGroup> = when {
+        editGroup == null -> emptySet()
+        carrying || LocalTileReveal.current == TileReveal.ALL_GROUPS -> AllSimpleGroups
+        else -> setOfNotNull(editSubject)
+    }
+    /** Where every group stood when the current travel began; see [EditReveal]. */
+    var editFrom by remember { mutableStateOf<Map<RemapSimpleGroup, Float>>(emptyMap()) }
+    /** The target as the SCREEN has it, which outlives [editTarget] through the travel to it —
+     *  the same arrangement [visibleGroup] has for the zoom, and for the same reason: the rows
+     *  are still travelling after the intent has changed. */
+    var editShown by remember { mutableStateOf(editTarget) }
+    /** The travel to [editShown], 0 → 1. One number for the whole transition; each group's own
+     *  progress is a lerp from where it was to where it is going. */
+    val editTravel = remember { Animatable(1f) }
+    var editSettled by remember { mutableStateOf(true) }
+    var editTick by remember { mutableIntStateOf(0) }
+
+    // The morph, whichever way each group is going. Focus is seated only once the tiles are REAL
+    // — mid-travel they are inert ghosts with nothing to focus (see EditPhase).
+    LaunchedEffect(editTarget) {
+        if (editTarget == editShown) return@LaunchedEffect
+        // Snapshot where every group IS, not where the last travel meant to leave it: a travel
+        // interrupted by a second group being opened carries on from the shape it had reached.
+        val here = AllSimpleGroups.associateWith { group ->
+            val target = if (group in editShown) 1f else 0f
+            if (editSettled) target else {
+                val start = editFrom[group] ?: 0f
+                start + (target - start) * editTravel.value
             }
-            editSeat = target
-        } else if (editVisible != null) {
-            if (editProgress.value > 0f) {
-                editSettled = false
-                editProgress.animateTo(0f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
-                editSettled = true
-            }
-            editVisible = null
         }
+        editFrom = here
+        editShown = editTarget
+        editTick++
+        // **Only if there is a morph to run** (Dylan, 2026-09-25). Creating a command leaves for
+        // the full-screen picker, and the screen that comes back is already in edit mode with the
+        // travel at its end — but animating 1f to 1f still runs for the spec's full duration,
+        // holding `editSettled` false the whole time. Everything that waits for the tiles to be
+        // real waited with it: the cursor's seat, and the pan to the group the new command landed
+        // in, which is the "solid second" before the camera moved.
+        val landed = AllSimpleGroups.all { group ->
+            here.getValue(group) == (if (group in editTarget) 1f else 0f)
+        }
+        if (!landed) {
+            editSettled = false
+            editTravel.snapTo(0f)
+            editTravel.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
+            editSettled = true
+        } else {
+            editTravel.snapTo(1f)
+        }
+        // Seat the cursor on the group that has just been REVEALED — the one it was already in
+        // needs nothing, and a landing tile claims the cursor for itself (see `seatCommand`).
+        val subject = editSubject
+        if (!carrying && subject != null && here.getValue(subject) < 1f) editSeat = subject
+    }
+    /** Everything the stage needs to know about the reveal, as one value. */
+    val editReveal = remember(editFrom, editShown, editSettled, editTick, editSubject, editGroup) {
+        EditReveal(
+            focus = editSubject.takeIf { editGroup != null },
+            from = editFrom,
+            expanded = editShown,
+            settled = editSettled,
+            tick = editTick,
+            travel = { editTravel.value },
+        )
     }
     // Where the camera has travelled since the zoom began — the group being edited NOW, which
     // is what the zoom collapses back into and hands focus to. Distinct from [expandedGroup],
@@ -288,8 +340,11 @@ internal fun RemapSimpleView(
     // entered from — the tile it was on is about to stop existing.
     BackHandler(enabled = expandedGroup != null || editGroup != null) {
         if (editGroup != null) {
-            returnFocusGroup = editGroup
+            // Back to the box the cursor is ON, not the one edit mode was entered from: with one
+            // group revealed at a time the cursor has very likely moved since.
+            returnFocusGroup = editCursor ?: editGroup
             editGroup = null
+            editCursor = null
         } else {
             expandedGroup = null
         }
@@ -312,23 +367,25 @@ internal fun RemapSimpleView(
         viewingLayer = viewingLayer,
         config = config,
         callbacks = editorCallbacks,
-        editGroup = editVisible,
-        editPhase = when {
-            editVisible == null -> EditPhase.REST
-            editSettled -> EditPhase.EDIT
-            else -> EditPhase.MORPH
-        },
-        editProgress = { editProgress.value },
-        editSettled = editSettled,
+        reveal = editReveal,
         editSeatGroup = editSeat,
         onEditSeated = { editSeat = null },
         editFocusTick = editFocusTick,
         seatCommand = seatCommand,
         onSeatCommand = onSeatCommand,
         // Selecting a box EDITS IN PLACE; holding it opens the advanced view it used to open.
-        onOpenGroup = { editGroup = it },
+        // In edit mode the boxes of the groups that are NOT revealed stay live, so this is also
+        // how a finger switches which group is open.
+        onOpenGroup = {
+            editGroup = it
+            editCursor = it
+        },
+        // The cursor arriving in a group is what reveals it, tap or d-pad alike.
+        onGroupFocused = { if (editGroup != null) editCursor = it },
+        onCarrying = { carrying = it },
         onOpenAdvanced = {
             editGroup = null
+            editCursor = null
             expandedGroup = it
         },
         onLookAt = { cameraGroup = it },
@@ -900,6 +957,110 @@ internal enum class EditPhase {
     /** Edit mode proper: real [CommandTile]s, focusable and carryable. */
     EDIT,
 }
+
+/**
+ * **Which groups' rows are tiles, and how far each one is into being them** (Dylan, 2026-09-27).
+ *
+ * Edit mode started out all-or-nothing: opening one group tiled every group's rows at once
+ * ([RemapSimpleView]'s `editGroup`). The experiment on top of that experiment is to reveal only
+ * the group being worked on — "I'd like to see if it feels a little less overwhelming" — which
+ * makes the morph a set of groups travelling INDEPENDENTLY rather than one view changing shape:
+ * navigating from one group to the next opens that one as it closes the last, and the two
+ * animations overlap. [com.mappo.data.settings.TileReveal] picks between the two behaviours; this
+ * describes both, because "every group" is just the case where the set is all of them.
+ *
+ * **Every group's progress is a function of ONE number**, the travel, and of where that group
+ * stood when the travel began ([from]) — never of the frame before it. That is the same rule the
+ * grid's geometry obeys (see `EditMorphPlan`), and for the same reason: a group's width is read
+ * back by the layout that positions it, so a value derived frame by frame chases its own tail.
+ * It also makes an INTERRUPTION exact rather than approximate — a second group opened mid-travel
+ * simply snapshots wherever everything is and starts a fresh travel from there.
+ */
+@Immutable
+internal class EditReveal(
+    /**
+     * The group the cursor belongs to: what the camera frames, and where a seat lands. Null the
+     * moment edit mode is left — including through the collapse that follows it, which is why
+     * [editing] and not this is what says whether tiles exist.
+     */
+    val focus: RemapSimpleGroup?,
+    /** How far into being tiles each group was when this travel began; absent = resting rows. */
+    private val from: Map<RemapSimpleGroup, Float>,
+    /** The groups whose rows are tiles at the travel's end. */
+    val expanded: Set<RemapSimpleGroup>,
+    /** False while the travel is running. */
+    val settled: Boolean,
+    /** Bumped once per travel — the token the stage's morph plan re-captures its endpoints on. */
+    val tick: Int,
+    /** The travel, 0 → 1. Read in the LAYOUT and DRAW phases only, like every other progress
+     *  on this screen, so a 260ms animation recomposes nothing. */
+    private val travel: () -> Float,
+) {
+    private fun targetOf(group: RemapSimpleGroup) = if (group in expanded) 1f else 0f
+
+    private fun fromOf(group: RemapSimpleGroup) = from[group] ?: 0f
+
+    /** How far this group is into being tiles: 0 resting rows, 1 real tiles. */
+    fun progressOf(group: RemapSimpleGroup): Float {
+        val target = targetOf(group)
+        if (settled) return target
+        val start = fromOf(group)
+        return start + (target - start) * travel().coerceIn(0f, 1f)
+    }
+
+    /** Which of the two shapes this group's rows are in, or the travel between them. Read in
+     *  COMPOSITION — it decides whether real tiles are built — so it comes off the sets and the
+     *  settled flag, never off the animation. */
+    fun phaseOf(group: RemapSimpleGroup): EditPhase = when {
+        // **A group that is not itself moving is not mid-morph.** Only the groups changing shape
+        // travel; the one the cursor is in keeps its real, focusable tiles while its neighbours
+        // open or close around it. Said the simple way — every group MORPHs while the travel runs
+        // — a tile lifted in one group lost its focus the moment the others revealed to receive
+        // it, which is the one case where losing it matters most.
+        group in expanded -> if (settled || fromOf(group) >= 1f) EditPhase.EDIT else EditPhase.MORPH
+        !settled && fromOf(group) > 0f -> EditPhase.MORPH
+        else -> EditPhase.REST
+    }
+
+    /** Is any group tiles, or on its way into or out of being them? The gate on everything edit
+     *  mode owns — the move state, the keyboard, a box stepping out of the cursor's way. */
+    val editing: Boolean =
+        expanded.isNotEmpty() || (!settled && from.values.any { it > 0f })
+
+    /** Is anything GROWING into tiles, as opposed to everything on the move collapsing? */
+    private val growing: Boolean = expanded.any { fromOf(it) < 1f }
+
+    /**
+     * The curve the GRID's endpoint interpolation follows.
+     *
+     * A box growing into tiles widens through act one of the morph ([editTravelAt]); one
+     * collapsing out of them holds its width through act one and gives it up in act two, which
+     * is that ramp mirrored. When everything on the move is going the same way — opening edit
+     * mode, leaving it — this is therefore EXACT. In a swap it cannot be, because the two halves
+     * run on opposite ramps; there the live box widths carry the geometry and this is only the
+     * floor that keeps a column from dipping between them (see the stage's layout).
+     */
+    fun gridTravel(): Float {
+        val t = travel().coerceIn(0f, 1f)
+        return if (growing) editTravelAt(t) else 1f - editTravelAt(1f - t)
+    }
+
+    companion object {
+        /** No tiles anywhere — the resting view, and the default for any caller that has no
+         *  edit mode to describe. */
+        val Rest = EditReveal(
+            focus = null,
+            from = emptyMap(),
+            expanded = emptySet(),
+            settled = true,
+            tick = 0,
+            travel = { 0f },
+        )
+    }
+}
+
+/** Every input group — the reveal's "all of them", and the set its travels are planned over. */
+private val AllSimpleGroups: Set<RemapSimpleGroup> = RemapSimpleGroup.values().toSet()
 
 /** How far the labels have travelled — act one, finishing before the chrome starts. Shared
  *  with the STAGE, whose grid must interpolate on exactly the same curve as the rows inside it. */
