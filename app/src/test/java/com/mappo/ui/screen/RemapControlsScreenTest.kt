@@ -34,6 +34,7 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
+import com.mappo.ui.screen.remap.groupBackingTestTag
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
@@ -127,40 +128,6 @@ class RemapControlsScreenTest {
 
         composeRule.onNodeWithTag("simple-group:FACE").requestFocus()
         composeRule.onNodeWithTag("simple-group:FACE").assertIsFocused()
-    }
-
-    /**
-     * The centre column's box is sized by the COLUMN, not by its content, so its rows have to
-     * be centred in it — a Box hands its children a zero minimum width, and without an explicit
-     * centre the cluster sat against the box's left edge (Dylan, 2026-09-19).
-     */
-    @Test
-    fun simpleView_centresTheUtilityBoxesRowsInItsColumn() {
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-
-        val box = composeRule.onNodeWithTag("simple-group:UTILITY").fetchSemanticsNode().boundsInRoot
-        // Their seeded self-mappings, which is what a fresh layout actually shows.
-        val start = composeRule.onNodeWithText("Start / Menu", substring = true, useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val select = composeRule.onNodeWithText("Select / View", substring = true, useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        // The two halves meet at the box's centre line, so their own span centres on it.
-        val clusterCentre = (minOf(start.left, select.left) + maxOf(start.right, select.right)) / 2f
-        val drift = kotlin.math.abs(clusterCentre - box.center.x)
-        assert(drift < box.width / 8f) {
-            "utility rows drift ${'$'}drift from the box centre (box=${'$'}box, start=${'$'}start, select=${'$'}select)"
-        }
     }
 
     @Test
@@ -947,13 +914,96 @@ class RemapControlsScreenTest {
 
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
+    /**
+     * **The bar's three clusters never overlap** (2026-09-26). The centre cluster is centred in
+     * the BAR, which a Box of three alignments also does — and which lets a long layout name run
+     * straight under it, because nothing measures the two against each other. The bar's own
+     * layout gives each flank only the room beside the centre (see `BarSlots`), so a name too
+     * long for its side ellipsizes instead.
+     */
+    @Test
+    fun topBar_clustersNeverOverlap_evenWithALongLayoutName() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                    RemapControlsScreen(
+                        config = twoSetConfig(
+                            setAButtonA = BindingOutput.Unbound,
+                            setBButtonA = BindingOutput.Unbound,
+                        ),
+                        viewingActionSetId = 1L,
+                        layoutName = "A deliberately overlong layout name for a narrow bar",
+                        onSelectActionSet = {},
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val identity = bounds("bar:identity")
+        val editors = bounds("bar:editors")
+        val sets = composeRule.onNodeWithContentDescription("Add action set", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+
+        assert(identity.right <= sets.left) {
+            "the identity widget ran under the action sets: $identity vs $sets"
+        }
+        assert(editors.left >= sets.right) {
+            "the editor switch ran under the action sets: $editors vs $sets"
+        }
+    }
+
+    /**
+     * **The editor switch** (Dylan, 2026-09-26) — this screen IS the physical-buttons editor, so
+     * its half is the live one, and picking the other half opens the virtual-buttons (overlay)
+     * editor. It replaced the "Edit overlay" button.
+     */
+    @Test
+    fun topBar_editorSwitch_offersBothEditors_andOpensTheVirtualOne() {
+        var opened = 0
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onEditOverlay = { opened++ },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        // Glyphs, no words — the semantics are the descriptions.
+        composeRule.onNodeWithContentDescription("Physical buttons editor", useUnmergedTree = true)
+            .assertExists()
+        composeRule.onAllNodesWithText("Edit overlay").assertCountEquals(0)
+        // The click lives on the SEGMENT; the glyph inside it carries the description (the same
+        // split MinputMenuRow has — see clickMenuItem).
+        composeRule.onNode(
+            androidx.compose.ui.test.hasClickAction() and
+                androidx.compose.ui.test.hasAnyDescendant(
+                    hasContentDescription("Virtual buttons editor"),
+                ),
+            useUnmergedTree = true,
+        ).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assert(opened == 1) { "the virtual editor should have been opened once, got $opened" }
+    }
+
     @Test
     fun topBar_viewingLayout_showsPreviewOverline_noBack() {
-        // 2026-08-27 bar: no Back arrow in any state — the change button (the layouts
-        // drawer's summon) leads. The Layout settings and Activate pills are retired
-        // (options = Start key; activation = drawer cards); a non-active layout is
-        // marked by the "(Preview)" overline suffix instead. The add-set affordance
-        // is the set row's "+" segment.
+        // No Back arrow in any state (2026-08-27) — the identity widget (the layouts drawer's
+        // summon) leads. The Layout settings and Activate pills are retired (options = Start
+        // key; activation = drawer cards); a non-active layout is marked by its OVERLINE, which
+        // reads "PREVIEWING LAYOUT" over the layout's name (2026-09-26 — it was a "(Preview)"
+        // suffix on the name itself while the identity was one pill). The add-set affordance is
+        // the set row's "+" segment.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -974,12 +1024,12 @@ class RemapControlsScreenTest {
         }
 
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
-        // The identity button (the drawer summon since 2026-08-27, ArrowLeftRight
-        // pill deleted; a plain pill carrying the LAYOUT name since the 2026-08-29 bar
-        // redesign collapsed the two-line stack — the application rides the icon).
+        // The identity widget (the drawer summon since 2026-08-27, ArrowLeftRight pill
+        // deleted; the two-line app-icon + overline + name stack is back as of 2026-09-26).
         composeRule.onNodeWithTag("bar:identity").assertExists()
-        // No layout name in this setup — the label falls back to "Layout".
-        composeRule.onNodeWithText("Layout (Preview)", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("PREVIEWING LAYOUT", useUnmergedTree = true).assertExists()
+        // No layout name in this setup — the name line falls back to "Layout".
+        composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(1)
@@ -1014,7 +1064,10 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onNodeWithTag("bar:identity").assertExists()
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        // The home state's identity label carries no "(Preview)" suffix.
+        // The home state's overline says the layout on screen is the ACTIVE one.
+        composeRule.onNodeWithText("ACTIVE LAYOUT", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("PREVIEWING LAYOUT", useUnmergedTree = true)
+            .assertCountEquals(0)
         composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
     }
 
@@ -1396,57 +1449,113 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * The CENTRE card splits at its centre line, like the centre BOX does (Dylan, 2026-09-20):
-     * the utility glyphs meet in the middle and their commands radiate outward.
+     * **A utility card mirrors the flank it joined** (Dylan, 2026-09-26).
+     *
+     * This replaced a centre-card test: the utility group used to straddle the scene's centre
+     * line, Select's commands running left out of it and Start's right. Now Select is a LEFT
+     * column group, so its card reads like every other one on that side — glyph at the card's
+     * right edge, commands running outward to the left.
      */
     @Test
-    fun zoomScene_centreCardsRowsRadiateFromItsCentreLine() {
+    fun zoomScene_utilityCard_mirrorsItsFlank() {
         setScreenLocal(seedShapedConfig())
 
-        openAdvanced("UTILITY")
+        openAdvanced("LEFT_UTILITY")
         composeRule.waitForIdle()
-        val card = composeRule.onNodeWithTag("zoom-card:UTILITY", useUnmergedTree = true)
+        val card = composeRule.onNodeWithTag("zoom-card:LEFT_UTILITY", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val select = composeRule.onNodeWithTag("cell:UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
+        // Slot 0 is the command nearest the glyph, slot 1 the "+" beyond it — and on a mirrored
+        // card the indices climb LEFTWARD.
+        val first = composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val start = composeRule.onNodeWithTag("cell:UTILITY:SWITCH_START:click:0", useUnmergedTree = true)
+        val second = composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:1", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        assert(select.right <= card.center.x) {
-            "Select's commands run LEFT out of the centre: card $card, select $select"
-        }
-        assert(start.left >= card.center.x) {
-            "Start's commands run RIGHT out of the centre: card $card, start $start"
-        }
-        // Both on one line, as in the box: the glyphs are neighbours, not stacked rows.
-        assert(kotlin.math.abs(select.top - start.top) < 1f) {
-            "the two halves should sit level: $select / $start"
+        assert(second.right <= first.left + 1f) {
+            "the row should run outward to the LEFT: first $first, second $second (card $card)"
         }
     }
 
     /**
-     * The basic view is a 3 × 3 grid (Dylan, 2026-09-17), and the point of rebuilding it that way
-     * was this: the utility box belongs in the stick BAND, between the two stick boxes, not at
-     * the bottom of the plate below them — which is where three independently-laid-out columns
-     * had left it.
+     * **Every group box sits on a rectangle that runs off its own side of the screen** (Dylan,
+     * 2026-09-26) — which replaced the single plate under the whole grid.
+     *
+     * Measured both ways round: the rectangle's outer edge is past the window (its UNCLIPPED
+     * position, since `boundsInRoot` clips to what is visible), and its inner edge is the box's
+     * own, so the box sits at the end of its rectangle rather than somewhere along it.
      */
     @Test
-    fun simpleView_seatsTheUtilityBoxBetweenTheStickBoxes() {
+    fun simpleView_eachGroupSitsOnARectangleRunningOffItsOwnSide() {
+        setScreenLocal(seedShapedConfig())
+        val viewport = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        fun node(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+
+        // LEFT column: the rectangle starts off the left edge and ends with the box.
+        val leftBox = node("simple-group:DPAD").boundsInRoot
+        val leftBacking = node(groupBackingTestTag(RemapSimpleGroup.DPAD))
+        val leftStart = leftBacking.positionInRoot.x
+        assert(leftStart < viewport.left) {
+            "the left column's backing should start off screen: $leftStart vs ${viewport.left}"
+        }
+        assert(kotlin.math.abs(leftStart + leftBacking.size.width - leftBox.right) < 2f) {
+            "it should end at its box's inner edge: ${leftStart + leftBacking.size.width} vs ${leftBox.right}"
+        }
+
+        // RIGHT column: the mirror image.
+        val rightBox = node("simple-group:FACE").boundsInRoot
+        val rightBacking = node(groupBackingTestTag(RemapSimpleGroup.FACE))
+        val rightStart = rightBacking.positionInRoot.x
+        assert(rightStart + rightBacking.size.width > viewport.right) {
+            "the right column's backing should run off the right edge: " +
+                "${rightStart + rightBacking.size.width} vs ${viewport.right}"
+        }
+        assert(kotlin.math.abs(rightStart - rightBox.left) < 2f) {
+            "it should start at its box's inner edge: $rightStart vs ${rightBox.left}"
+        }
+    }
+
+    /**
+     * **Each utility group sits at the bottom of its OWN column** (Dylan, 2026-09-26).
+     *
+     * Select and Start used to be one card in the centre column, seated between the two stick
+     * boxes where the hardware puts them. They are now the utility group of each side, in a
+     * fourth band under the sticks, and the centre column carries nothing but the controller —
+     * which is what this pins: same side as its own stick, below it, and clear of the picture.
+     */
+    @Test
+    fun simpleView_seatsEachUtilityBoxUnderItsOwnColumn() {
         setScreenLocal(seedShapedConfig())
         fun boundsOf(group: String) =
             composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
                 .fetchSemanticsNode().boundsInRoot
 
-        val utility = boundsOf("UTILITY")
+        val controller = composeRule.onNodeWithTag(ControllerImageTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val leftUtility = boundsOf("LEFT_UTILITY")
+        val rightUtility = boundsOf("RIGHT_UTILITY")
         val leftStick = boundsOf("LEFT_STICK")
         val rightStick = boundsOf("RIGHT_STICK")
 
-        assert(utility.left > leftStick.right) { "utility should sit right of the left stick: $utility" }
-        assert(utility.right < rightStick.left) { "utility should sit left of the right stick: $utility" }
-        // Level with them: its centre inside the band the two stick boxes span.
-        val bandTop = minOf(leftStick.top, rightStick.top)
-        val bandBottom = maxOf(leftStick.bottom, rightStick.bottom)
-        assert(utility.center.y in bandTop..bandBottom) {
-            "utility should be level with the sticks, not below them: $utility vs $bandTop..$bandBottom"
+        // Below the sticks — the fourth band — rather than level with them.
+        assert(leftUtility.top >= leftStick.bottom) {
+            "the left utility box belongs under the left stick: $leftUtility vs $leftStick"
+        }
+        assert(rightUtility.top >= rightStick.bottom) {
+            "the right utility box belongs under the right stick: $rightUtility vs $rightStick"
+        }
+        // Each on its own flank, with the controller between them.
+        assert(leftUtility.right <= controller.center.x) {
+            "the left utility box should be left of the controller: $leftUtility vs $controller"
+        }
+        assert(rightUtility.left >= controller.center.x) {
+            "the right utility box should be right of the controller: $rightUtility vs $controller"
+        }
+        // The left column is right-aligned to itself and the right column left-aligned, so each
+        // utility box lines up with the stick above it rather than floating in its column.
+        assert(kotlin.math.abs(leftUtility.right - leftStick.right) < 2f) {
+            "the left column's inner edges should agree: $leftUtility vs $leftStick"
+        }
+        assert(kotlin.math.abs(rightUtility.left - rightStick.left) < 2f) {
+            "the right column's inner edges should agree: $rightUtility vs $rightStick"
         }
     }
 
@@ -1741,9 +1850,11 @@ class RemapControlsScreenTest {
     @Test
     fun groupEditor_everyGroup_offersAnEnabledModePill() {
         setScreenLocal(seedShapedConfig())
-        // UTILITY is exempt by design (Dylan, 2026-09-21): Start and Select have no mode to
-        // pick — theirs follows from whether they are bound — so their card states its name.
-        for (group in RemapSimpleGroup.entries - RemapSimpleGroup.UTILITY) {
+        // The utility groups are exempt by design (Dylan, 2026-09-21): Start and Select have no
+        // mode to pick — theirs follows from whether they are bound — so their card states its
+        // name instead.
+        val utility = setOf(RemapSimpleGroup.LEFT_UTILITY, RemapSimpleGroup.RIGHT_UTILITY)
+        for (group in RemapSimpleGroup.entries - utility) {
             openAdvanced(group.name)
             composeRule.waitForIdle()
             val pills = inOpenCard(modePillMatcher).fetchSemanticsNodes().size
@@ -1988,7 +2099,7 @@ class RemapControlsScreenTest {
                 }
             }
         }
-        val tracked = listOf("DPAD", "FACE", "LEFT_SHOULDER", "RIGHT_STICK", "UTILITY")
+        val tracked = listOf("DPAD", "FACE", "LEFT_SHOULDER", "RIGHT_STICK", "LEFT_UTILITY")
         fun sample() = tracked.associateWith {
             composeRule.onNodeWithTag("simple-group:$it", useUnmergedTree = true)
                 .fetchSemanticsNode().positionInRoot.x

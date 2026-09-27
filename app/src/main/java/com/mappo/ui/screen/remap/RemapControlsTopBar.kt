@@ -1,52 +1,78 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Gamepad2
+import com.composables.icons.lucide.Layers
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
-import com.composables.icons.lucide.Settings
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
+import com.mappo.ui.component.AppIconImage
+import com.mappo.ui.component.NameableText
 import com.mappo.ui.component.rememberAppIconPainter
-import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputBar
+import com.mappo.ui.minput.MinputBarIconTextGap
+import com.mappo.ui.minput.MinputBarStackGap
+import com.mappo.ui.minput.MinputBarWidgetIconSize
+import com.mappo.ui.minput.MinputEdge
+import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
-import com.mappo.ui.minput.MinputButton
-import com.mappo.ui.minput.MinputPod
-import com.mappo.ui.minput.MinputPodHeight
-import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.MinputIconButton
+import com.mappo.ui.minput.minputIndication
+import com.mappo.ui.minput.minputInteractiveMotion
+import com.mappo.ui.minput.minputMiniTextStyle
+import com.mappo.ui.minput.minputOverlineTextStyle
 
 /**
- * The controls view's top bar (2026-08-29 redesign). The bar itself is now **transparent** —
- * a layout tool, not a surface: no strip fill, no divider. Every cluster it carries instead
- * rides its own [MinputPod] — the pill plate that generalized out of this bar — so the chrome
- * reads as discrete capsules floating over the content plane rather than one banded strip.
+ * The controls view's top bar (2026-09-26 rebuild).
  *
- * Three slots, laid over a [Box] so the center pod is centered in the BAR (not in the slack
- * between its neighbors):
- *  - **start** — the identity pill: the viewed application's icon leading its layout name,
- *    wired to toggle the layouts drawer and wearing the highlight plane while it is open.
- *  - **center** — the action-set group button ([ActionSetPod]), moved up out of
- *    `RemapSimpleView`'s content column.
- *  - **end** — Edit overlay. (The Auto-detect toggle sat beside it until 2026-08-30; it is a
- *    GLOBAL setting, not a property of the layout on screen, so it moved to the Mappo drawer
- *    with the other app-wide switches — see `MappoDrawerContent`.)
+ * **The bar is a SURFACE again** — a [MinputBar] strip on the bar plane with a lit bottom edge,
+ * so it reads as the top face of the device's front panel (Dylan, 2026-09-26). That retires the
+ * 2026-08-29 design, where the bar was transparent and every cluster rode its own `MinputPod`:
+ * the pods are gone and the controls sit directly on the strip, which is also why none of them
+ * wears pill chrome any more. The bottom bar changed in the same pass, for the same reason.
  *
- * Pod-borne buttons sit on the pod's plane, so they wear `elevated` (surface 2) — the same
- * fill as the group button's segments.
+ * Three slots, laid over the bar's Box so the centre cluster is centred in the BAR (not in the
+ * slack between its neighbours):
+ *  - **start** — the identity widget: the viewed application's icon, then a two-line stack
+ *    (ACTIVE / PREVIEWING LAYOUT over the layout's name). Toggles the layouts drawer. This is
+ *    the pre-pod design brought back, chrome-less this time.
+ *  - **centre** — the action-set switcher ([ActionSetCluster]) closed by a dormant kebab.
+ *  - **end** — the EDITOR switcher: which editor the screen is showing, physical buttons
+ *    (this view) or virtual buttons (the overlay editor). A two-segment group button, glyphs
+ *    only, the live one wearing the highlight plane — the same "this is the one you are on"
+ *    marking the action sets use.
  */
 @Composable
 internal fun RemapControlsTopBar(
-    layoutLabel: String,
+    layoutName: String,
+    /** True while the layout on screen is only being PREVIEWED — it is not the active one. */
+    previewing: Boolean,
     appPackage: String?,
     identityHighlighted: Boolean,
     onIdentityClick: () -> Unit,
@@ -57,64 +83,159 @@ internal fun RemapControlsTopBar(
     onEditOverlay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    MinputBar(edge = MinputEdge.BOTTOM, modifier = modifier) {
+        BarSlots(
+            modifier = Modifier.fillMaxSize(),
+            // ── start: the identity widget (the layouts drawer's summon) ──
+            start = {
+                BarIdentityButton(
+                    appPackage = appPackage,
+                    overline = if (previewing) "Previewing layout" else "Active layout",
+                    layoutName = layoutName,
+                    highlighted = identityHighlighted,
+                    onClick = onIdentityClick,
+                    modifier = Modifier.testTag("bar:identity"),
+                )
+            },
+            // ── centre: the action-set switcher ──
+            centre = {
+                ActionSetCluster(
+                    config = config,
+                    viewingSet = viewingSet,
+                    onSelectActionSet = onSelectActionSet,
+                    onAddSet = onAddSet,
+                )
+            },
+            // ── end: which editor is on screen ──
+            end = { EditorSwitcher(onEditVirtual = onEditOverlay) },
+        )
+    }
+}
+
+/**
+ * **The bar's three slots: start, centre, end — with the centre centred in the BAR** (not in the
+ * slack between its neighbours), and the flanks held to what is left over.
+ *
+ * A Box with three alignments gets the centring right and the crowding wrong: nothing stops a
+ * long layout name from running under the middle cluster, because nothing measures the two
+ * against each other. So the centre is measured FIRST, at its own size, and each flank is then
+ * offered exactly the room that remains on its side. A name too long for that ellipsizes
+ * ([NameableText]) instead of colliding.
+ */
+@Composable
+private fun BarSlots(
+    start: @Composable () -> Unit,
+    centre: @Composable () -> Unit,
+    end: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Layout(
+        modifier = modifier,
+        contents = listOf(centre, end, start),
+    ) { (centreM, endM, startM), constraints ->
+        val height = constraints.maxHeight
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val centrePlaceable = centreM.firstOrNull()?.measure(loose)
+        val centreW = centrePlaceable?.width ?: 0
+        // What a flank may take: its side of the centre cluster, less the gap that keeps the two
+        // from touching. With no centre cluster at all (a layout with no action sets) each flank
+        // simply gets half the bar.
+        val flankMax = ((constraints.maxWidth - centreW) / 2 - SlotGap.roundToPx()).coerceAtLeast(0)
+        val flank = loose.copy(maxWidth = flankMax)
+        val endPlaceable = endM.firstOrNull()?.measure(flank)
+        val startPlaceable = startM.firstOrNull()?.measure(flank)
+        layout(constraints.maxWidth, height) {
+            fun place(placeable: androidx.compose.ui.layout.Placeable?, x: Int) {
+                placeable?.place(x, (height - placeable.height) / 2)
+            }
+            place(startPlaceable, 0)
+            place(centrePlaceable, (constraints.maxWidth - centreW) / 2)
+            place(endPlaceable, constraints.maxWidth - (endPlaceable?.width ?: 0))
+        }
+    }
+}
+
+/**
+ * The identity widget: the viewed application's launcher icon beside an overline + layout name
+ * stack, the whole thing a button that toggles the layouts drawer.
+ *
+ * Chrome-less by design — the bars carry no pills now — so the OPEN state is read off the text
+ * and glyph going accent rather than off a highlight plate. The layout's name is user-typed, so
+ * it goes through [NameableText] (never a bare `Text` in chrome).
+ */
+@Composable
+private fun BarIdentityButton(
+    appPackage: String?,
+    overline: String,
+    layoutName: String,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val accent = MaterialTheme.colorScheme.primary
+    val overlineColor = if (highlighted) accent else MaterialTheme.colorScheme.onSurfaceVariant
+    val nameColor = if (highlighted) accent else MaterialTheme.colorScheme.onSurface
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
-            .fillMaxWidth()
-            .height(TopBarHeight)
-            // Horizontal inset only (2026-08-30, Dylan): the bar gives NO vertical air, so
-            // its pods sit flush against the status bar above and the content plane below
-            // — all the breathing room around them is the content side's to give, in one
-            // place instead of two stacked paddings fighting each other.
-            .padding(horizontal = MinputBarEdgePadding)
+            .minputInteractiveMotion(interaction)
+            // The ripple wants a shape to clip to even with no fill behind it.
+            .clip(RoundedCornerShape(IdentityCorner))
+            .clickable(
+                interactionSource = interaction,
+                indication = minputIndication(),
+                onClick = onClick,
+            )
+            .padding(horizontal = IdentityPadding),
     ) {
-        // ── start: the identity pill (the layouts drawer's summon) ──
-        MinputPod(modifier = Modifier.align(Alignment.CenterStart)) {
-            MinputButton(
-                text = layoutLabel,
-                onClick = onIdentityClick,
-                // Plain surface-1 box fill: the plane one step above the pod carrying it
-                // (see MinputPod). Highlighted while the drawer is open — the design
-                // language's open/selected marking.
-                highlighted = identityHighlighted,
-                // The application's launcher icon, untinted (leadingIconTint defaults to
-                // Unspecified, which Icon renders as "no color filter").
-                leadingIcon = rememberAppIconPainter(appPackage),
-                modifier = Modifier.testTag("bar:identity"),
+        val icon = rememberAppIconPainter(appPackage)
+        if (icon != null) {
+            AppIconImage(icon, size = MinputBarWidgetIconSize)
+        } else {
+            // No application in view (or no launcher icon for it): the generic apps glyph
+            // keeps the widget's shape, so the stack beside it doesn't shift about.
+            Icon(
+                Icons.Filled.Apps,
+                contentDescription = null,
+                modifier = Modifier.size(MinputBarWidgetIconSize),
+                tint = overlineColor,
             )
         }
-
-        // ── center: the action-set switcher ──
-        ActionSetPod(
-            config = config,
-            viewingSet = viewingSet,
-            onSelectActionSet = onSelectActionSet,
-            onAddSet = onAddSet,
-            modifier = Modifier.align(Alignment.Center),
-        )
-
-        // ── end: Edit overlay ──
-        MinputPod(modifier = Modifier.align(Alignment.CenterEnd)) {
-            MinputButton(
-                text = "Edit overlay",
-                onClick = onEditOverlay,
-                leadingIcon = rememberVectorPainter(Icons.Outlined.Layers),
-                // Follows the label's strength (2026-08-30): chromed button labels
-                // moved to onSurface, so a pinned onSurfaceVariant glyph would lag.
-                leadingIconTint = MaterialTheme.colorScheme.onSurface,
+        Spacer(Modifier.width(MinputBarIconTextGap))
+        Column(verticalArrangement = Arrangement.spacedBy(MinputBarStackGap)) {
+            Text(
+                text = overline.uppercase(),
+                style = minputOverlineTextStyle(),
+                color = overlineColor,
+                maxLines = 1,
+            )
+            NameableText(
+                text = layoutName,
+                style = minputMiniTextStyle(),
+                color = nameColor,
+                maxWidth = IdentityNameMaxWidth,
             )
         }
     }
 }
 
 /**
- * The action-set switcher, rehomed twice: out of the retired top-bar tabs into
- * `RemapSimpleView`'s content column (2026-08), and back into the bar as a pod (2026-08-29).
- * One segment per set on a [MinputGroupButton], closed by the "+" action segment (add a set
- * — the library's sanctioned convention break), then a dormant cog for future set management
- * (rename / duplicate / delete / layers return there). Layers are deliberately absent.
+ * The action-set switcher: one segment per set on a [MinputGroupButton], closed by the "+"
+ * action segment (add a set — the library's sanctioned convention break), then the set-
+ * management kebab.
+ *
+ * The kebab is the standard vertical "more" glyph, bare (no fill, no ring) — a dormant utility
+ * affordance, not a peer of the segments beside it (Dylan, 2026-09-26; it was a chromed cog).
+ * Rename / duplicate / delete / layers land on it. Layers are deliberately absent from the
+ * segments themselves.
+ *
+ * Segments take the library's default surface-2 fill: the bar is a real surface again, so the
+ * old `minputBoxContainer()` override — which existed because the cluster rode a pod — went
+ * with the pods.
  */
 @Composable
-private fun ActionSetPod(
+private fun ActionSetCluster(
     config: ControllerConfig?,
     viewingSet: ActionSetGraph?,
     onSelectActionSet: (Long) -> Unit,
@@ -123,30 +244,76 @@ private fun ActionSetPod(
 ) {
     val sets = config?.actionSets.orEmpty()
     if (sets.isEmpty()) return
-    MinputPod(modifier = modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
+        modifier = modifier,
+    ) {
         MinputGroupButton(
             options = sets.map { it.actionSet.id },
             selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
             onSelect = onSelectActionSet,
             optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
-            // Unselected segments take the surface-1 box fill — the plane above the pod
-            // (the selected segment keeps the highlight plane).
-            container = minputBoxContainer(),
             trailingActionIcon = Lucide.Plus,
             trailingActionDescription = "Add action set",
             onTrailingAction = onAddSet,
         )
-        // The cog wears the pill family's chromed icon-button form on the segments' plane
-        // (2026-08-29 — it was a bare utility glyph, which read as unfinished beside them).
-        MinputButton(
+        MinputIconButton(
+            icon = Icons.Filled.MoreVert,
+            contentDescription = "Manage action sets",
             onClick = {},
             enabled = false,
-            leadingIcon = rememberVectorPainter(Lucide.Settings),
-            leadingIconTint = MaterialTheme.colorScheme.onSurface,
-            contentDescription = "Manage action sets",
         )
     }
 }
 
-/** Bar-strip height: exactly its pods, with no vertical air of its own (2026-08-30). */
-private val TopBarHeight = MinputPodHeight
+/**
+ * **Which editor the screen is showing** (Dylan, 2026-09-26) — the physical buttons (this view)
+ * or the virtual ones (the on-screen overlay's editor).
+ *
+ * It replaced the "Edit overlay" button, and the difference is the point: the two editors are
+ * peers, so they read as one switch with a live half rather than as a screen plus a door out of
+ * it. Glyphs only — a gamepad and stacked layers — with the live editor on the highlight plane,
+ * exactly as the action sets mark the set being viewed.
+ *
+ * Physical is always the selected one here, because this composable only exists on the physical
+ * editor's own screen; picking virtual launches the overlay editor, which is its own activity
+ * (and its own window over the game). When the overlay editor gains a bar of its own, it wears
+ * this same switch with the other half lit.
+ */
+@Composable
+private fun EditorSwitcher(
+    onEditVirtual: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    MinputGroupButton(
+        options = EditorKind.entries.toList(),
+        selected = EditorKind.PHYSICAL,
+        onSelect = { kind -> if (kind == EditorKind.VIRTUAL) onEditVirtual() },
+        // Blank labels: an icon-only segment (see MinputGroupButton).
+        optionLabel = { "" },
+        optionIcon = { it.icon },
+        optionDescription = { it.description },
+        modifier = modifier.testTag("bar:editors"),
+    )
+}
+
+/** The two editors the controls bar switches between. */
+private enum class EditorKind(val icon: ImageVector, val description: String) {
+    PHYSICAL(Lucide.Gamepad2, "Physical buttons editor"),
+    VIRTUAL(Lucide.Layers, "Virtual buttons editor"),
+}
+
+/** Air between the bar's centre cluster and either flank — see [BarSlots]. */
+private val SlotGap = 8.dp
+
+/** Corner the identity button's ripple clips to — it has no fill, so this is shape only. */
+private val IdentityCorner = 6.dp
+
+/** Horizontal air inside the identity button, standing in for the pill padding it no longer
+ *  has: enough that the ripple isn't flush against the glyph and the name. */
+private val IdentityPadding = 4.dp
+
+/** Width cap for the layout name — names are unbounded, and the bar has a cluster to fit
+ *  beside them. */
+private val IdentityNameMaxWidth = 180.dp

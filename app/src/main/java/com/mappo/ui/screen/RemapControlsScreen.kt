@@ -527,30 +527,25 @@ fun RemapControlsScreen(
                             .focusGroup()
                     } else Modifier,
                 ),
-            // The bar's ground matches the content plane beneath it: the redesigned
-            // top bar paints no strip of its own, so a Scaffold container in the
-            // default `background` role would band across the top.
-            // The view sits on the LOWEST plane (2026-08-30) so the floating pods —
-            // `surface`, see MinputPod — read above it. Both sites move together.
+            // The view sits on the LOWEST plane, which is what the bars (on the bar
+            // plane one step up — see MinputBar) read as raised above. The Scaffold's
+            // default `background` role would band its own colour behind them.
             containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             topBar = {
-                // The 2026-08-29 bar: transparent, with each cluster on its own pill pod
-                // (see RemapControlsTopBar) — the identity pill (the layouts drawer's
-                // summon) at the start, the action-set switcher centered (up out of
-                // RemapSimpleView's content column), Edit overlay at the end. Edit
-                // overlay is the options panel's lone entry given a real home (the panel
-                // stays on the Start key). Auto-detect left the bar 2026-08-30 for the
-                // Mappo drawer — it is a global setting, not a layout property.
+                // The 2026-09-26 bar: a real strip with a lit bottom edge (see
+                // RemapControlsTopBar) carrying the identity widget (the layouts drawer's
+                // summon) at the start, the action-set switcher centred, and the
+                // physical/virtual EDITOR switch at the end — the latter being where
+                // "Edit overlay" went. Auto-detect left the bar 2026-08-30 for the Mappo
+                // drawer — it is a global setting, not a layout property.
                 RemapControlsTopBar(
-                    // The layout being viewed, "(Preview)"-suffixed while inspecting a
-                    // non-active one; an application with no layout reads "None" — not
-                    // the stale name of another app's layout (2026-08-26 audit). The
-                    // application itself is carried by the leading launcher icon since
-                    // the two-line identity stack collapsed into a pill (2026-08-29).
-                    layoutLabel = buildString {
-                        append(if (showNoLayoutState) "None" else layoutName ?: "Layout")
-                        if (!isActiveLayout) append(" (Preview)")
-                    },
+                    // The layout being viewed; an application with no layout reads "None" —
+                    // not the stale name of another app's layout (2026-08-26 audit). Whether
+                    // it is the ACTIVE layout or one being previewed is the identity stack's
+                    // overline now (2026-09-26), where the name used to carry a "(Preview)"
+                    // suffix; the application itself is the leading launcher icon.
+                    layoutName = if (showNoLayoutState) "None" else layoutName ?: "Layout",
+                    previewing = !isActiveLayout,
                     appPackage = effectiveAppPackage,
                     identityHighlighted = layoutsDrawerOpen,
                     onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },

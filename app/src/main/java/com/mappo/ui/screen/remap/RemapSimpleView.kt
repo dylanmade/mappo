@@ -375,10 +375,23 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
             SimpleRowSpec(InputSource.LEFT_JOYSTICK, "click"),
         ),
     ),
-    UTILITY(
+    // ── The utility groups (Dylan, 2026-09-26) ───────────────────────────────────────────
+    //
+    // Select and Start were ONE centre-column group sitting under the controller image
+    // ("Utility Buttons"), which is where the hardware puts them. They are now a group per
+    // SIDE, at the bottom of each column with the rest of that flank — the centre column is
+    // the controller and nothing else. Each is expected to grow: back paddles and whatever
+    // other side-specific extras a device has land in the utility group of their own side,
+    // which is why these are utility groups holding one button each rather than a Select
+    // group and a Start group.
+    LEFT_UTILITY(
+        listOf(
+            SimpleRowSpec(InputSource.SWITCH_SELECT, "click"),
+        ),
+    ),
+    RIGHT_UTILITY(
         listOf(
             SimpleRowSpec(InputSource.SWITCH_START, "click"),
-            SimpleRowSpec(InputSource.SWITCH_SELECT, "click"),
         ),
     ),
     // Click only — see [LEFT_STICK].
@@ -417,14 +430,15 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
     /**
      * Does this group's card header state a MODE, or just its own name?
      *
-     * Every group but one picks a mode: Button Pad, Directional Pad, Joystick, Trigger. The
-     * utility buttons don't (Dylan, 2026-09-21) — Start and Select are single buttons whose
+     * Every group but the utility pair picks a mode: Button Pad, Directional Pad, Joystick,
+     * Trigger. The utility buttons don't (Dylan, 2026-09-21) — Start and Select are single
+     * buttons whose
      * intercept mode the repository manages from whether they are bound at all
      * (`syncAuxButtonMode`), so there is nothing there for a user to choose and a caption
      * reading "MODE: SINGLE BUTTON" named an internal state as though it were a decision. The
      * header keeps its glyph, its treatment and its inset either way.
      */
-    val headerShowsMode: Boolean get() = this != UTILITY
+    val headerShowsMode: Boolean get() = this != LEFT_UTILITY && this != RIGHT_UTILITY
 
     val summaryRows: List<SimpleRowSpec>
         get() = when (this) {
@@ -542,16 +556,19 @@ internal enum class RowAnchor { START, END }
  * running outward to the left — so both flanks read as extending away from the controller
  * between them.
  *
- * The centre group is anchored per ROW instead of per box: its left-hand inputs (Select) sit on
- * the box's left half mirrored, its right-hand inputs (Start) on the right half normal, and the
- * two meet at the box's centre line. That's what makes it the "centred" group, and why it gets
- * the whole plate width in its own section beneath the flanks.
+ * Every group belongs to a flank, so every group mirrors with its own side — including the
+ * utility pair, which split down the middle on 2026-09-26 (Select to the left column, Start to
+ * the right) and took the last centre-column group with them.
+ *
+ * **The per-ROW anchoring stays** ([GroupRows] splits a group whose rows anchor both ways, see
+ * [CentreSplit]). Nothing uses it today: it existed for the old centre group, whose left-hand
+ * inputs mirrored and right-hand ones didn't, meeting at the box's centre line. It is kept
+ * because it is the general rule this all follows, and the next centre-straddling group — a
+ * touchpad, a device with a middle cluster — will want it.
  */
 internal fun RemapSimpleGroup.anchorFor(spec: SimpleRowSpec): RowAnchor = when (this) {
-    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK ->
-        RowAnchor.END
-    RemapSimpleGroup.UTILITY ->
-        if (spec.source == InputSource.SWITCH_SELECT) RowAnchor.END else RowAnchor.START
+    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK,
+    RemapSimpleGroup.LEFT_UTILITY -> RowAnchor.END
     else -> RowAnchor.START
 }
 
@@ -613,11 +630,10 @@ private fun assignmentCells(
 /**
  * The glyph + assignment rows of one group (shared by the box and the morph crossfade).
  *
- * A group whose rows all anchor the same way is ONE table, and the box wraps it. The centre
- * group anchors its rows both ways, so it splits into two tables meeting at the box's centre
- * line — see [anchorFor] and [CentreSplit]. Splitting by anchor rather than special-casing
- * `UTILITY` keeps this general: give any group a mixed set of anchors and it lays out the same
- * way.
+ * A group whose rows all anchor the same way is ONE table, and the box wraps it — which, since
+ * the utility groups split per side (2026-09-26), is every group there is. A group anchoring its
+ * rows BOTH ways still splits into two tables meeting at the box's centre line (see [anchorFor]
+ * and [CentreSplit]): that generality is deliberate and outlived the one group that needed it.
  */
 @Composable
 internal fun GroupRows(

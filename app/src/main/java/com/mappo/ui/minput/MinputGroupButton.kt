@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -55,6 +56,14 @@ import androidx.compose.ui.unit.dp
  * segment takes an equal share of whatever [modifier] sizes the group to (typically
  * `fillMaxWidth()`).
  *
+ * Segments may be ICON-ONLY (2026-09-26): pass [optionIcon] and return a blank [optionLabel],
+ * and a segment renders as a square glyph tile wearing the same selection treatment — the
+ * form the controls bar's editor switcher takes, where two glyphs say "physical buttons" and
+ * "virtual buttons" better than two words would. An icon BESIDE a label works too; the glyph
+ * follows the segment's content color either way (a segment's icons are concept icons, never
+ * fixed-color hardware art), and [optionDescription] carries the semantics a blank label
+ * cannot.
+ *
  * @param equalWidths stretch every segment to an equal share of the group's width (the
  *   pre-2026-08-29 behavior); default wraps each label.
  * @param container fill for the UNSELECTED segments (and the trailing action segment) —
@@ -72,6 +81,8 @@ fun <T> MinputGroupButton(
     onSelect: (T) -> Unit,
     optionLabel: (T) -> String,
     modifier: Modifier = Modifier,
+    optionIcon: ((T) -> ImageVector)? = null,
+    optionDescription: ((T) -> String?)? = null,
     enabled: Boolean = true,
     equalWidths: Boolean = false,
     container: Color = MinputElevatedContainer,
@@ -132,23 +143,47 @@ fun <T> MinputGroupButton(
                         } else Modifier.alpha(0.55f),
                     ),
             ) {
-                Box(
+                val label = optionLabel(option)
+                val icon = optionIcon?.invoke(option)
+                val description = optionDescription?.invoke(option)
+                Row(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .padding(horizontal = MinputPillContentPadding),
-                    contentAlignment = Alignment.Center,
+                        // An icon-only segment is a SQUARE (a pill's height across), so a pair
+                        // of them reads as two glyph tiles rather than two capsules; the
+                        // content inset would pad a glyph that has no label to sit beside.
+                        .then(
+                            if (label.isBlank() && icon != null) {
+                                Modifier.width(MinputPillHeight)
+                            } else {
+                                Modifier.padding(horizontal = MinputPillContentPadding)
+                            },
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
                 ) {
-                    Text(
-                        text = optionLabel(option),
-                        style = minputMiniTextStyle(),
-                        color = content,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        // Wrap-width segments are otherwise unbounded (set titles are
-                        // user-typed); cap them at the family's label width so one long
-                        // name can't run the group off its bar.
-                        modifier = Modifier.widthIn(max = MinputPillLabelMaxWidth),
-                    )
+                    if (icon != null) {
+                        Icon(
+                            icon,
+                            contentDescription = description,
+                            modifier = Modifier.size(MinputPillIconSize),
+                            tint = content,
+                        )
+                        if (label.isNotBlank()) Spacer(Modifier.width(MinputGlyphLabelGap))
+                    }
+                    if (label.isNotBlank()) {
+                        Text(
+                            text = label,
+                            style = minputMiniTextStyle(),
+                            color = content,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            // Wrap-width segments are otherwise unbounded (set titles are
+                            // user-typed); cap them at the family's label width so one long
+                            // name can't run the group off its bar.
+                            modifier = Modifier.widthIn(max = MinputPillLabelMaxWidth),
+                        )
+                    }
                 }
             }
         }

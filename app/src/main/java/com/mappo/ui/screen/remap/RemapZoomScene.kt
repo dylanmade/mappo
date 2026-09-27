@@ -12,11 +12,12 @@ import androidx.compose.ui.unit.dp
  * group lies one d-pad step from which.
  *
  * ```
- *   ┌ left column ─┐┌ centre ─┐┌ right column ─┐
- *   │ L-shoulder   ││         ││ R-shoulder    │
- *   │ D-pad        ││ [image] ││ Face buttons  │
- *   │ Left stick   ││ Utility ││ Right stick   │
- *   └─────────────┘└─────────┘└───────────────┘
+ *   ┌ left column ──┐┌ centre ─┐┌ right column ─┐
+ *   │ L-shoulder    ││         ││ R-shoulder    │
+ *   │ D-pad         ││ [image] ││ Face buttons  │
+ *   │ Left stick    ││         ││ Right stick   │
+ *   │ Left utility  ││         ││ Right utility │
+ *   └──────────────┘└─────────┘└───────────────┘
  * ```
  *
  * Each column is [TableColumnFraction] of the viewport wide, so the group you are on fills about
@@ -24,8 +25,12 @@ import androidx.compose.ui.unit.dp
  * controller that group belongs to. Walking the d-pad off a table's edge lands on the
  * neighbouring group by ordinary spatial focus search — the whole stage is ONE focus surface —
  * and the camera FOLLOWS focus rather than leading it, so there is no separate "navigate" mode
- * to learn. Up and down travel a side; left and right cross the controller, via the utility
- * group seated between the two sticks (which is also where the basic grid puts it).
+ * to learn. Up and down travel a side; left and right cross the controller to the group opposite.
+ *
+ * **Four bands per side since 2026-09-26** (Dylan): the utility buttons used to be one card in
+ * the CENTRE column, seated between the two sticks where the hardware puts Select and Start;
+ * they are now a utility group per side, at the bottom of their own column, and the centre
+ * column holds nothing but the picture.
  */
 
 internal fun zoomCardTestTag(group: RemapSimpleGroup): String = "zoom-card:${group.name}"
@@ -107,42 +112,33 @@ internal fun RemapSimpleGroup.slotStepFor(spec: SimpleRowSpec): Int =
 /**
  * Which group lies one step [dRow] / [dCol] away — the scene's map, in hardware terms.
  *
- * Up and down walk a flank; left and right cross the controller, through the utility group
- * sitting between the two sticks. It is deliberately NOT derived from the laid-out rectangles:
+ * Up and down walk a flank, top to bottom; left and right cross the controller to the group in
+ * the same band on the other side. It is deliberately NOT derived from the laid-out rectangles:
  * spatial focus search does that well enough for a free-roaming cursor, but a command being
  * CARRIED should travel a route the user can predict and learn.
+ *
+ * Read off [GridBands], which is the one statement of the grid's shape — the map used to be
+ * written out twice per direction and had to be edited in four places when Select and Start
+ * became side groups (2026-09-26). A band's two groups are each other's horizontal neighbours;
+ * the bands' order is the vertical one.
  */
-internal fun RemapSimpleGroup.neighbour(dRow: Int, dCol: Int): RemapSimpleGroup? = when {
-    dRow > 0 -> when (this) {
-        RemapSimpleGroup.LEFT_SHOULDER -> RemapSimpleGroup.DPAD
-        RemapSimpleGroup.DPAD -> RemapSimpleGroup.LEFT_STICK
-        RemapSimpleGroup.RIGHT_SHOULDER -> RemapSimpleGroup.FACE
-        RemapSimpleGroup.FACE -> RemapSimpleGroup.RIGHT_STICK
+internal fun RemapSimpleGroup.neighbour(dRow: Int, dCol: Int): RemapSimpleGroup? {
+    val band = GridBands.indexOfFirst { it.left == this || it.right == this }
+    if (band < 0) return null
+    val onLeft = GridBands[band].left == this
+    return when {
+        dRow != 0 -> GridBands.getOrNull(band + dRow)?.let { if (onLeft) it.left else it.right }
+        // Crossing is a SCREEN direction: rightward only leaves a left-column group, and
+        // leftward only a right-column one.
+        dCol > 0 -> GridBands[band].right.takeIf { onLeft }
+        dCol < 0 -> GridBands[band].left.takeIf { !onLeft }
         else -> null
     }
-    dRow < 0 -> when (this) {
-        RemapSimpleGroup.DPAD -> RemapSimpleGroup.LEFT_SHOULDER
-        RemapSimpleGroup.LEFT_STICK -> RemapSimpleGroup.DPAD
-        RemapSimpleGroup.FACE -> RemapSimpleGroup.RIGHT_SHOULDER
-        RemapSimpleGroup.RIGHT_STICK -> RemapSimpleGroup.FACE
-        else -> null
-    }
-    dCol > 0 -> when (this) {
-        RemapSimpleGroup.LEFT_SHOULDER -> RemapSimpleGroup.RIGHT_SHOULDER
-        RemapSimpleGroup.DPAD -> RemapSimpleGroup.FACE
-        RemapSimpleGroup.LEFT_STICK -> RemapSimpleGroup.UTILITY
-        RemapSimpleGroup.UTILITY -> RemapSimpleGroup.RIGHT_STICK
-        else -> null
-    }
-    dCol < 0 -> when (this) {
-        RemapSimpleGroup.RIGHT_SHOULDER -> RemapSimpleGroup.LEFT_SHOULDER
-        RemapSimpleGroup.FACE -> RemapSimpleGroup.DPAD
-        RemapSimpleGroup.RIGHT_STICK -> RemapSimpleGroup.UTILITY
-        RemapSimpleGroup.UTILITY -> RemapSimpleGroup.LEFT_STICK
-        else -> null
-    }
-    else -> null
 }
+
+/** Which band the controller image occupies — shared with the rest grid, which anchors its
+ *  own bands around the same one (see RemapStage's `ControllerBand`). */
+private const val ControllerBand = 1
 
 /** A placed rectangle in scene space. */
 internal data class SceneRect(val x: Dp, val y: Dp, val width: Dp, val height: Dp)
@@ -171,8 +167,18 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
     val maxCardH = (viewportH - SceneMargin * 2).coerceAtLeast(0.dp)
     fun cardHeight(group: RemapSimpleGroup): Dp = advancedEditorHeight(group).coerceAtMost(maxCardH)
 
-    val left = listOf(RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK)
-    val right = listOf(RemapSimpleGroup.RIGHT_SHOULDER, RemapSimpleGroup.FACE, RemapSimpleGroup.RIGHT_STICK)
+    val left = listOf(
+        RemapSimpleGroup.LEFT_SHOULDER,
+        RemapSimpleGroup.DPAD,
+        RemapSimpleGroup.LEFT_STICK,
+        RemapSimpleGroup.LEFT_UTILITY,
+    )
+    val right = listOf(
+        RemapSimpleGroup.RIGHT_SHOULDER,
+        RemapSimpleGroup.FACE,
+        RemapSimpleGroup.RIGHT_STICK,
+        RemapSimpleGroup.RIGHT_UTILITY,
+    )
     // The image takes its size from the viewport's HEIGHT, exactly as the basic grid's does
     // (Dylan, 2026-09-21) — it used to be the full width of the centre column, so a wider screen
     // (or closing the layouts drawer) grew the controller while the basic view's stayed put, and
@@ -180,25 +186,15 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
     // COLUMN is still width-derived: it is the scene's layout grid, and it should stretch.
     val controllerW = (viewportH * ZoomControllerHeightRatio).coerceAtMost(columnW)
     val controllerH = controllerW * controllerAspect
-    // A band is as tall as the tallest thing IN it, counting the centre column: the image in
-    // band 1, the utility card in band 2. Both matter.
-    //
-    // The image, because the rest grid sizes its middle band the same way (see RemapStage), and
-    // the two geometries must agree about where the controller sits relative to the cards
-    // (Dylan, 2026-09-18) — it used to be centred over bands 0 AND 1 together, which put it
-    // most of a band above where the basic view has it, and zooming into the face buttons
-    // carried them off the top of the screen.
-    //
-    // The utility card, because the sticks became one-row tables (2026-09-17) and it is now the
-    // tallest thing in band 2 — left out, it overhangs the bottom of the scene, past where the
-    // camera can go.
+    // A band is as tall as the tallest thing IN it — including, in band 1, the controller image
+    // in the centre column. That last part matters: the rest grid sizes its middle band the same
+    // way (see RemapStage), and the two geometries must agree about where the controller sits
+    // relative to the cards (Dylan, 2026-09-18) — it used to be centred over bands 0 AND 1
+    // together, which put it most of a band above where the basic view has it, and zooming into
+    // the face buttons carried them off the top of the screen.
     val bandHeights = left.indices.map { band ->
         val flanks = maxOf(cardHeight(left[band]), cardHeight(right[band]))
-        when (band) {
-            1 -> maxOf(flanks, controllerH)
-            2 -> maxOf(flanks, cardHeight(RemapSimpleGroup.UTILITY))
-            else -> flanks
-        }
+        if (band == ControllerBand) maxOf(flanks, controllerH) else flanks
     }
     val bandTops = mutableListOf<Dp>()
     var y = SceneMargin
@@ -226,19 +222,6 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
                 ),
             )
         }
-        // The utility card sits in the centre column, in the STICK band: the thumb cluster is
-        // where Start and Select live on the hardware, and it puts the group one step right of
-        // the left stick and one step left of the right one.
-        val utilityH = cardHeight(RemapSimpleGroup.UTILITY)
-        put(
-            RemapSimpleGroup.UTILITY,
-            SceneRect(
-                x = columnW + CentreGutter,
-                y = bandTops[2] + (bandHeights[2] - utilityH) / 2,
-                width = (columnW - CentreGutter * 2).coerceAtLeast(0.dp),
-                height = utilityH,
-            ),
-        )
     }
 
     // The image sits in the centre column, CENTRED ON THE MIDDLE BAND — the d-pad and the face
@@ -250,7 +233,8 @@ internal fun sceneGeometry(viewportW: Dp, viewportH: Dp, controllerAspect: Float
     // (see RemapStage).
     val controller = SceneRect(
         x = columnW + ((columnW - controllerW) / 2).coerceAtLeast(0.dp),
-        y = bandTops[1] + ((bandHeights[1] - controllerH) / 2).coerceAtLeast(0.dp),
+        y = bandTops[ControllerBand] +
+            ((bandHeights[ControllerBand] - controllerH) / 2).coerceAtLeast(0.dp),
         width = controllerW,
         height = controllerH,
     )

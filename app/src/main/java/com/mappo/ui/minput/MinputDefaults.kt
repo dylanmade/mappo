@@ -8,6 +8,8 @@ import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -130,6 +132,39 @@ fun minputIndication(): IndicationNodeFactory =
 
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
 val MinputBoxStroke = 0.75.dp
+
+/** Which edge of a surface a [minputBevelEdge] runs along. */
+enum class MinputEdge { TOP, BOTTOM }
+
+/**
+ * The bevel's LIT edge as a flat color — the same white-nudge the [minputBevelBorder] paints
+ * along a raised element's top, offered on its own for a surface that wants one lit edge
+ * rather than a ring: an app bar, whose skeuomorphic read is a physical strip catching light
+ * on the side that faces the content (Dylan, 2026-09-26).
+ *
+ * Derived from the fill it sits on, boosted on light planes exactly as the border's layers
+ * are, so a bar and a button wear the same light source.
+ */
+fun minputBevelHighlight(base: Color): Color =
+    lerp(base, Color.White, (BevelTopHighlightStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
+
+/** Draw a [width] line of [color] along one [edge] of this node — the flat-surface companion
+ *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top. */
+fun Modifier.minputBevelEdge(
+    color: Color,
+    edge: MinputEdge,
+    width: Dp = MinputBoxStroke,
+): Modifier = drawWithContent {
+    drawContent()
+    val stroke = width.toPx()
+    val y = if (edge == MinputEdge.TOP) stroke / 2f else size.height - stroke / 2f
+    drawLine(
+        color = color,
+        start = Offset(0f, y),
+        end = Offset(size.width, y),
+        strokeWidth = stroke,
+    )
+}
 
 /** How far the bevel's highlights deviate from the base fill — "ever so slightly". */
 private const val BevelTopHighlightStrength = 0.10f
@@ -436,15 +471,17 @@ val MinputPodItemGap = 4.dp
 val MinputPodGap = 6.dp
 
 /** The TALL pod/button pair (2026-08-30): one step up from the resting scale, for chrome that
- *  should carry more presence than a bar pill — the home frame's Mappo button, which summons
- *  the app-wide drawer and is the one control on the bottom bar with that weight. Pass these
- *  as `height` to [MinputPod] / [MinputButton]; both derive their pill corner from it. */
+ *  should carry more presence than a bar pill. Pass these as `height` to [MinputPod] /
+ *  [MinputButton]; both derive their pill corner from it. Its call site — the home frame's
+ *  Mappo button — gave it up on 2026-09-26 when the bars became filled strips and their
+ *  buttons went chrome-less ([MinputBar]); the scale is kept for the next control that earns
+ *  extra presence. */
 val MinputPillTallHeight = 30.dp
 val MinputPodTallHeight = MinputPillTallHeight + MinputPodPadding * 2
 
 /** Corner radius for a pod acting as a PLATE rather than a capsule — a large one holding a
- *  list or a whole content band (the layouts drawer's list plate, the controls view's input
- *  band). Twice the box corner: the plate reads as the same family as the cards/boxes riding
+ *  list or a whole content band (the layouts drawer's list plate; the controls view's input
+ *  band used one until 2026-09-26, when per-group rectangles replaced its plate). Twice the box corner: the plate reads as the same family as the cards/boxes riding
  *  it, one scale up. A plate must never take the pill default, which is a percentage-free but
  *  height-derived radius and would round a tall plate into a capsule. */
 val MinputPodPlateCorner = MinputMorphCorner * 2

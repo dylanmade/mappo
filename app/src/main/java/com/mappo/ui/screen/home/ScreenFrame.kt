@@ -37,11 +37,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputBar
 import com.mappo.ui.minput.MinputButton
-import com.mappo.ui.minput.MinputPillTallHeight
-import com.mappo.ui.minput.MinputPod
-import com.mappo.ui.minput.MinputPodTallHeight
+import com.mappo.ui.minput.MinputEdge
 import com.mappo.ui.minput.MinputModalEnterMillis
 import com.mappo.ui.minput.MinputModalEnterScale
 import com.mappo.ui.minput.MinputModalExitMillis
@@ -176,17 +174,16 @@ fun ScreenFrame(
  * button controls. The active-context shortcut that used to sit here retired 2026-08-20 —
  * the controls home's top bar carries that context now.
  *
- * **2026-08-30 (Dylan):** rebuilt on the same anatomy as the remap controls top bar. The
- * strip's `surfaceContainer` fill and its divider are GONE — the bar is transparent, a
- * layout tool rather than a surface, and its contents float as pods over the canvas. That
- * is not cosmetic drift: a [MinputPod] wears a plane BELOW `surfaceContainer`, so a pod on
- * the old filled strip would have read as a dark hole punched in it. The two bars must be
- * changed together for the same reason.
+ * **2026-09-26 (Dylan):** the bar is a SURFACE again — a [MinputBar] strip with a lit TOP
+ * edge, mirroring the controls top bar's lit bottom one, so the two read as the top and
+ * bottom faces of the device's front panel. The pods that carried its buttons from
+ * 2026-08-30 are gone with the transparent bar they floated over, and the buttons are bare:
+ * no fill, no ring. (That pairing is not cosmetic — a pod wears a plane BELOW the bar plane,
+ * so one on a filled strip reads as a hole punched in it. Both bars change together.)
  *
- * The Mappo button rides the TALL pod/button scale — it summons the app-wide drawer and is
- * the one control down here that earns extra presence. The fullscreen toggle is a plain
- * button on the bare bar, deliberately POD-LESS: it is a temporary debug affordance for
- * previewing the UI at 1:1, not permanent chrome, so it should not read as an equal.
+ * The Mappo button keeps its `filled` label strength — it summons the app-wide drawer and is
+ * the one control down here that earns extra presence — while the fullscreen toggle stays a
+ * recessive glyph: a temporary affordance for previewing the UI at 1:1, not permanent chrome.
  */
 @Composable
 private fun FrameBottomBar(
@@ -194,28 +191,18 @@ private fun FrameBottomBar(
     onToggleExpanded: () -> Unit,
     onOpenDrawer: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            // Horizontal inset only, matching the top bar: no vertical air of its own, so
-            // the pod sits flush to the canvas edge and all breathing room is the content
-            // side's to give.
-            .height(MinputPodTallHeight)
-            .padding(horizontal = MinputBarEdgePadding),
-    ) {
-        MinputPod(
-            height = MinputPodTallHeight,
+    MinputBar(edge = MinputEdge.TOP) {
+        MinputButton(
+            text = "Mappo",
+            onClick = onOpenDrawer,
+            bare = true,
+            filled = true,
+            contentDescription = "Open Mappo options",
             modifier = Modifier.align(Alignment.CenterStart),
-        ) {
-            MinputButton(
-                text = "Mappo",
-                onClick = onOpenDrawer,
-                height = MinputPillTallHeight,
-                contentDescription = "Open Mappo options",
-            )
-        }
+        )
         MinputButton(
             onClick = onToggleExpanded,
+            bare = true,
             leadingIcon = rememberVectorPainter(
                 if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
             ),

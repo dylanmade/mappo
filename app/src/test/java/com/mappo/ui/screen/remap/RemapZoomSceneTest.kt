@@ -17,10 +17,13 @@ import org.junit.Test
  * The zoomed scene's navigation map (2026-09-17).
  *
  * These pin the route a CARRIED command travels, which Dylan specified in hardware terms: up and
- * down walk one flank of the controller, left and right cross it, and the utility group sits
- * between the two sticks — right out of the left stick, left out of the right one. Spatial focus
- * search handles a free-roaming cursor; a move deserves a route you can learn, so it gets this
- * explicit map and these tests.
+ * down walk one flank of the controller, left and right cross it to the group opposite. Spatial
+ * focus search handles a free-roaming cursor; a move deserves a route you can learn, so it gets
+ * this explicit map and these tests.
+ *
+ * 2026-09-26: the utility buttons used to be ONE group in the centre column, reached by going
+ * right out of the left stick and left out of the right one. They are a group per side now, at
+ * the bottom of their own column, so nothing sits between the flanks any more.
  */
 class RemapZoomSceneTest {
 
@@ -104,59 +107,70 @@ class RemapZoomSceneTest {
         assert(next == cell(RemapSimpleGroup.DPAD, row = 1, slot = 0)) { "got $next" }
     }
 
+    /**
+     * **A utility group mirrors with the flank it joined** (Dylan, 2026-09-26).
+     *
+     * Select and Start used to share one centre-column group that mirrored per ROW — Select's
+     * slots climbing leftward out of the card's centre line, Start's rightward. Each is on a
+     * flank now, so each follows its own column's rule, whole.
+     */
     @Test
-    fun theCentreGroupMirrorsPerRow_notAsAWhole() {
-        // Select sits on the utility card's LEFT half, mirrored; Start on its right, normal.
-        val select = RemapSimpleGroup.UTILITY.rows.first { it.source == InputSource.SWITCH_SELECT }
-        val start = RemapSimpleGroup.UTILITY.rows.first { it.source == InputSource.SWITCH_START }
-        assert(RemapSimpleGroup.UTILITY.slotsRunLeftward(select)) { "Select's row should mirror" }
-        assert(!RemapSimpleGroup.UTILITY.slotsRunLeftward(start)) { "Start's row should not" }
+    fun aUtilityGroupMirrorsWithItsFlank() {
+        val select = RemapSimpleGroup.LEFT_UTILITY.rows.single()
+        val start = RemapSimpleGroup.RIGHT_UTILITY.rows.single()
+        assert(select.source == InputSource.SWITCH_SELECT) { "got $select" }
+        assert(start.source == InputSource.SWITCH_START) { "got $start" }
+        assert(RemapSimpleGroup.LEFT_UTILITY.slotsRunLeftward(select)) {
+            "the left column's rows read leftward"
+        }
+        assert(!RemapSimpleGroup.RIGHT_UTILITY.slotsRunLeftward(start)) {
+            "the right column's rows read rightward"
+        }
 
-        val fromSelect = CellKey(RemapSimpleGroup.UTILITY, select, 0)
-        val outward = stepCellAcrossGroups(fromSelect, dRow = 0, dCol = -1, slots = slots)
-        assert(outward == CellKey(RemapSimpleGroup.UTILITY, select, 1)) { "got $outward" }
-    }
-
-    @Test
-    fun theUtilityGroupSitsBetweenTheSticks() {
-        val lastSlot = Slots - 1
-        val outOfLeftStick = stepCellAcrossGroups(
-            // Mirrored: slot 0 is its rightmost tile, the one facing utility.
-            cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 0),
-            dRow = 0,
-            dCol = 1,
-            slots = slots,
-        )
-        assert(outOfLeftStick?.group == RemapSimpleGroup.UTILITY) { "got $outOfLeftStick" }
-
-        val outOfRightStick = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.RIGHT_STICK, row = 0, slot = 0),
+        // Outward along a mirrored row is LEFT on screen, which is UP an index.
+        val outward = stepCellAcrossGroups(
+            CellKey(RemapSimpleGroup.LEFT_UTILITY, select, 0),
             dRow = 0,
             dCol = -1,
             slots = slots,
         )
-        assert(outOfRightStick?.group == RemapSimpleGroup.UTILITY) { "got $outOfRightStick" }
+        assert(outward == CellKey(RemapSimpleGroup.LEFT_UTILITY, select, 1)) { "got $outward" }
+    }
 
-        // And out the far side of utility, on to the other stick.
-        val onward = stepCellAcrossGroups(
-            cell(RemapSimpleGroup.UTILITY, row = 0, slot = lastSlot),
+    @Test
+    fun eachUtilityGroupSitsUnderItsOwnStick() {
+        // Down the left flank, past the stick, into the left utility group.
+        val downLeft = stepCellAcrossGroups(
+            cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 0),
+            dRow = 1,
+            dCol = 0,
+            slots = slots,
+        )
+        assert(downLeft?.group == RemapSimpleGroup.LEFT_UTILITY) { "got $downLeft" }
+        val downRight = stepCellAcrossGroups(
+            cell(RemapSimpleGroup.RIGHT_STICK, row = 0, slot = 0),
+            dRow = 1,
+            dCol = 0,
+            slots = slots,
+        )
+        assert(downRight?.group == RemapSimpleGroup.RIGHT_UTILITY) { "got $downRight" }
+
+        // And the two are each other's crossing, the way every band's pair is. Slot 0 is the
+        // left group's inboard tile (its row reads leftward), so right is off the group.
+        val across = stepCellAcrossGroups(
+            cell(RemapSimpleGroup.LEFT_UTILITY, row = 0, slot = 0),
             dRow = 0,
             dCol = 1,
             slots = slots,
         )
-        assert(onward?.group == RemapSimpleGroup.RIGHT_STICK) { "got $onward" }
-    }
-
-    @Test
-    fun aRowWithFewerRows_clampsWhenCrossedInto() {
-        // Utility has two rows (Start, Select), a stick one (its click): stepping right out of
-        // utility's BOTTOM row must land on a row the stick actually has. That row is Select's,
-        // which mirrors — so its rightmost tile, the one you leave from, is slot 0.
-        val last = RemapSimpleGroup.UTILITY.rows.lastIndex
-        val from = cell(RemapSimpleGroup.UTILITY, row = last, slot = 0)
-        val next = stepCellAcrossGroups(from, dRow = 0, dCol = 1, slots = slots)
-        assert(next?.group == RemapSimpleGroup.RIGHT_STICK) { "got $next" }
-        assert(next!!.inputKey in RemapSimpleGroup.RIGHT_STICK.rows.map { it.subInputKey }) { "got $next" }
+        assert(across?.group == RemapSimpleGroup.RIGHT_UTILITY) { "got $across" }
+        val back = stepCellAcrossGroups(
+            cell(RemapSimpleGroup.RIGHT_UTILITY, row = 0, slot = 0),
+            dRow = 0,
+            dCol = -1,
+            slots = slots,
+        )
+        assert(back?.group == RemapSimpleGroup.LEFT_UTILITY) { "got $back" }
     }
 
     @Test
@@ -176,7 +190,8 @@ class RemapZoomSceneTest {
         // Outboard of the left flank is its LAST slot — the row reads leftward from its glyph.
         val outboard = cell(RemapSimpleGroup.LEFT_SHOULDER, row = 0, slot = Slots - 1)
         assert(stepCellAcrossGroups(outboard, dRow = 0, dCol = -1, slots = slots) == null)
-        val bottomLeft = cell(RemapSimpleGroup.LEFT_STICK, row = RemapSimpleGroup.LEFT_STICK.rows.lastIndex, slot = 0)
+        val bottom = RemapSimpleGroup.LEFT_UTILITY
+        val bottomLeft = cell(bottom, row = bottom.rows.lastIndex, slot = 0)
         assert(stepCellAcrossGroups(bottomLeft, dRow = 1, dCol = 0, slots = slots) == null)
     }
 
@@ -190,9 +205,9 @@ class RemapZoomSceneTest {
 
     @Test
     fun aCellKnowsItsGroup_soRepeatedSubInputKeysStayDistinct() {
-        // "click" names a row in the utility group AND in both sticks; the group is what tells
+        // "click" names a row in the utility groups AND in both sticks; the group is what tells
         // them apart, in move state and in test tags alike.
-        val onUtility = cell(RemapSimpleGroup.UTILITY, row = 0, slot = 0)
+        val onUtility = cell(RemapSimpleGroup.RIGHT_UTILITY, row = 0, slot = 0)
         val onStick = cell(RemapSimpleGroup.LEFT_STICK, row = 0, slot = 0)
         assert(onUtility.inputKey == onStick.inputKey) { "the keys should be the colliding pair" }
         assert(onUtility != onStick)
@@ -201,15 +216,18 @@ class RemapZoomSceneTest {
 
     @Test
     fun twoRowsOfOneGroupSharingASubInputKeyStayDistinct() {
-        // Start and Select are both a "click" — different SOURCES, one group, one table. Their
-        // cells were the same object until the row spec became the identity (2026-09-17).
-        val start = cell(RemapSimpleGroup.UTILITY, row = 0, slot = 0)
-        val select = cell(RemapSimpleGroup.UTILITY, row = 1, slot = 0)
-        assert(start.inputKey == select.inputKey) { "the keys should be the colliding pair" }
-        assert(start != select) { "got $start and $select" }
-        assert(cellTestTag(start) != cellTestTag(select))
+        // A shoulder is a trigger AND a bumper — two SOURCES in one group, one table. Cells like
+        // these were the same object until the row spec became the identity (2026-09-17). Start
+        // and Select were the original pair; they are separate groups since 2026-09-26, so the
+        // case is pinned on a group that still holds two sources.
+        val group = RemapSimpleGroup.LEFT_SHOULDER
+        val trigger = cell(group, row = 0, slot = 0)
+        val bumper = cell(group, row = 1, slot = 0)
+        assert(trigger.source != bumper.source) { "got $trigger and $bumper" }
+        assert(trigger != bumper) { "got $trigger and $bumper" }
+        assert(cellTestTag(trigger) != cellTestTag(bumper))
         // And the d-pad can actually walk between them.
-        assert(stepCellAcrossGroups(start, dRow = 1, dCol = 0, slots = slots) == select)
+        assert(stepCellAcrossGroups(trigger, dRow = 1, dCol = 0, slots = slots) == bumper)
     }
 
     @Test

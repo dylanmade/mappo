@@ -2368,7 +2368,11 @@ internal fun RemapSimpleGroup.headerLabel(): String = when (this) {
     RemapSimpleGroup.FACE -> "Button Pad"
     RemapSimpleGroup.RIGHT_SHOULDER -> "Right Trigger"
     RemapSimpleGroup.RIGHT_STICK -> "Right Joystick"
-    RemapSimpleGroup.UTILITY -> "Utility Buttons"
+    // One utility group per side since 2026-09-26 — Select on the left, Start on the right,
+    // with room for the back paddles and other per-side extras to come. Named for the SIDE
+    // rather than for the one button each currently holds, because that is what they are.
+    RemapSimpleGroup.LEFT_UTILITY -> "Left Utility"
+    RemapSimpleGroup.RIGHT_UTILITY -> "Right Utility"
 }
 
 /**
@@ -2378,10 +2382,12 @@ internal fun RemapSimpleGroup.headerLabel(): String = when (this) {
  * The groups on the LEFT of the controller do (Dylan, 2026-09-17), so that a card and the basic
  * view box it grew out of have the same shape, and so the two flanks read as each other's
  * reflection around the controller between them — the same rule [RemapSimpleGroup.anchorFor]
- * applies to the basic view's rows. The centre group stays normal: it has no flank to mirror.
+ * applies to the basic view's rows. Since 2026-09-26 every group is on a flank (the utility
+ * pair split per side), so every group mirrors with the column it belongs to.
  */
 internal fun RemapSimpleGroup.editorMirrored(): Boolean = when (this) {
-    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK -> true
+    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK,
+    RemapSimpleGroup.LEFT_UTILITY -> true
     else -> false
 }
 

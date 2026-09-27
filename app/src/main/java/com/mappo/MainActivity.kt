@@ -10,10 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,17 +70,28 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         consumeRouteExtra(intent)
-        // A normal opaque app window (2026-08-16 — the drawer-over-the-game concept is
-        // retired; only the run-mode overlay windows and OverlayEditActivity render over the
-        // game, and only the latter is immersive). The system bars stay visible with their
-        // own layout space: enableEdgeToEdge un-fits the decor, so the compose root paints
-        // the whole window (bar strips included) and pads content by the systemBars insets —
-        // deliberately NOT safeDrawing, which includes the IME and would break the
-        // keyboard-overlay policy. Transparent bar styles let our fill show through the bars.
+        // **IMMERSIVE (Dylan, 2026-09-26).** Mappo takes the whole display again: no status
+        // bar, no navigation bar, and the views lay out edge to edge with no insets reserved
+        // for either. The screen is a device's own front panel — chrome of ours at the top and
+        // bottom of it, not the system's — and on a handheld running a game underneath, the
+        // notification strip was never ours to give away a bar's height to.
+        //
+        // This reverses 2026-08-16, which dropped immersive along with the drawer-over-the-game
+        // concept. Those two were only ever bundled: what was retired that day was rendering
+        // OVER the game (translucency, the frozen backdrop, the true over-the-game drawer), and
+        // NONE of that comes back here. The window stays opaque `Theme.Mappo`; only the bars
+        // are gone. `Theme.Mappo.Translucent` still serves OverlayEditActivity alone.
+        //
+        // Bars return transiently on a swipe, so nothing becomes unreachable, and re-hide when
+        // the window takes focus again (see onWindowFocusChanged) — returning from another app
+        // or dismissing a dialog otherwise leaves them up for good.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
+        WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        hideSystemBars()
 
         setContent {
             val themeStorage = remember { SharedPrefsThemeOverridesStorage(applicationContext) }
@@ -94,22 +105,20 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.surfaceContainerLowest),
                     ) {
-                        // The system bars' reserved layout space: everything lays out between
-                        // them so bar content never occludes app content.
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .windowInsetsPadding(WindowInsets.systemBars),
+                        // NO inset padding: the window is immersive, so the whole display IS
+                        // the app's. (It used to pad by `WindowInsets.systemBars` to keep
+                        // content clear of the bars — deliberately not `safeDrawing`, which
+                        // includes the IME and would have broken the keyboard-overlay policy.
+                        // Should a bar ever need reserving again, that is the inset to use.)
+                        //
+                        // The stick, and the arbiter that decides which scroller it means.
+                        // Scoped to this window: an overlay composes its own tree and must
+                        // not be weighed against the activity's scrollers.
+                        CompositionLocalProvider(
+                            LocalRightStick provides rightStick,
+                            LocalStickScrollArbiter provides stickScroll,
                         ) {
-                            // The stick, and the arbiter that decides which scroller it means.
-                            // Scoped to this window: an overlay composes its own tree and must
-                            // not be weighed against the activity's scrollers.
-                            CompositionLocalProvider(
-                                LocalRightStick provides rightStick,
-                                LocalStickScrollArbiter provides stickScroll,
-                            ) {
-                                MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
-                            }
+                            MainScreen(deepLinkRoute = pendingRoute, deepLinkNonce = routeNonce)
                         }
                     }
                 }
@@ -133,6 +142,17 @@ class MainActivity : ComponentActivity() {
         // already alive) arrives here, not onCreate. Re-point getIntent() and consume the route.
         setIntent(intent)
         consumeRouteExtra(intent)
+    }
+
+    /** Transiently-revealed bars go away again as soon as the window is ours (see onCreate). */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.getInsetsController(window, window.decorView)
+            .hide(WindowInsetsCompat.Type.systemBars())
     }
 
     override fun onResume() {

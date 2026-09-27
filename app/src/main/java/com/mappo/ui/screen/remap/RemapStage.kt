@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
@@ -83,12 +84,9 @@ import androidx.compose.material3.MaterialTheme
 import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputScrollbar
-import com.mappo.ui.minput.MinputPod
 import com.mappo.ui.minput.MinputPodGap
-import com.mappo.ui.minput.MinputPodPlateCorner
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
-import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -601,9 +599,6 @@ internal fun RemapStage(
 
         val slots = buildList<@Composable () -> Unit> {
             add {
-                MinputPod(corner = MinputPodPlateCorner, modifier = Modifier.fillMaxSize()) {}
-            }
-            add {
                 Box(
                     Modifier.fillMaxSize().testTag(ControllerImageTestTag).paint(
                         painter = painter,
@@ -611,6 +606,18 @@ internal fun RemapStage(
                         contentScale = ContentScale.Fit,
                     ),
                 )
+            }
+            groups.forEach { group ->
+                add {
+                    StageGroupBacking(
+                        group = group,
+                        interaction = interactions.getValue(group),
+                        // Edit mode navigates TILES, not boxes, so the backing goes quiet with
+                        // the group's edge line rather than lighting a group nobody is on.
+                        lightsOnFocus = !editing,
+                        progress = progress,
+                    )
+                }
             }
             groups.forEach { group ->
                 add { StageCardChrome(settled, zoomed, progress) }
@@ -782,11 +789,12 @@ internal fun RemapStage(
                 val camOffset = camera.value
                 val count = groups.size
 
-                val plateM = measurables[0].single()
-                val controllerM = measurables[1].single()
-                val chromeM = List(count) { measurables[2 + it].single() }
-                val basicM = List(count) { measurables[2 + count + it].single() }
-                val advancedM: List<Measurable?> = List(count) { measurables[2 + count * 2 + it].firstOrNull() }
+                val controllerM = measurables[0].single()
+                val backingM = List(count) { measurables[1 + it].single() }
+                val chromeM = List(count) { measurables[1 + count + it].single() }
+                val basicM = List(count) { measurables[1 + count * 2 + it].single() }
+                val advancedM: List<Measurable?> =
+                    List(count) { measurables[1 + count * 3 + it].firstOrNull() }
 
                 // ── REST: the 3 × 3 grid, inside the plate's inset ────────────────────────────
                 val edgeX = MinputBarEdgePadding.roundToPx()
@@ -820,19 +828,19 @@ internal fun RemapStage(
                 val controllerRestW = (centreW * ControllerImageFraction).roundToInt()
                 val controllerRestH = (controllerRestW * aspect).roundToInt()
                 val bandHeights = GridBands.mapIndexed { index, band ->
-                    var tallest = maxOf(restOf(band.left).height, restOf(band.right).height)
-                    if (index == ControllerBand) tallest = maxOf(tallest, controllerRestH)
-                    if (index == UtilityBand) tallest = maxOf(tallest, restOf(RemapSimpleGroup.UTILITY).height)
-                    tallest
+                    val tallest = maxOf(restOf(band.left).height, restOf(band.right).height)
+                    if (index == ControllerBand) maxOf(tallest, controllerRestH) else tallest
                 }
                 // The whole matrix is CENTRED in the plate and its bands are packed: the grid used
                 // to hand every spare pixel to the middle band, which pushed the shoulder row to the
                 // top of the screen and the stick row to the bottom, far from the controller they
                 // belong to.
-                val bandTotal = bandHeights.sum() + rowGap * 2
-                val bandTop = IntArray(3)
+                val bandTotal = bandHeights.sum() + rowGap * (GridBands.size - 1)
+                val bandTop = IntArray(GridBands.size)
                 bandTop[0] = edgeY + ((gridH - bandTotal) / 2).coerceAtLeast(0)
-                for (band in 1..2) bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
+                for (band in 1 until GridBands.size) {
+                    bandTop[band] = bandTop[band - 1] + bandHeights[band - 1] + rowGap
+                }
                 // ── The grid, at BOTH ends of the morph (Dylan, 2026-09-24) ─────────────────
                 //
                 // Each side column is as wide as its widest box; the grid is that plus the
@@ -945,9 +953,9 @@ internal fun RemapStage(
                 // bottom band on the CEILING of its own, and the middle band centres on the
                 // controller. With the flanks already hugging their inner edges, that makes each
                 // corner box point at the controller.
-                fun restTop(band: Int, itemHeight: Int): Int = when (band) {
-                    0 -> bandTop[0] + bandHeights[0] - itemHeight
-                    2 -> bandTop[2]
+                fun restTop(band: Int, itemHeight: Int): Int = when {
+                    band < ControllerBand -> bandTop[band] + bandHeights[band] - itemHeight
+                    band > ControllerBand -> bandTop[band]
                     else -> bandTop[band] + (bandHeights[band] - itemHeight) / 2
                 }
                 val restRects = HashMap<RemapSimpleGroup, StageRect>(count)
@@ -962,21 +970,12 @@ internal fun RemapStage(
                     val right = restOf(row.right)
                     restRects[row.right] = StageRect(rightX, restTop(band, right.height), right.width, right.height)
                 }
-                val utility = restOf(RemapSimpleGroup.UTILITY)
-                restRects[RemapSimpleGroup.UTILITY] = StageRect(
-                    left = centreX + (centreW - utility.width) / 2,
-                    top = restTop(UtilityBand, utility.height),
-                    width = utility.width,
-                    height = utility.height,
-                )
                 val controllerRest = StageRect(
                     left = centreX + (centreW - controllerRestW) / 2,
                     top = restTop(ControllerBand, controllerRestH),
                     width = controllerRestW,
                     height = controllerRestH,
                 )
-                val plateRest = StageRect(edgeX - shift, edgeY, gridW, gridH)
-
                 // ── ZOOM: the scene under the camera ─────────────────────────────────────────
                 fun sceneRect(rect: SceneRect) = StageRect(
                     left = rect.x.roundToPx() - camOffset.x.roundToInt(),
@@ -986,20 +985,36 @@ internal fun RemapStage(
                 )
                 val zoomRects = groups.associateWith { sceneRect(scene.cards.getValue(it)) }
                 val controllerZoom = sceneRect(scene.controller)
-                val plateZoom = StageRect(
-                    left = -camOffset.x.roundToInt(),
-                    top = -camOffset.y.roundToInt(),
-                    width = scene.width.roundToPx(),
-                    height = scene.height.roundToPx(),
-                )
 
                 // ── The travel ───────────────────────────────────────────────────────────────
                 val current = groups.associateWith { lerpRect(restRects.getValue(it), zoomRects.getValue(it), p) }
                 val controllerNow = lerpRect(controllerRest, controllerZoom, p)
-                val plateNow = lerpRect(plateRest, plateZoom, p)
                 val fade = crossfadeAt(p)
 
-                val platePlaceable = plateM.measure(Constraints.fixed(plateNow.width, plateNow.height))
+                // ── The group BACKINGS: a rectangle per box, running off its own side of
+                // the screen (Dylan, 2026-09-26) ──────────────────────────────────────────────
+                //
+                // The single plate under the whole grid is gone. Each group's box now sits on
+                // its own sharp-cornered rectangle that starts at the box and runs OUTWARD,
+                // past the window's edge — left-column groups off the left edge, right-column
+                // groups off the right — so the view reads as content mounted on the panel's
+                // flanks rather than as boxes floating on one tray.
+                //
+                // The overhang is a whole viewport wide, which is the cheapest thing that
+                // cannot fall short: a box visible at all has its inner edge inside the
+                // viewport, so a viewport's worth of rectangle from there always reaches the
+                // screen edge, at any scroll position and any box width. The stage clips to
+                // its bounds, so the surplus costs a fill and nothing else.
+                val backingOverhang = viewport.coerceAtLeast(0)
+                val backingPlaceables = groups.map { group ->
+                    val rect = current.getValue(group)
+                    backingM[groups.indexOf(group)].measure(
+                        Constraints.fixed(
+                            (rect.width + backingOverhang).coerceAtLeast(0),
+                            rect.height.coerceAtLeast(0),
+                        ),
+                    )
+                }
                 // Measured at its ZOOM size and scaled down to wherever it is now: one bitmap,
                 // scaled uniformly, rather than a fresh fit on every frame.
                 val controllerPlaceable = controllerM.measure(
@@ -1032,7 +1047,15 @@ internal fun RemapStage(
                 val width = lerpInt(restTotalW, viewport, p)
 
                 layout(width, height) {
-                    platePlaceable.place(plateNow.left, plateNow.top)
+                    // Backings first: everything else in the view sits ON them.
+                    groups.forEach { group ->
+                        val rect = current.getValue(group)
+                        val index = groups.indexOf(group)
+                        backingPlaceables[index].place(
+                            x = if (group in LeftColumnGroups) rect.left - backingOverhang else rect.left,
+                            y = rect.top,
+                        )
+                    }
                     val controllerScale =
                         if (controllerZoom.width <= 0) 1f else controllerNow.width.toFloat() / controllerZoom.width
                     controllerPlaceable.placeWithLayer(
@@ -1140,6 +1163,56 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
 }
 
 /**
+ * **The rectangle a group's box sits on** (Dylan, 2026-09-26) — sharp-cornered, on the surface
+ * plane one step above the screen, running off its own side of the display (the stage's layout
+ * places it; see the backing block there).
+ *
+ * It replaced the single [com.mappo.ui.minput.MinputPod] plate that used to sit under the whole
+ * grid: one tray under everything said nothing about which content belonged where, while a
+ * rectangle per group that runs off the screen edge reads as the panel's own flanks — the shape
+ * a handheld's face actually has.
+ *
+ * **It is also the group's FOCUS affordance.** Holding the controller cursor steps the fill one
+ * plane up (`surfaceContainerLow` → `surfaceContainer`), which replaces the lift the box used to
+ * take. A lit surface says "the cursor is here" at any distance, where a two-pixel rise had to be
+ * looked for; the group's inner edge line still goes accent alongside it, which Dylan kept
+ * explicitly. The fill animates, so arriving and leaving read as movement rather than as a jump.
+ *
+ * Alpha is the complement of the card chrome's: at rest this IS the group's surface, and by the
+ * time the zoom has landed the card has taken the job over. Read in the DRAW phase, so the
+ * travel repaints without recomposing.
+ */
+@Composable
+private fun StageGroupBacking(
+    group: RemapSimpleGroup,
+    interaction: MutableInteractionSource,
+    lightsOnFocus: Boolean,
+    progress: () -> Float,
+) {
+    val focused by interaction.collectIsFocusedAsState()
+    val lit = focused && lightsOnFocus
+    val fill by animateColorAsState(
+        targetValue = if (lit) {
+            MaterialTheme.colorScheme.surfaceContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        animationSpec = tween(GroupBackingFadeMillis, easing = FastOutSlowInEasing),
+        label = "groupBackingFill",
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .testTag(groupBackingTestTag(group))
+            .graphicsLayer { alpha = 1f - crossfadeAt(progress()) }
+            .background(fill),
+    )
+}
+
+/** The rectangle under one group's box — the handle a test measures its reach by. */
+internal fun groupBackingTestTag(group: RemapSimpleGroup): String = "group-backing:${group.name}"
+
+/**
  * A group's chrome, which is now two different things at the two ends of the travel (Dylan,
  * 2026-09-22).
  *
@@ -1191,11 +1264,11 @@ private fun StageCardChrome(
  * drawn stroke rather than a border modifier: the connector lines that will eventually run from
  * here to the buttons themselves start at this edge.
  *
- * **It is drawn with the group's CONTENT, not with the card chrome beside it**, and that is
- * load-bearing. `minputInteractiveMotion` tracks focus on its own node, so the chrome (never
- * focusable) and the content (focusable) lift by different amounts the moment a group takes
- * focus — invisible while the chrome was a filled card behind the rows, but a hairline that
- * slid out from under them once it became a line. Same node, same lift, no gap.
+ * **It is drawn with the group's CONTENT**, which is also where the box's own focus tracking
+ * lived. That mattered while the box LIFTED on focus: the chrome (never focusable) and the
+ * content (focusable) moved by different amounts, and a hairline slid out from under the rows.
+ * The lift retired 2026-09-26 in favour of the backing's fill ([StageGroupBacking]) — but keep
+ * the line with the content anyway, so any motion the group ever takes moves both as one.
  */
 private fun Modifier.groupEdgeLine(
     group: RemapSimpleGroup,
@@ -1225,16 +1298,18 @@ private fun Modifier.groupEdgeLine(
     )
 }
 
-/** Which edge of a group faces the controller image — where its [groupEdgeLine] is drawn. The
- *  flanks face inward; the utility group sits under the controller and faces up at it. */
+/**
+ * Which edge of a group faces the controller image — where its [groupEdgeLine] is drawn. Every
+ * group faces INWARD, because every group is on a flank: the left column's mark sits on its
+ * right edge and the right column's on its left.
+ *
+ * [GroupEdge.TOP] is what the centre-column utility group used before it split per side
+ * (2026-09-26). Kept for the next group that sits under the controller rather than beside it.
+ */
 private enum class GroupEdge { START, END, TOP }
 
-private fun RemapSimpleGroup.controllerEdge(): GroupEdge = when (this) {
-    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK ->
-        GroupEdge.END
-    RemapSimpleGroup.UTILITY -> GroupEdge.TOP
-    else -> GroupEdge.START
-}
+private fun RemapSimpleGroup.controllerEdge(): GroupEdge =
+    if (this in LeftColumnGroups) GroupEdge.END else GroupEdge.START
 
 /**
  * How far through the travel the two contents (and the two chromes) have traded places.
@@ -1283,11 +1358,12 @@ private fun StageBasicContent(
     val lineAlpha = if (lit) GroupOutlineFocusAlpha else GroupOutlineAlpha
     Box(
         modifier = Modifier
-            // **The group lifts as ONE only while it IS one** (Dylan, 2026-09-23). In edit mode
-            // the individual tiles are the controls, and each already carries this same motion —
-            // so a group-level lift on top of it moved the whole d-pad every time the cursor
-            // landed on one of its commands.
-            .then(if (edit == null) Modifier.minputInteractiveMotion(interaction) else Modifier)
+            // **No lift here** (Dylan, 2026-09-26). The box used to rise on focus/hover
+            // (`minputInteractiveMotion`); its backing rectangle now takes a plane instead — see
+            // [StageGroupBacking] — and two affordances for one state is one too many. It also
+            // retires an old hazard: the lift tracked focus on THIS node only, so the group's
+            // hairline edge line (drawn here) and the chrome beside it moved by different amounts
+            // the moment a group took focus.
             // Clipped so the tap ripple takes the card's shape: the fill and the bevel belong to
             // the chrome sibling, but the indication is drawn here.
             .clip(RoundedCornerShape(GroupCorner))
@@ -1592,8 +1668,7 @@ private fun groupLeftIn(
     val width = widths[groups.indexOf(group)]
     return when {
         // A left-flank box is right-aligned to its column, so its inner edge is its right one.
-        GridBands.any { it.left == group } -> span.startX + span.leftW - width
-        group == RemapSimpleGroup.UTILITY -> span.centreX + (centreW - width) / 2
+        group in LeftColumnGroups -> span.startX + span.leftW - width
         else -> span.rightX
     }
 }
@@ -1610,13 +1685,12 @@ private fun editScrollTarget(
     from: Int,
 ): Int {
     val width = widths[groups.indexOf(group)]
-    val onLeft = GridBands.any { it.left == group }
+    val onLeft = group in LeftColumnGroups
     val left = groupLeftIn(span, group, widths, groups, centreW)
     val right = left + width
     val target = when {
         // Too wide to show at once: the glyph side, whichever side that is.
         width > viewport && onLeft -> right - viewport
-        width > viewport && group == RemapSimpleGroup.UTILITY -> (left + right - viewport) / 2
         width > viewport -> left
         right > from + viewport -> right - viewport
         left < from -> left
@@ -1895,17 +1969,27 @@ private fun lerpInt(a: Int, b: Int, p: Float): Int = a + ((b - a) * p).roundToIn
 /** One band of the rest grid: the flank group on each side of the controller. */
 internal class GridBand(val left: RemapSimpleGroup, val right: RemapSimpleGroup)
 
-/** The rest grid's three bands, top to bottom. The utility group joins the last one, in the
- *  centre column — which is what seats it between the two sticks. */
+/**
+ * The rest grid's bands, top to bottom — the flank groups, two per band.
+ *
+ * FOUR of them since 2026-09-26, when Select and Start stopped being one centre-column group
+ * and became the utility group of each side (Dylan). The centre column is now the controller
+ * image and nothing else, and every group in the view belongs to a flank.
+ */
 internal val GridBands = listOf(
     GridBand(RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.RIGHT_SHOULDER),
     GridBand(RemapSimpleGroup.DPAD, RemapSimpleGroup.FACE),
     GridBand(RemapSimpleGroup.LEFT_STICK, RemapSimpleGroup.RIGHT_STICK),
+    GridBand(RemapSimpleGroup.LEFT_UTILITY, RemapSimpleGroup.RIGHT_UTILITY),
 )
 
-/** Which band the controller image occupies, and which one the utility box joins. */
+/** The groups in the grid's LEFT column — which is the side their backing rectangle runs off
+ *  (see [StageGroupBacking]). Taken from the bands so the two can't disagree. */
+internal val LeftColumnGroups: Set<RemapSimpleGroup> = GridBands.map { it.left }.toSet()
+
+/** Which band the controller image occupies. Bands above it anchor to their floor and bands
+ *  below it to their ceiling, so every box points at the controller (see `restTop`). */
 private const val ControllerBand = 1
-private const val UtilityBand = 2
 
 /** Where the contents of a card start and finish trading places, as a fraction of the travel.
  *  See [crossfadeAt]. */
@@ -1925,6 +2009,10 @@ private val GroupOutlineWidth = 1.dp
 /** How far the group's line stops short of each end of its edge. */
 private val GroupOutlineEndTrim = 4.dp
 private const val GroupOutlineAlpha = 0.55f
+
+/** How long a group's backing takes to change plane when the cursor arrives or leaves. Short
+ *  enough to feel like a response, long enough not to flicker while the d-pad walks a column. */
+private const val GroupBackingFadeMillis = 140
 
 /** The same line where the group holds the controller cursor — the focus affordance the card
  *  used to carry. Drawn in the accent, so it reads as "you are here" rather than "heavier". */
