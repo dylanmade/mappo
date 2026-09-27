@@ -105,6 +105,17 @@ fun <T> MinputGroupButton(
                 topEnd = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
                 bottomEnd = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
             )
+            // Optical centring, per the library rule: each end is inset in proportion to how
+            // round it is, so a segment with one pill end and one square one doesn't crowd its
+            // arc (see [minputRoundEndBias]). An end segment of a group has exactly that shape.
+            val startBias = minputRoundEndBias(
+                corner = if (i == 0) outerCorner else GroupInnerCorner,
+                height = MinputPillHeight,
+            )
+            val endBias = minputRoundEndBias(
+                corner = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
+                height = MinputPillHeight,
+            )
             val isSelected = option == selected
             val fill by animateColorAsState(
                 targetValue = if (isSelected) minputHighlightContainer() else container,
@@ -149,15 +160,30 @@ fun <T> MinputGroupButton(
                 Row(
                     modifier = Modifier
                         .fillMaxHeight()
-                        // An icon-only segment is a SQUARE (a pill's height across), so a pair
-                        // of them reads as two glyph tiles rather than two capsules; the
-                        // content inset would pad a glyph that has no label to sit beside.
+                        // An icon-only segment is a SQUARE of glyph room (a pill's height
+                        // across) plus each end's round allowance, so a pair of them reads as two
+                        // glyph tiles rather than two capsules — and the arcs get their space
+                        // instead of taking it off the glyph.
                         .then(
                             if (label.isBlank() && icon != null) {
-                                Modifier.width(MinputPillHeight)
-                            } else {
-                                Modifier.padding(horizontal = MinputPillContentPadding)
-                            },
+                                Modifier.width(
+                                    minputRoundEndWidth(
+                                        height = MinputPillHeight,
+                                        startCorner = if (i == 0) outerCorner else GroupInnerCorner,
+                                        endCorner = if (i == lastRoundedIndex) {
+                                            outerCorner
+                                        } else GroupInnerCorner,
+                                    ),
+                                )
+                            } else Modifier,
+                        )
+                        .padding(
+                            start = if (label.isBlank() && icon != null) {
+                                startBias
+                            } else MinputPillContentPadding + startBias,
+                            end = if (label.isBlank() && icon != null) {
+                                endBias
+                            } else MinputPillContentPadding + endBias,
                         ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
@@ -221,12 +247,15 @@ fun <T> MinputGroupButton(
                     ),
             ) {
                 Box(
-                    // Optical centering: this segment's end is a full pill arc while its
-                    // start is square, so the shape's visual mass sits START of its
-                    // geometric center — a geometrically centered glyph reads pushed
-                    // toward the round end, leaving a fat left flank (Dylan, 2026-08-29).
-                    // End padding pulls it back by half the bias.
-                    modifier = Modifier.fillMaxHeight().padding(end = GroupActionGlyphBias),
+                    // The same optical rule as the segments above, which this is where it was
+                    // first tuned (Dylan, 2026-08-29): a full pill arc at the end, a square
+                    // start, so the glyph is pushed off the curve by half the end's allowance.
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(
+                            start = minputRoundEndBias(GroupInnerCorner, MinputPillHeight),
+                            end = minputRoundEndBias(outerCorner, MinputPillHeight),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -247,10 +276,8 @@ private val GroupSegmentGap = 4.dp
 /** Segment inner corners: perfectly square (outer ends stay full pill) — the M2 side. */
 private val GroupInnerCorner = 2.dp
 
-/** Fixed width of the trailing ACTION segment — icon-only, deliberately narrower than the
- *  selection segments so it reads as an appendix, not a peer. */
+/** Fixed width of the trailing ACTION segment — icon-only, deliberately narrower than a
+ *  LABELLED selection segment so it reads as an appendix, not a peer. (It comes out the same as
+ *  an icon-only selection segment with one pill end, which is what it is.) */
 private val GroupActionSegmentWidth = 26.dp
 
-/** Total extra END padding inside the action segment: shifts its glyph half this far toward
- *  the squared start edge, canceling the round end's optical pull (see the Box above). */
-private val GroupActionGlyphBias = 2.dp

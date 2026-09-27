@@ -5,7 +5,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -87,6 +86,7 @@ import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
+import com.mappo.ui.minput.minputPressIndication
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -322,6 +322,11 @@ internal fun RemapStage(
         if (size.isSpecified && size.width > 0f) size.height / size.width else DefaultControllerAspect
     }
     val interactions = remember { groups.associateWith { MutableInteractionSource() } }
+    // Which group the cursor is IN — its box at rest, one of its tiles in edit mode. What the
+    // group backings light from (see [StageGroupBacking]); only one group can hold focus, so one
+    // slot says it all, and a group reporting focus lost only clears the slot if it still owns it
+    // (focus arrives at the next group before it leaves the last).
+    val litGroup = remember { mutableStateOf<RemapSimpleGroup?>(null) }
 
     // Where the stage itself sits in the window. The move state registers cells in WINDOW space
     // — the one space every card shares — so this is what converts a cell's rect into a position
@@ -611,10 +616,9 @@ internal fun RemapStage(
                 add {
                     StageGroupBacking(
                         group = group,
-                        interaction = interactions.getValue(group),
-                        // Edit mode navigates TILES, not boxes, so the backing goes quiet with
-                        // the group's edge line rather than lighting a group nobody is on.
-                        lightsOnFocus = !editing,
+                        // Read as a lambda so only the backing recomposes when the cursor moves
+                        // between groups — the stage itself has no business re-running for it.
+                        lit = { litGroup.value == group },
                         progress = progress,
                     )
                 }
@@ -642,6 +646,13 @@ internal fun RemapStage(
                         // window falls back to its first focusable and the layouts button, top
                         // left, visibly lights up before the cursor arrives on a tile.
                         interactive = !zoomed && (!editing || !editSettled),
+                        onFocusWithin = { within ->
+                            if (within) {
+                                litGroup.value = group
+                            } else if (litGroup.value == group) {
+                                litGroup.value = null
+                            }
+                        },
                         editPhase = editPhase,
                         editProgress = editProgress,
                         seatFocus = focusSeatGroup == group,
@@ -1006,12 +1017,18 @@ internal fun RemapStage(
                 // screen edge, at any scroll position and any box width. The stage clips to
                 // its bounds, so the surplus costs a fill and nothing else.
                 val backingOverhang = viewport.coerceAtLeast(0)
+                // **Flush with the group's edge line** (Dylan, 2026-09-26): the line stops
+                // [GroupOutlineEndTrim] short of each end of the box's inner edge, so the
+                // rectangle is inset by the same trim top and bottom and the two share their
+                // start and finish. Ungated it stood a few pixels taller at both ends, which
+                // reads as two different shapes rather than one panel the line sits on.
+                val backingTrim = GroupOutlineEndTrim.roundToPx()
                 val backingPlaceables = groups.map { group ->
                     val rect = current.getValue(group)
                     backingM[groups.indexOf(group)].measure(
                         Constraints.fixed(
                             (rect.width + backingOverhang).coerceAtLeast(0),
-                            rect.height.coerceAtLeast(0),
+                            (rect.height - backingTrim * 2).coerceAtLeast(0),
                         ),
                     )
                 }
@@ -1053,7 +1070,7 @@ internal fun RemapStage(
                         val index = groups.indexOf(group)
                         backingPlaceables[index].place(
                             x = if (group in LeftColumnGroups) rect.left - backingOverhang else rect.left,
-                            y = rect.top,
+                            y = rect.top + backingTrim,
                         )
                     }
                     val controllerScale =
@@ -1178,6 +1195,13 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
  * looked for; the group's inner edge line still goes accent alongside it, which Dylan kept
  * explicitly. The fill animates, so arriving and leaving read as movement rather than as a jump.
  *
+ * **In EDIT MODE it follows the cursor's TILE** (Dylan, 2026-09-26) — the group holding the
+ * focused tile lights exactly as a focused box does in view mode, so the view keeps saying which
+ * part of the controller you are working on. That is why the signal is "focus is somewhere in this
+ * group" (`onFocusChanged { it.hasFocus }` on the group's content, which the tiles live inside)
+ * rather than the box's own focus state: one signal covers both modes, and the box stops being a
+ * focus target the moment its tiles become one.
+ *
  * Alpha is the complement of the card chrome's: at rest this IS the group's surface, and by the
  * time the zoom has landed the card has taken the job over. Read in the DRAW phase, so the
  * travel repaints without recomposing.
@@ -1185,14 +1209,12 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
 @Composable
 private fun StageGroupBacking(
     group: RemapSimpleGroup,
-    interaction: MutableInteractionSource,
-    lightsOnFocus: Boolean,
+    /** Does the cursor sit anywhere in this group — its box, or one of its tiles? */
+    lit: () -> Boolean,
     progress: () -> Float,
 ) {
-    val focused by interaction.collectIsFocusedAsState()
-    val lit = focused && lightsOnFocus
     val fill by animateColorAsState(
-        targetValue = if (lit) {
+        targetValue = if (lit()) {
             MaterialTheme.colorScheme.surfaceContainer
         } else {
             MaterialTheme.colorScheme.surfaceContainerLow
@@ -1331,6 +1353,8 @@ private fun StageBasicContent(
     config: ControllerConfig?,
     interaction: MutableInteractionSource,
     interactive: Boolean,
+    /** Focus entered or left this group — its box, or (in edit mode) any of its tiles. */
+    onFocusWithin: (Boolean) -> Unit,
     seatFocus: Boolean,
     onFocusSeated: () -> Unit,
     onOpenGroup: (RemapSimpleGroup) -> Unit,
@@ -1364,9 +1388,18 @@ private fun StageBasicContent(
             // retires an old hazard: the lift tracked focus on THIS node only, so the group's
             // hairline edge line (drawn here) and the chrome beside it moved by different amounts
             // the moment a group took focus.
+            // Focus ANYWHERE in this group — the box itself at rest, one of its tiles in edit
+            // mode (they compose inside this node) — which is what the group's backing rectangle
+            // lights from. Kept at the top of the chain so it covers the whole subtree.
+            .onFocusChanged { onFocusWithin(it.hasFocus) }
             // Clipped so the tap ripple takes the card's shape: the fill and the bevel belong to
             // the chrome sibling, but the indication is drawn here.
             .clip(RoundedCornerShape(GroupCorner))
+            // **Press and hover only** (Dylan, 2026-09-26). The stock ripple also paints a FOCUS
+            // state layer, and with the backing rectangle now lighting on focus that read as a
+            // second, differently-shaped highlight sitting on top of the first. The group's focus
+            // is the backing's plane and its accent line; nothing here draws it.
+            .minputPressIndication(interaction)
             .groupEdgeLine(group, lineColor) { lineAlpha }
             .then(
                 if (interactive) {
@@ -1377,7 +1410,9 @@ private fun StageBasicContent(
                         // view already teaches on its tiles, where holding lifts one.
                         .combinedClickable(
                             interactionSource = interaction,
-                            indication = LocalIndication.current,
+                            // Drawn by minputPressIndication above, so that there is one state
+                            // layer and it is the one without a focus treatment.
+                            indication = null,
                             onLongClick = { onOpenAdvanced(group) },
                             onClick = {
                                 // Take the cursor before handing it on. A tap flips the window
@@ -2006,8 +2041,9 @@ private const val CrossfadeSpan = 0.46f
 private val GroupOutlineInset = 3.dp
 private val GroupOutlineWidth = 1.dp
 
-/** How far the group's line stops short of each end of its edge. */
-private val GroupOutlineEndTrim = 4.dp
+/** How far the group's line stops short of each end of its edge — and therefore how far its
+ *  backing rectangle is inset top and bottom, so the two are flush (see [StageGroupBacking]). */
+internal val GroupOutlineEndTrim = 4.dp
 private const val GroupOutlineAlpha = 0.55f
 
 /** How long a group's backing takes to change plane when the cursor arrives or leaves. Short

@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,8 +28,6 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.Gamepad2
-import com.composables.icons.lucide.Layers
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.mappo.data.model.steam.ActionSetGraph
@@ -276,6 +276,10 @@ private fun ActionSetCluster(
  * it. Glyphs only — a gamepad and stacked layers — with the live editor on the highlight plane,
  * exactly as the action sets mark the set being viewed.
  *
+ * Both glyphs are Material FILLED (Dylan, 2026-09-26): Lucide's are single-weight outlines, and at
+ * 13dp a hollow gamepad was hard to read — a filled silhouette carries at that size, and it also
+ * reverses cleanly against the highlight plane when its half is the live one.
+ *
  * Physical is always the selected one here, because this composable only exists on the physical
  * editor's own screen; picking virtual launches the overlay editor, which is its own activity
  * (and its own window over the game). When the overlay editor gains a bar of its own, it wears
@@ -300,8 +304,8 @@ private fun EditorSwitcher(
 
 /** The two editors the controls bar switches between. */
 private enum class EditorKind(val icon: ImageVector, val description: String) {
-    PHYSICAL(Lucide.Gamepad2, "Physical buttons editor"),
-    VIRTUAL(Lucide.Layers, "Virtual buttons editor"),
+    PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor"),
+    VIRTUAL(Icons.Filled.Layers, "Virtual buttons editor"),
 }
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */

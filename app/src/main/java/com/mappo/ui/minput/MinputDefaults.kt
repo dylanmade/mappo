@@ -5,9 +5,16 @@ import android.graphics.PorterDuff
 import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.HoverInteraction
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -129,6 +136,34 @@ fun minputInputFieldContainerLight(): Color =
 @Composable
 fun minputIndication(): IndicationNodeFactory =
     ripple(color = MaterialTheme.colorScheme.onSurface)
+
+/**
+ * **Indication for a control whose FOCUS is marked by something other than a state layer** —
+ * a lit surface, an accent line, a cursor drawn elsewhere (Dylan, 2026-09-26: the remap group
+ * boxes, whose focus is now their backing rectangle's plane).
+ *
+ * Press and hover wear the family treatment ([minputIndication]); focus paints NOTHING. The
+ * ripple has no per-state switch, so the trick is the SOURCE, not the indication: presses and
+ * hovers are forwarded into a private interaction source that the indication watches, and focus
+ * interactions are simply not passed on. The control keeps using its real source for everything
+ * else (its own focus logic, [minputInteractiveMotion], selection state), so nothing about focus
+ * handling changes — only what gets drawn.
+ *
+ * Chain it where the state layer should land: after the `clip`, and pass `indication = null` to
+ * the element's own `clickable` / `selectable` so there is exactly one.
+ */
+@Composable
+fun Modifier.minputPressIndication(interactionSource: InteractionSource): Modifier {
+    val pressOnly = remember { MutableInteractionSource() }
+    LaunchedEffect(interactionSource, pressOnly) {
+        interactionSource.interactions.collect { interaction ->
+            if (interaction is PressInteraction || interaction is HoverInteraction) {
+                pressOnly.emit(interaction)
+            }
+        }
+    }
+    return this.indication(pressOnly, minputIndication())
+}
 
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
 val MinputBoxStroke = 0.75.dp
@@ -385,6 +420,39 @@ val MinputPillLabelMaxWidth = 156.dp
  *  padding toward the icon side: ButtonDefaults.ButtonWithIconContentPadding (16dp icon side
  *  vs 24dp text side). NOT glyph scaling — layout-only, tune freely. */
 val MinputPillIconSideBias = 2.dp
+
+/**
+ * **Optical centring for an element whose two ends round DIFFERENTLY** — the library-wide rule
+ * (Dylan, 2026-09-26), not one component's fix.
+ *
+ * A fully-rounded end carries its visual mass INBOARD of its geometric edge, so content centred
+ * on the geometric centre reads as pushed toward that end and crowded against its arc, while the
+ * squarer end is left with a fat flank. Cancel it by insetting the ROUND side: content then sits
+ * [MinputRoundEndBias] / 2 away from the curve per mismatched end.
+ *
+ * Each end is biased in PROPORTION to how round it is — a pill end gets the whole allowance, a
+ * 2dp inner corner almost none — so an element rounded equally at both ends (a pill, a circular
+ * icon button) comes out symmetric and unshifted by construction, which is correct: there is
+ * nothing to cancel when both arcs pull the same way.
+ *
+ * On a FIXED-WIDTH icon-only element, ADD the two biases to the width as well
+ * ([minputRoundEndWidth]): the glyph then keeps its full square of room and the arcs get theirs,
+ * rather than the inset eating into the glyph's space.
+ */
+fun minputRoundEndBias(corner: Dp, height: Dp): Dp {
+    if (height <= 0.dp) return 0.dp
+    val pill = height / 2
+    return MinputRoundEndBias * (corner / pill).coerceIn(0f, 1f)
+}
+
+/** Width for a fixed-width, icon-only element of [height] whose ends round by [startCorner] /
+ *  [endCorner]: a square of glyph room plus each end's [minputRoundEndBias] allowance. */
+fun minputRoundEndWidth(height: Dp, startCorner: Dp, endCorner: Dp): Dp =
+    height + minputRoundEndBias(startCorner, height) + minputRoundEndBias(endCorner, height)
+
+/** The whole optical allowance a fully-rounded end takes; content shifts half of it away from
+ *  the curve. Measured off the group button's action segment, where it was first tuned by eye. */
+val MinputRoundEndBias = 2.dp
 
 /** Track size of [MinputSwitch] — the bar-scale toggle. The height matches the mini text
  *  line ([minputMiniTextStyle]'s 14sp line at the app's 0.85 scale ≈ 12dp), so an
