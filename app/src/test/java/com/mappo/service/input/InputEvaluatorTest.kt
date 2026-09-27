@@ -2338,6 +2338,28 @@ class InputEvaluatorTest {
      * base inputs, mode-shift definitions on the set, and a compiledGroups
      * table (one entry per target group referenced by the shifts).
      */
+    /**
+     * **A grab transition disarms Mappo's own chord** (Dylan, 2026-09-27).
+     *
+     * The chord has two feeders — the accessibility filter while the pad is free, the raw reader
+     * while it is grabbed — and the hand-over loses an edge: a Select pressed under the grab has no
+     * key-down the OS ever saw, so the release that follows the grab being dropped is an unmatched
+     * key-up and the framework discards it. Left armed, every later A completed the chord. The
+     * evaluator is where the passthrough flag flips, so it is what says so.
+     */
+    @Test
+    fun passthroughChanging_clearsTheShortcutChord() {
+        subject.setPhysicalPassthroughEnabled(true)
+        verify(exactly = 1) { dispatcher.clearShortcutChord() }
+
+        subject.setPhysicalPassthroughEnabled(false)
+        verify(exactly = 2) { dispatcher.clearShortcutChord() }
+
+        // Only on a real CHANGE — the coordinator's decision loop re-states the same value often.
+        subject.setPhysicalPassthroughEnabled(false)
+        verify(exactly = 2) { dispatcher.clearShortcutChord() }
+    }
+
     private fun configWithModeShift(
         baseInputs: Map<InputAddress, List<CompiledActivator>>,
         setModeShifts: List<CompiledModeShift>,

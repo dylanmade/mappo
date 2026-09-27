@@ -86,6 +86,50 @@ class MappoShortcutTest {
         assertEquals(1, fired())
     }
 
+    /**
+     * **Firing disarms the chord** (Dylan, 2026-09-27): "once the mappo virtual gamepad connects,
+     * the Select + A shortcut starts getting activated on every A press after the hotkey is
+     * activated once".
+     *
+     * The Select RELEASE cannot be relied on. Performing the chord brings Mappo to the front,
+     * which releases the EVIOCGRAB — and the press was seen by the raw reader while the pad was
+     * grabbed, so the OS InputReader never saw it go down and drops the unmatched key-up when it
+     * comes, while the raw reader has stood down by then. Nothing cleared the flag, so every
+     * subsequent A completed the chord again. One activation per Select press.
+     */
+    @Test
+    fun firing_disarmsTheChord_soTheNextOneWantsAFreshSelect() {
+        val (dispatcher, fired) = dispatcherWithCounter()
+        dispatcher.noteShortcutButton(ShortcutButton.SELECT, true)
+        assertTrue(dispatcher.noteShortcutButton(ShortcutButton.A, true))
+
+        // The same Select still physically held — or its release lost entirely, which is the case
+        // that made this bite. Either way, A on its own is nobody's shortcut.
+        dispatcher.noteShortcutButton(ShortcutButton.A, false)
+        assertFalse(dispatcher.noteShortcutButton(ShortcutButton.A, true))
+        assertFalse(dispatcher.noteShortcutButton(ShortcutButton.A, true))
+        assertEquals(1, fired())
+
+        // A fresh Select arms it again.
+        dispatcher.noteShortcutButton(ShortcutButton.SELECT, false)
+        dispatcher.noteShortcutButton(ShortcutButton.SELECT, true)
+        assertTrue(dispatcher.noteShortcutButton(ShortcutButton.A, true))
+        assertEquals(2, fired())
+    }
+
+    /** The grab changing hands loses an edge in either direction, so it invalidates whatever was
+     *  held rather than trusting a release to turn up. */
+    @Test
+    fun aGrabTransition_disarmsTheChord() {
+        val (dispatcher, fired) = dispatcherWithCounter()
+        dispatcher.noteShortcutButton(ShortcutButton.SELECT, true)
+
+        dispatcher.clearShortcutChord()
+
+        assertFalse(dispatcher.noteShortcutButton(ShortcutButton.A, true))
+        assertEquals(0, fired())
+    }
+
     /** With nothing installed to perform it there is no shortcut, and nothing is consumed —
      *  the press has to stay available to whatever else would have had it. */
     @Test

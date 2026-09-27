@@ -170,6 +170,10 @@ class InputDispatcher @Inject constructor() {
     // reports the buttons is mutually exclusive by construction — the raw reader only reports
     // the chord while grabbed, which is exactly when the accessibility filter is blind — so the
     // chord cannot fire twice for one press.
+    //
+    // What the sharing does NOT buy is a guaranteed pair of edges: a grab transition loses one
+    // (see [noteShortcutButton] and [clearShortcutChord]), so the chord is deliberately
+    // self-disarming rather than trusting a release to arrive.
     private var shortcutSelectHeld = false
     private var shortcutListener: (() -> Unit)? = null
 
@@ -193,8 +197,31 @@ class InputDispatcher @Inject constructor() {
         }
         if (!pressed || repeat || !shortcutSelectHeld) return false
         val listener = shortcutListener ?: return false
+        // **Firing CONSUMES the modifier**: one activation per Select press, and the next one
+        // wants a fresh Select (Dylan, 2026-09-27 — "every A press activates it" once the virtual
+        // gamepad is connected).
+        //
+        // It has to be self-disarming because the Select RELEASE is not guaranteed to arrive at
+        // all. Performing the chord brings Mappo to the front, which releases the EVIOCGRAB — and
+        // an edge is always lost across that transition: the OS InputReader never saw the physical
+        // Select go down (the pad was grabbed), so when it comes up it is an unmatched key-up and
+        // the framework drops it, while the raw reader that DID see the press has stood down by
+        // then. Nothing ever cleared the flag, so every later A completed the chord again.
+        shortcutSelectHeld = false
         listener()
         return true
+    }
+
+    /**
+     * **Forget any half-finished chord** — called when the grab changes hands
+     * ([com.mappo.service.input.InputEvaluator.setPhysicalPassthroughEnabled]).
+     *
+     * Edges are lost in BOTH directions across that transition: a press seen by one feeder may
+     * have no release the other can see. A modifier the user is genuinely still holding costs them
+     * one re-press; a modifier stuck down costs them every A they press afterwards.
+     */
+    fun clearShortcutChord() {
+        shortcutSelectHeld = false
     }
 
     private val _overlayFocus = MutableStateFlow(OverlayFocusKind.NONE)

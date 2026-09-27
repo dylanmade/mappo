@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
@@ -42,6 +43,8 @@ import com.mappo.ui.minput.MinputBarWidgetIconSize
 import com.mappo.ui.minput.MinputEdge
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
+import com.mappo.ui.minput.MinputIconButtonIconSize
+import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
@@ -276,9 +279,11 @@ private fun ActionSetCluster(
  * it. Glyphs only — a gamepad and stacked layers — with the live editor on the highlight plane,
  * exactly as the action sets mark the set being viewed.
  *
- * The GAMEPAD is filled and the LAYERS glyph outlined (Dylan, 2026-09-26) — deliberately not a
- * matched pair. A hollow gamepad is a cage of thin strokes that does not read at this size, where
- * the layers mark is three clean lines that does; filling it instead turned it into a blob.
+ * The GAMEPAD is filled and a size up; the LAYERS glyph is outlined at the family's pill scale
+ * (Dylan, 2026-09-26/27) — deliberately not a matched pair. A hollow gamepad is a cage of thin
+ * strokes that does not read at this size, and even filled its silhouette carries less weight per
+ * dp than a three-stroke mark does, so it takes the utility scale; the layers glyph reads fine as
+ * it is, and filling OR enlarging it turned it into a blob.
  *
  * Physical is always the selected one here, because this composable only exists on the physical
  * editor's own screen; picking virtual launches the overlay editor, which is its own activity
@@ -298,14 +303,19 @@ private fun EditorSwitcher(
         optionLabel = { "" },
         optionIcon = { it.icon },
         optionDescription = { it.description },
+        optionIconSize = { it.iconSize },
         modifier = modifier.testTag("bar:editors"),
     )
 }
 
-/** The two editors the controls bar switches between. */
-private enum class EditorKind(val icon: ImageVector, val description: String) {
-    PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor"),
-    VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor"),
+/** The two editors the controls bar switches between, each with the size its own artwork wants. */
+private enum class EditorKind(
+    val icon: ImageVector,
+    val description: String,
+    val iconSize: Dp,
+) {
+    PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor", MinputIconButtonIconSize),
+    VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor", MinputPillIconSize),
 }
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */

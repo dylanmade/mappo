@@ -272,6 +272,11 @@ class InputEvaluator @Inject constructor(
         val changed = physicalPassthroughEnabled.compareAndSet(!enabled, enabled)
         if (changed) {
             Log.i(TAG, "physical passthrough ${if (enabled) "ENABLED" else "DISABLED"}")
+            // The chord's two feeders change hands here, and an edge is lost when they do: a
+            // button pressed while one path owned the pad can come up when the other does, and
+            // the framework drops a key-up it never saw go down. So whatever was held is
+            // forgotten rather than trusted (Dylan, 2026-09-27).
+            dispatcher.clearShortcutChord()
         }
     }
 

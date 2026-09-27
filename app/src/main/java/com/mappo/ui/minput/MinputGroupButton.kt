@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -62,7 +63,7 @@ import androidx.compose.ui.unit.dp
  * "virtual buttons" better than two words would. An icon BESIDE a label works too; the glyph
  * follows the segment's content color either way (a segment's icons are concept icons, never
  * fixed-color hardware art), and [optionDescription] carries the semantics a blank label
- * cannot.
+ * cannot. [optionIconSize] sizes one glyph against another where the artwork needs it.
  *
  * @param equalWidths stretch every segment to an equal share of the group's width (the
  *   pre-2026-08-29 behavior); default wraps each label.
@@ -83,6 +84,9 @@ fun <T> MinputGroupButton(
     modifier: Modifier = Modifier,
     optionIcon: ((T) -> ImageVector)? = null,
     optionDescription: ((T) -> String?)? = null,
+    /** Per-glyph size override, for artwork that needs an optical nudge to read at the same weight
+     *  as its neighbour; the family's pill scale when absent. */
+    optionIconSize: ((T) -> Dp)? = null,
     enabled: Boolean = true,
     equalWidths: Boolean = false,
     container: Color = MinputElevatedContainer,
@@ -192,13 +196,13 @@ fun <T> MinputGroupButton(
                         Icon(
                             icon,
                             contentDescription = description,
-                            // An icon-only segment's glyph runs at the UTILITY scale rather than
-                            // the pill one (Dylan, 2026-09-26): it is the segment's entire
-                            // content, with no label to be measured against, and at the pill
-                            // scale it read small and lost in its own tile. A glyph BESIDE a
-                            // label keeps the pill scale, so the two still match in weight.
+                            // The family scale unless the caller sizes this glyph itself — optical
+                            // weight is a property of the ARTWORK, not of the segment: a filled
+                            // silhouette and a three-stroke outline do not read the same at one
+                            // size (Dylan, 2026-09-27 — the editor switch's gamepad needed a
+                            // step up and its layers mark did not).
                             modifier = Modifier.size(
-                                if (label.isBlank()) MinputIconButtonIconSize else MinputPillIconSize,
+                                optionIconSize?.invoke(option) ?: MinputPillIconSize,
                             ),
                             tint = content,
                         )
