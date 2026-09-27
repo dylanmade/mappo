@@ -1,7 +1,8 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
@@ -48,6 +49,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -322,11 +324,12 @@ internal fun RemapStage(
         if (size.isSpecified && size.width > 0f) size.height / size.width else DefaultControllerAspect
     }
     val interactions = remember { groups.associateWith { MutableInteractionSource() } }
-    // Which group the cursor is IN — its box at rest, one of its tiles in edit mode. What the
-    // group backings light from (see [StageGroupBacking]); only one group can hold focus, so one
-    // slot says it all, and a group reporting focus lost only clears the slot if it still owns it
-    // (focus arrives at the next group before it leaves the last).
-    val litGroup = remember { mutableStateOf<RemapSimpleGroup?>(null) }
+    // How lit each group's backing rectangle is — 0 resting, 1 with the cursor in it (its box at
+    // rest, one of its tiles in edit mode). One Animatable per group rather than one "which group"
+    // state, because each group animates its own way independently: focus arrives at the next
+    // group before it leaves the last, and both travels overlap.
+    val backingLight = remember { groups.associateWith { Animatable(0f) } }
+    val backingScope = rememberCoroutineScope()
 
     // Where the stage itself sits in the window. The move state registers cells in WINDOW space
     // — the one space every card shares — so this is what converts a cell's rect into a position
@@ -616,9 +619,7 @@ internal fun RemapStage(
                 add {
                     StageGroupBacking(
                         group = group,
-                        // Read as a lambda so only the backing recomposes when the cursor moves
-                        // between groups — the stage itself has no business re-running for it.
-                        lit = { litGroup.value == group },
+                        light = backingLight.getValue(group),
                         progress = progress,
                     )
                 }
@@ -646,11 +647,20 @@ internal fun RemapStage(
                         // window falls back to its first focusable and the layouts button, top
                         // left, visibly lights up before the cursor arrives on a tile.
                         interactive = !zoomed && (!editing || !editSettled),
+                        // Straight into the animation, in the focus pass itself: no state to
+                        // write, nothing to recompose, and a later travel on the same group
+                        // cancels the one before it (see [StageGroupBacking]).
                         onFocusWithin = { within ->
-                            if (within) {
-                                litGroup.value = group
-                            } else if (litGroup.value == group) {
-                                litGroup.value = null
+                            backingScope.launch {
+                                backingLight.getValue(group).animateTo(
+                                    targetValue = if (within) 1f else 0f,
+                                    animationSpec = tween(
+                                        durationMillis = if (within) {
+                                            GroupBackingLightMillis
+                                        } else GroupBackingDarkMillis,
+                                        easing = LinearEasing,
+                                    ),
+                                )
                             }
                         },
                         editPhase = editPhase,
@@ -1017,17 +1027,23 @@ internal fun RemapStage(
                 // screen edge, at any scroll position and any box width. The stage clips to
                 // its bounds, so the surplus costs a fill and nothing else.
                 val backingOverhang = viewport.coerceAtLeast(0)
-                // **Flush with the group's edge line** (Dylan, 2026-09-26): the line stops
-                // [GroupOutlineEndTrim] short of each end of the box's inner edge, so the
-                // rectangle is inset by the same trim top and bottom and the two share their
-                // start and finish. Ungated it stood a few pixels taller at both ends, which
-                // reads as two different shapes rather than one panel the line sits on.
-                val backingTrim = GroupOutlineEndTrim.roundToPx()
+                // **The rectangle is exactly the line's panel** (Dylan, 2026-09-26, twice): it
+                // ends where the line ends, both along the edge and across it, so the line reads
+                // as the panel's own border rather than as a second shape beside it. Both numbers
+                // come off the line's geometry ([groupEdgeLine]) — never guessed here:
+                //
+                //  - ALONG the edge, the line's visible extent is [GroupOutlineEndInset] from each
+                //    end of the box (its round caps reach half a stroke past the trim).
+                //  - ACROSS it, the line's inner face sits [GroupOutlineInset] inside the box's
+                //    inner edge, and the rectangle stops there — it used to run the whole way to
+                //    the box's edge, past the line.
+                val backingTrim = GroupOutlineEndInset.roundToPx()
+                val backingInnerInset = GroupOutlineInset.roundToPx()
                 val backingPlaceables = groups.map { group ->
                     val rect = current.getValue(group)
                     backingM[groups.indexOf(group)].measure(
                         Constraints.fixed(
-                            (rect.width + backingOverhang).coerceAtLeast(0),
+                            (rect.width + backingOverhang - backingInnerInset).coerceAtLeast(0),
                             (rect.height - backingTrim * 2).coerceAtLeast(0),
                         ),
                     )
@@ -1069,7 +1085,14 @@ internal fun RemapStage(
                         val rect = current.getValue(group)
                         val index = groups.indexOf(group)
                         backingPlaceables[index].place(
-                            x = if (group in LeftColumnGroups) rect.left - backingOverhang else rect.left,
+                            // Left column: the overhang runs off the left edge and the rectangle
+                            // stops short of the box's RIGHT edge, where its line is. Right
+                            // column: the mirror image.
+                            x = if (group in LeftColumnGroups) {
+                                rect.left - backingOverhang
+                            } else {
+                                rect.left + backingInnerInset
+                            },
                             y = rect.top + backingTrim,
                         )
                     }
@@ -1202,6 +1225,20 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
  * rather than the box's own focus state: one signal covers both modes, and the box stops being a
  * focus target the moment its tiles become one.
  *
+ * **It has to be as quick off the mark as the state layer it replaced** (Dylan, 2026-09-26 — the
+ * first cut visibly trailed the cursor by a frame or two). Three things buy that back, and all
+ * three matter:
+ *
+ *  - the animation is started INSIDE the focus callback rather than by a state write that has to
+ *    be recomposed first — the same way the ripple's own node starts its state layer off its
+ *    interaction collector;
+ *  - its value is read in the DRAW phase, so the frames in between repaint a rectangle and
+ *    recompose nothing (`animateColorAsState` + `background` recomposed this composable on every
+ *    animation frame);
+ *  - lighting UP is quick and linear ([GroupBackingLightMillis], the state-layer scale) while
+ *    going dark is slower ([GroupBackingDarkMillis]). The old 140ms ease-both-ways spent its
+ *    first frames barely moving, which on so subtle a colour step is indistinguishable from lag.
+ *
  * Alpha is the complement of the card chrome's: at rest this IS the group's surface, and by the
  * time the zoom has landed the card has taken the job over. Read in the DRAW phase, so the
  * travel repaints without recomposing.
@@ -1209,25 +1246,25 @@ private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement
 @Composable
 private fun StageGroupBacking(
     group: RemapSimpleGroup,
-    /** Does the cursor sit anywhere in this group — its box, or one of its tiles? */
-    lit: () -> Boolean,
+    /** 0 = resting plane, 1 = the cursor is in this group. Driven straight from the focus
+     *  callback (see the stage), and read here in the DRAW phase. */
+    light: Animatable<Float, AnimationVector1D>,
     progress: () -> Float,
 ) {
-    val fill by animateColorAsState(
-        targetValue = if (lit()) {
-            MaterialTheme.colorScheme.surfaceContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerLow
-        },
-        animationSpec = tween(GroupBackingFadeMillis, easing = FastOutSlowInEasing),
-        label = "groupBackingFill",
-    )
+    val base = MaterialTheme.colorScheme.surfaceContainerLow
+    val lit = MaterialTheme.colorScheme.surfaceContainer
     Box(
         Modifier
             .fillMaxSize()
             .testTag(groupBackingTestTag(group))
-            .graphicsLayer { alpha = 1f - crossfadeAt(progress()) }
-            .background(fill),
+            // Everything here is a DRAW-phase read — the plane, and the zoom's fade — so a
+            // group lighting up repaints one rectangle and recomposes nothing.
+            .drawBehind {
+                drawRect(
+                    color = lerp(base, lit, light.value),
+                    alpha = 1f - crossfadeAt(progress()),
+                )
+            },
     )
 }
 
@@ -2038,17 +2075,37 @@ private const val CrossfadeSpan = 0.46f
  * Faint on purpose: it is there to say where one group ends and the next begins, not to rebuild
  * the card it replaced out of line work.
  */
-private val GroupOutlineInset = 3.dp
+// GroupOutlineInset is also where the backing rectangle stops: the line's inner face sits
+// exactly this far inside the box's inner edge (the stroke is CENTRED on
+// `GroupOutlineInset + GroupOutlineWidth / 2`, so its inner face lands back on the inset).
+internal val GroupOutlineInset = 3.dp
 private val GroupOutlineWidth = 1.dp
 
-/** How far the group's line stops short of each end of its edge — and therefore how far its
- *  backing rectangle is inset top and bottom, so the two are flush (see [StageGroupBacking]). */
-internal val GroupOutlineEndTrim = 4.dp
+/** How far the group's line stops short of each end of its edge. */
+private val GroupOutlineEndTrim = 4.dp
+
+/**
+ * **The line's VISIBLE extent along its edge, as an inset from each end of the box** — the trim,
+ * less the half-stroke its round caps reach back out over. The backing rectangle is inset by
+ * exactly this, so the two start and finish together ([StageGroupBacking]).
+ *
+ * Insetting by the bare trim instead left the line standing a hair past the rectangle at both
+ * ends, which is precisely what Dylan saw (2026-09-26).
+ */
+internal val GroupOutlineEndInset = GroupOutlineEndTrim - GroupOutlineWidth / 2
 private const val GroupOutlineAlpha = 0.55f
 
-/** How long a group's backing takes to change plane when the cursor arrives or leaves. Short
- *  enough to feel like a response, long enough not to flicker while the d-pad walks a column. */
-private const val GroupBackingFadeMillis = 140
+/**
+ * How long a group's backing takes to light up, and how long to go dark again.
+ *
+ * Deliberately asymmetric (Dylan, 2026-09-26): arriving must feel like a response, so it is the
+ * scale of a Material state layer's fade-in and runs LINEARLY — an eased 140ms both ways spent its
+ * first frames barely moving, and on a one-plane colour step that is indistinguishable from the
+ * highlight lagging the cursor. Leaving can take its time; a slower decay is what stops a column
+ * walked quickly from strobing.
+ */
+private const val GroupBackingLightMillis = 70
+private const val GroupBackingDarkMillis = 150
 
 /** The same line where the group holds the controller cursor — the focus affordance the card
  *  used to carry. Drawn in the accent, so it reads as "you are here" rather than "heavier". */

@@ -192,7 +192,14 @@ fun <T> MinputGroupButton(
                         Icon(
                             icon,
                             contentDescription = description,
-                            modifier = Modifier.size(MinputPillIconSize),
+                            // An icon-only segment's glyph runs at the UTILITY scale rather than
+                            // the pill one (Dylan, 2026-09-26): it is the segment's entire
+                            // content, with no label to be measured against, and at the pill
+                            // scale it read small and lost in its own tile. A glyph BESIDE a
+                            // label keeps the pill scale, so the two still match in weight.
+                            modifier = Modifier.size(
+                                if (label.isBlank()) MinputIconButtonIconSize else MinputPillIconSize,
+                            ),
                             tint = content,
                         )
                         if (label.isNotBlank()) Spacer(Modifier.width(MinputGlyphLabelGap))

@@ -34,7 +34,8 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
-import com.mappo.ui.screen.remap.GroupOutlineEndTrim
+import com.mappo.ui.screen.remap.GroupOutlineEndInset
+import com.mappo.ui.screen.remap.GroupOutlineInset
 import com.mappo.ui.screen.remap.groupBackingTestTag
 import com.mappo.ui.screen.remap.RemapSimpleGroup
 import com.mappo.data.model.steam.ActionLayer
@@ -1497,8 +1498,10 @@ class RemapControlsScreenTest {
         assert(leftStart < viewport.left) {
             "the left column's backing should start off screen: $leftStart vs ${viewport.left}"
         }
-        assert(kotlin.math.abs(leftStart + leftBacking.size.width - leftBox.right) < 2f) {
-            "it should end at its box's inner edge: ${leftStart + leftBacking.size.width} vs ${leftBox.right}"
+        val leftEnd = leftStart + leftBacking.size.width
+        val innerLine = with(composeRule.density) { GroupOutlineInset.toPx() }
+        assert(kotlin.math.abs((leftBox.right - leftEnd) - innerLine) < 1.5f) {
+            "it should end at its box's edge LINE: ${leftBox.right - leftEnd} vs $innerLine"
         }
 
         // RIGHT column: the mirror image.
@@ -1509,24 +1512,28 @@ class RemapControlsScreenTest {
             "the right column's backing should run off the right edge: " +
                 "${rightStart + rightBacking.size.width} vs ${viewport.right}"
         }
-        assert(kotlin.math.abs(rightStart - rightBox.left) < 2f) {
-            "it should start at its box's inner edge: $rightStart vs ${rightBox.left}"
+        assert(rightStart > rightBox.left) {
+            "it should start inboard of its box's edge, at the line: $rightStart vs ${rightBox.left}"
         }
 
-        // **Flush with the group's edge line** (Dylan, 2026-09-26), which stops
-        // GroupOutlineEndTrim short of each end of the box: the rectangle is inset by the same
-        // trim, so the line runs the rectangle's full height rather than the rectangle standing
-        // a few pixels taller at both ends.
-        val trim = with(composeRule.density) { GroupOutlineEndTrim.toPx() }
+        // **The rectangle IS the line's panel** (Dylan, 2026-09-26): it ends where the line ends
+        // in both directions — inset by the line's visible extent along the edge, and stopping at
+        // the line's inner face across it, rather than running on to the box's own edge.
+        val endInset = with(composeRule.density) { GroupOutlineEndInset.toPx() }
+        val innerInset = with(composeRule.density) { GroupOutlineInset.toPx() }
         val backingBounds = composeRule.onNodeWithTag(
             groupBackingTestTag(RemapSimpleGroup.FACE),
             useUnmergedTree = true,
         ).fetchSemanticsNode().boundsInRoot
-        assert(kotlin.math.abs((backingBounds.top - rightBox.top) - trim) < 1.5f) {
-            "top inset should be the line's trim: ${backingBounds.top - rightBox.top} vs $trim"
+        assert(kotlin.math.abs((backingBounds.top - rightBox.top) - endInset) < 1.5f) {
+            "top inset should match the line: ${backingBounds.top - rightBox.top} vs $endInset"
         }
-        assert(kotlin.math.abs((rightBox.bottom - backingBounds.bottom) - trim) < 1.5f) {
-            "bottom inset should be the line's trim: ${rightBox.bottom - backingBounds.bottom} vs $trim"
+        assert(kotlin.math.abs((rightBox.bottom - backingBounds.bottom) - endInset) < 1.5f) {
+            "bottom inset should match the line: ${rightBox.bottom - backingBounds.bottom} vs $endInset"
+        }
+        assert(kotlin.math.abs((backingBounds.left - rightBox.left) - innerInset) < 1.5f) {
+            "a right-column rectangle stops at its line, not its box edge: " +
+                "${backingBounds.left - rightBox.left} vs $innerInset"
         }
     }
 

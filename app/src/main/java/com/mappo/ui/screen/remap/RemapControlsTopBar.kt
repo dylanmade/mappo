@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -276,9 +276,9 @@ private fun ActionSetCluster(
  * it. Glyphs only — a gamepad and stacked layers — with the live editor on the highlight plane,
  * exactly as the action sets mark the set being viewed.
  *
- * Both glyphs are Material FILLED (Dylan, 2026-09-26): Lucide's are single-weight outlines, and at
- * 13dp a hollow gamepad was hard to read — a filled silhouette carries at that size, and it also
- * reverses cleanly against the highlight plane when its half is the live one.
+ * The GAMEPAD is filled and the LAYERS glyph outlined (Dylan, 2026-09-26) — deliberately not a
+ * matched pair. A hollow gamepad is a cage of thin strokes that does not read at this size, where
+ * the layers mark is three clean lines that does; filling it instead turned it into a blob.
  *
  * Physical is always the selected one here, because this composable only exists on the physical
  * editor's own screen; picking virtual launches the overlay editor, which is its own activity
@@ -305,7 +305,7 @@ private fun EditorSwitcher(
 /** The two editors the controls bar switches between. */
 private enum class EditorKind(val icon: ImageVector, val description: String) {
     PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor"),
-    VIRTUAL(Icons.Filled.Layers, "Virtual buttons editor"),
+    VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor"),
 }
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */
