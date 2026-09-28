@@ -974,6 +974,48 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **The bar centres the SETS SWITCH, not the switch plus its kebab** (Dylan, 2026-09-27).
+     *
+     * The two used to be one Row measured into the centre slot, so what sat in the middle of the
+     * screen was the pair and the switch itself was half a kebab to the left of it. The switch is
+     * the control the eye lines up on — and the one that lines up with the controller image below —
+     * so the kebab hangs off its end instead (`BarSlots`' `centreTrailing`).
+     */
+    @Test
+    fun topBar_centresTheSetsSwitch_withItsKebabHungOffTheEnd() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = twoSetConfig(
+                            setAButtonA = BindingOutput.Unbound,
+                            setBButtonA = BindingOutput.Unbound,
+                        ),
+                        viewingActionSetId = 1L,
+                        onSelectActionSet = {},
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val bar = bounds("bar:identity").let { composeRule.onRoot().fetchSemanticsNode().boundsInRoot }
+        val switch = bounds("bar:sets")
+        val kebab = bounds("bar:sets-menu")
+
+        assert(kotlin.math.abs(switch.center.x - bar.center.x) <= 1.5f) {
+            "the sets switch should be centred in the bar: ${switch.center.x} vs ${bar.center.x}"
+        }
+        assert(kebab.left >= switch.right) {
+            "the kebab should hang off the switch's end: $kebab vs $switch"
+        }
+    }
+
+    /**
      * **The editor switch** (Dylan, 2026-09-26) — this screen IS the physical-buttons editor, so
      * its half is the live one, and picking the other half opens the virtual-buttons (overlay)
      * editor. It replaced the "Edit overlay" button.
@@ -2181,8 +2223,8 @@ class RemapControlsScreenTest {
      *
      * A tile on its way in used to be an inert ghost, so for 260ms the cursor sat on a box that had
      * already stepped aside and a tap had nothing to hit. The tiles of a group being opened are the
-     * real thing from the first frame now ([EditPhase.ARRIVING]) — they simply wear the chrome act
-     * two is still fading in, and the label travelling above them belongs to the row.
+     * real thing from the first frame now ([EditPhase.ARRIVING]) — they simply wear the chrome as
+     * far as it has faded in, and the label travelling above them belongs to the row.
      *
      * So this checks both halves at a few frames in, nowhere near the end of the travel: the tile
      * holds the cursor and answers a click, AND it is still growing, which is the animation.
@@ -2214,6 +2256,75 @@ class RemapControlsScreenTest {
             "the tile was already its full ${arrived}px wide four frames in — the travel is gone"
         }
         composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **The grid moves for the WHOLE travel** (Dylan, 2026-09-27: opening a group and walking into
+     * one "feel quite quick and almost jarring", where the camera on a cross-group move — the same
+     * [EditMorphMillis] of `FastOutSlowInEasing`, untruncated — "feels great").
+     *
+     * The geometry used to finish inside the first 62% of the travel's OUTPUT, which on an eased
+     * tween is about 120ms of motion ending at full speed: no deceleration at all, because the
+     * curve is cut while it is still in its fast middle. Now every width, and with it the camera
+     * that frames the group, is linear in the travel itself, so the two operations share one curve.
+     *
+     * Pinned at 150ms of 260: well past where the old ramp had already landed, and far enough from
+     * the end that an eased curve is still visibly short of it.
+     */
+    @Test
+    fun openingAGroup_keepsMovingForTheWholeTravel_ratherThanStoppingEarly() {
+        composeRule.mainClock.autoAdvance = false
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+
+        val tile = "cell:FACE:BUTTON_DIAMOND:button_y:0"
+        composeRule.mainClock.advanceTimeBy(150)
+        val late = composeRule.onNodeWithTag(tile, useUnmergedTree = true).fetchSemanticsNode().size.width
+        composeRule.mainClock.advanceTimeBy(600)
+        val arrived = composeRule.onNodeWithTag(tile, useUnmergedTree = true).fetchSemanticsNode().size.width
+        assert(late < arrived * 0.9f) {
+            "the tile was ${late}px of its final ${arrived}px 150ms in — the travel is being cut short"
+        }
+        composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **A group's panel gives its outermost tiles the same air as the tiles between them** (Dylan,
+     * 2026-09-27) — measured against the BACKING RECTANGLE, which is the visible edge, and which
+     * sits inset from the box by the line's own end trim.
+     *
+     * The box wraps its rows exactly, so the padding around them is the only thing standing between
+     * the top and bottom tiles and the end of the panel; a hand-picked figure was most of a gap
+     * short of the one the rows keep between themselves. Asserted as a RELATIONSHIP, since the gap
+     * is specified in device pixels and so is a different dp figure on every screen.
+     */
+    @Test
+    fun editMode_aGroupsPanelGivesItsOutermostTilesTheSameAirAsTheOnesBetweenThem() {
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        composeRule.waitForIdle()
+
+        fun tile(key: String) = composeRule
+            .onNodeWithTag("cell:FACE:BUTTON_DIAMOND:$key:0", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val rows = listOf("button_y", "button_x", "button_b", "button_a")
+            .map { tile(it) }.sortedBy { it.top }
+        val backing = composeRule
+            .onNodeWithTag(groupBackingTestTag(RemapSimpleGroup.FACE), useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val panelTop = backing.positionInRoot.y
+        val panelBottom = panelTop + backing.size.height
+
+        val between = rows[1].top - rows[0].bottom
+        val above = rows.first().top - panelTop
+        val below = panelBottom - rows.last().bottom
+        assert(kotlin.math.abs(above - between) <= 1f) {
+            "air above the top tile should be the row gap: $above vs $between"
+        }
+        assert(kotlin.math.abs(below - between) <= 1f) {
+            "air below the bottom tile should be the row gap: $below vs $between"
+        }
     }
 
     /**
@@ -2280,10 +2391,12 @@ class RemapControlsScreenTest {
      * opening as another closes, and across the two columns so both change width at once — the
      * left giving up its wide box while the right takes one on.
      *
-     * It is the case the two ends cannot describe between them: the box growing widens through
-     * act one of the morph and the one collapsing gives its width up in act two, so an
-     * interpolation of the two endpoint grids disagrees with the boxes in the middle. Hence the
-     * column floor in the stage's layout — and hence this, which is what would catch its absence.
+     * It is the case the two ends cannot describe between them. The column is as wide as whichever
+     * of the two is open, so it leaves and arrives at the very same width — while the boxes
+     * themselves cross in the middle at about HALF of it, since one is widening as the other
+     * narrows. Taken as the live max alone the column would dip to that crossing and back, and a
+     * column that dips is the whole grid moving one way and then the other. Hence the endpoint
+     * floor in the stage's layout — and hence this, which is what would catch its absence.
      */
     @Test
     fun switchingGroups_movesEveryGroupInOneDirection_withoutShaking() =
@@ -2291,7 +2404,7 @@ class RemapControlsScreenTest {
             reveal = TileReveal.FOCUSED_GROUP,
             // Two fat groups in the SAME column, which is the shape that needs the floor: the
             // column is as wide as whichever of them is open, so it leaves and arrives at the very
-            // same width while the two boxes cross in the middle at four fifths of theirs. And fat
+            // same width while the two boxes cross in the middle at half of theirs. And fat
             // enough that the grid overruns the window — a grid that fits is padded around the
             // controller's middle and pins every box to it, so nothing moves to measure.
             config = seedShapedConfig()

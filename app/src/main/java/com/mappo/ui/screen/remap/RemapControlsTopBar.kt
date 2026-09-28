@@ -71,7 +71,8 @@ import com.mappo.ui.minput.minputOverlineTextStyle
  *  - **start** — the identity widget: the viewed application's icon, then a two-line stack
  *    (ACTIVE / PREVIEWING LAYOUT over the layout's name). Toggles the layouts drawer. This is
  *    the pre-pod design brought back, chrome-less this time.
- *  - **centre** — the action-set switcher ([ActionSetCluster]) closed by a dormant kebab.
+ *  - **centre** — the action-set switcher ([ActionSetSwitch]); the set-management kebab
+ *    ([ActionSetMenu]) hangs off its end WITHOUT being part of what gets centred.
  *  - **end** — the EDITOR switcher: which editor the screen is showing, physical buttons
  *    (this view) or virtual buttons (the overlay editor). A two-segment group button, glyphs
  *    only, the live one wearing the highlight plane — the same "this is the one you are on"
@@ -106,15 +107,16 @@ internal fun RemapControlsTopBar(
                     modifier = Modifier.testTag("bar:identity"),
                 )
             },
-            // ── centre: the action-set switcher ──
+            // ── centre: the action-set switcher, with its kebab hung off the end ──
             centre = {
-                ActionSetCluster(
+                ActionSetSwitch(
                     config = config,
                     viewingSet = viewingSet,
                     onSelectActionSet = onSelectActionSet,
-                    onAddSet = onAddSet,
+                    modifier = Modifier.testTag("bar:sets"),
                 )
             },
+            centreTrailing = { ActionSetMenu(config = config, onAddSet = onAddSet) },
             // ── end: which editor is on screen ──
             end = { EditorSwitcher(onEditVirtual = onEditOverlay) },
         )
@@ -122,14 +124,21 @@ internal fun RemapControlsTopBar(
 }
 
 /**
- * **The bar's three slots: start, centre, end — with the centre centred in the BAR** (not in the
- * slack between its neighbours), and the flanks held to what is left over.
+ * **The bar's slots: start, centre, end — with the centre centred in the BAR** (not in the slack
+ * between its neighbours), and the flanks held to what is left over.
  *
  * A Box with three alignments gets the centring right and the crowding wrong: nothing stops a
  * long layout name from running under the middle cluster, because nothing measures the two
  * against each other. So the centre is measured FIRST, at its own size, and each flank is then
  * offered exactly the room that remains on its side. A name too long for that ellipsizes
  * ([NameableText]) instead of colliding.
+ *
+ * **[centreTrailing] rides along beside the centre without being part of it** (Dylan,
+ * 2026-09-27). The action sets' kebab used to be measured into the centred cluster, which meant
+ * the thing actually being centred was "the sets plus a menu button" and the sets themselves sat
+ * half a kebab to the left of the middle of the screen. The switch is the control the eye lines
+ * up on — and the one that lines up with the controller image below it — so it is the anchor, and
+ * the kebab hangs off its end.
  */
 @Composable
 private fun BarSlots(
@@ -137,28 +146,34 @@ private fun BarSlots(
     centre: @Composable () -> Unit,
     end: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    centreTrailing: @Composable () -> Unit = {},
 ) {
     Layout(
         modifier = modifier,
-        contents = listOf(centre, end, start),
-    ) { (centreM, endM, startM), constraints ->
+        contents = listOf(centre, centreTrailing, end, start),
+    ) { (centreM, trailingM, endM, startM), constraints ->
         val height = constraints.maxHeight
         val loose = constraints.copy(minWidth = 0, minHeight = 0)
         val centrePlaceable = centreM.firstOrNull()?.measure(loose)
         val centreW = centrePlaceable?.width ?: 0
-        // What a flank may take: its side of the centre cluster, less the gap that keeps the two
-        // from touching. With no centre cluster at all (a layout with no action sets) each flank
-        // simply gets half the bar.
-        val flankMax = ((constraints.maxWidth - centreW) / 2 - SlotGap.roundToPx()).coerceAtLeast(0)
-        val flank = loose.copy(maxWidth = flankMax)
-        val endPlaceable = endM.firstOrNull()?.measure(flank)
-        val startPlaceable = startM.firstOrNull()?.measure(flank)
+        val centreLeft = (constraints.maxWidth - centreW) / 2
+        val trailingPlaceable = trailingM.firstOrNull()?.measure(loose)
+        val trailingW = trailingPlaceable?.width ?: 0
+        val gap = SlotGap.roundToPx()
+        // What a flank may take: its side of the centre, less the gap that keeps the two from
+        // touching — and, on the END side, less whatever hangs off the centre there. With no
+        // centre at all (a layout with no action sets) each flank simply gets half the bar.
+        val startMax = (centreLeft - gap).coerceAtLeast(0)
+        val endMax = (constraints.maxWidth - centreLeft - centreW - trailingW - gap).coerceAtLeast(0)
+        val endPlaceable = endM.firstOrNull()?.measure(loose.copy(maxWidth = endMax))
+        val startPlaceable = startM.firstOrNull()?.measure(loose.copy(maxWidth = startMax))
         layout(constraints.maxWidth, height) {
             fun place(placeable: androidx.compose.ui.layout.Placeable?, x: Int) {
                 placeable?.place(x, (height - placeable.height) / 2)
             }
             place(startPlaceable, 0)
-            place(centrePlaceable, (constraints.maxWidth - centreW) / 2)
+            place(centrePlaceable, centreLeft)
+            place(trailingPlaceable, centreLeft + centreW)
             place(endPlaceable, constraints.maxWidth - (endPlaceable?.width ?: 0))
         }
     }
@@ -230,57 +245,70 @@ private fun BarIdentityButton(
 }
 
 /**
- * The layout-set switcher: one segment per set on a [MinputGroupButton], then the set-management
- * kebab that carries everything which isn't a choice.
+ * The layout-set switcher: one segment per set on a [MinputGroupButton].
  *
- * **"New layout set" lives in the KEBAB** (Dylan, 2026-09-27). It used to be a "+" action segment
- * closing the group — which the library called a sanctioned convention break and Dylan called what
- * it is: a group button is a single-CHOICE control, and a segment that fires instead of selecting
- * asks the eye to read one row as two kinds of thing. The kebab was sitting there empty next to it.
- * Rename / duplicate / delete / layers join it there as they land.
+ * **It is what the bar CENTRES on** (Dylan, 2026-09-27), which is why it is its own composable
+ * rather than one half of a cluster: the switch is the control the eye lines up, so the
+ * set-management kebab beside it ([ActionSetMenu]) is placed as an addendum to a centred switch
+ * instead of being measured into the thing being centred. See [BarSlots].
  *
  * Segments take the library's default surface-2 fill: the bar is a real surface again, so the
  * old `minputBoxContainer()` override — which existed because the cluster rode a pod — went
  * with the pods.
  */
 @Composable
-private fun ActionSetCluster(
+private fun ActionSetSwitch(
     config: ControllerConfig?,
     viewingSet: ActionSetGraph?,
     onSelectActionSet: (Long) -> Unit,
-    onAddSet: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sets = config?.actionSets.orEmpty()
     if (sets.isEmpty()) return
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(MinputGlyphLabelGap),
+    MinputGroupButton(
+        options = sets.map { it.actionSet.id },
+        selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
+        onSelect = onSelectActionSet,
+        optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
         modifier = modifier,
-    ) {
-        MinputGroupButton(
-            options = sets.map { it.actionSet.id },
-            selected = viewingSet?.actionSet?.id ?: sets.first().actionSet.id,
-            onSelect = onSelectActionSet,
-            optionLabel = { id -> sets.firstOrNull { it.actionSet.id == id }?.actionSet?.title.orEmpty() },
+    )
+}
+
+/**
+ * The set-management kebab — everything about the layout sets which isn't a choice.
+ *
+ * **"New layout set" lives HERE** (Dylan, 2026-09-27). It used to be a "+" action segment closing
+ * the group button — which the library called a sanctioned convention break and Dylan called what
+ * it is: a group button is a single-CHOICE control, and a segment that fires instead of selecting
+ * asks the eye to read one row as two kinds of thing. The kebab was sitting there empty next to it.
+ * Rename / duplicate / delete / layers join it there as they land.
+ *
+ * It carries its own leading gap, because it is placed AGAINST the end of the switch rather than
+ * spaced inside a Row with it (see [BarSlots]).
+ */
+@Composable
+private fun ActionSetMenu(
+    config: ControllerConfig?,
+    onAddSet: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (config?.actionSets.orEmpty().isEmpty()) return
+    var menuOpen by remember { mutableStateOf(false) }
+    // The menu hangs off the kebab's own Box (MinputActionMenu measures its anchor itself).
+    Box(modifier = modifier.padding(start = MinputGlyphLabelGap)) {
+        MinputIconButton(
+            icon = Icons.Filled.MoreVert,
+            contentDescription = "Manage layout sets",
+            onClick = { menuOpen = !menuOpen },
+            modifier = Modifier.testTag("bar:sets-menu"),
         )
-        // The menu hangs off the kebab's own Box (MinputActionMenu measures its anchor itself).
-        Box {
-            MinputIconButton(
-                icon = Icons.Filled.MoreVert,
-                contentDescription = "Manage layout sets",
-                onClick = { menuOpen = !menuOpen },
-                modifier = Modifier.testTag("bar:sets-menu"),
-            )
-            MinputActionMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                actions = if (menuOpen) {
-                    listOf(MinputAction("New layout set", Lucide.Plus, onClick = onAddSet))
-                } else emptyList(),
-            )
-        }
+        MinputActionMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            actions = if (menuOpen) {
+                listOf(MinputAction("New layout set", Lucide.Plus, onClick = onAddSet))
+            } else emptyList(),
+        )
     }
 }
 

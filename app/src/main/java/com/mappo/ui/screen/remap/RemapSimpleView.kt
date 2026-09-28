@@ -862,7 +862,7 @@ private fun RowCommandTile(
     /** Still travelling in: draw the chrome at [chrome]'s strength and leave the label to the
      *  host, which is walking it into place (see [EditPhase.ARRIVING]). */
     arriving: Boolean = false,
-    /** How far the tile chrome has arrived — act two of the morph. Draw phase only. */
+    /** How far the tile chrome has arrived ([editChromeAt]). Draw phase only. */
     chrome: () -> Float = { 1f },
 ) {
     val command = slot.command
@@ -977,7 +977,8 @@ internal enum class EditPhase {
      * The tiles here are the real [CommandTile]s: focusable, clickable, carryable, from the first
      * frame of the travel. They merely wear the arriving chrome — the host is still drawing the
      * label that is travelling into place, so the tile draws only its own fill and ring, at the
-     * strength act two has reached.
+     * strength the chrome has reached ([editChromeAt]) — its "+" included, which fades in with
+     * them because an empty slot has no travelling label of its own.
      *
      * It used to be a ghost, which cost the cursor 260ms: "focus does not land on an activated
      * input group's tile until the animation completes, which is not great". The animation is
@@ -1069,23 +1070,26 @@ internal class EditReveal(
     val editing: Boolean =
         expanded.isNotEmpty() || (!settled && from.values.any { it > 0f })
 
-    /** Is anything GROWING into tiles, as opposed to everything on the move collapsing? */
-    private val growing: Boolean = expanded.any { fromOf(it) < 1f }
-
     /**
-     * The curve the GRID's endpoint interpolation follows.
+     * The curve the GRID's endpoint interpolation follows — which is simply the travel itself.
      *
-     * A box growing into tiles widens through act one of the morph ([editTravelAt]); one
-     * collapsing out of them holds its width through act one and gives it up in act two, which
-     * is that ramp mirrored. When everything on the move is going the same way — opening edit
-     * mode, leaving it — this is therefore EXACT. In a swap it cannot be, because the two halves
-     * run on opposite ramps; there the live box widths carry the geometry and this is only the
-     * floor that keeps a column from dipping between them (see the stage's layout).
+     * **The geometry runs the WHOLE travel** (Dylan, 2026-09-27). It used to finish inside the
+     * first 62% of it, as "act one" of a two-act morph, with only the tile chrome left to arrive
+     * after: 260ms of eased tween truncated at 0.62 of its OUTPUT is 120ms of motion that stops
+     * at full speed, because the curve is still in its fast middle when it is cut. Dylan asked
+     * for the camera on a cross-group move — an untruncated [EditMorphMillis] of
+     * `FastOutSlowInEasing` — everywhere a group is opened or walked into: "both of those
+     * operations feel quite quick and almost jarring". This is that, and it is the whole grid
+     * rather than the camera alone, so every coordinate stays a function of ONE parameter (a
+     * camera easing out while the boxes had already landed would reverse a growing box's outer
+     * edge halfway through).
+     *
+     * With the ramp gone there is nothing left to mirror for a collapse, and a swap is exact
+     * rather than approximate: every box's width is linear in this, in both directions at once.
+     * The live widths still floor the columns in the stage's layout, which costs nothing when
+     * the two agree.
      */
-    fun gridTravel(): Float {
-        val t = travel().coerceIn(0f, 1f)
-        return if (growing) editTravelAt(t) else 1f - editTravelAt(1f - t)
-    }
+    fun gridTravel(): Float = travel().coerceIn(0f, 1f)
 
     companion object {
         /** No tiles anywhere — the resting view, and the default for any caller that has no
@@ -1104,19 +1108,19 @@ internal class EditReveal(
 /** Every input group — the reveal's "all of them", and the set its travels are planned over. */
 private val AllSimpleGroups: Set<RemapSimpleGroup> = RemapSimpleGroup.values().toSet()
 
-/** How far the labels have travelled — act one, finishing before the chrome starts. Shared
- *  with the STAGE, whose grid must interpolate on exactly the same curve as the rows inside it. */
-internal fun editTravelAt(progress: Float): Float =
-    (progress.coerceIn(0f, 1f) / EditTravelSpan).coerceIn(0f, 1f)
-
-/** How far the tile chrome has arrived — act two. Reversed on the way out, so the buttons
- *  leave first and the labels walk home after them. */
+/**
+ * How far the tile chrome has arrived: nothing until the labels are most of the way home, then
+ * in over the rest of the travel. Reversed on the way out, so the buttons leave first and the
+ * labels walk back after them.
+ *
+ * This is all that is left of the old two-act split. The GEOMETRY no longer stops early (see
+ * [EditReveal.gridTravel]), so the chrome now fades in over rows that are still spreading —
+ * which is what it looked like anyway, since the two acts always overlapped.
+ */
 private fun editChromeAt(progress: Float): Float =
     ((progress.coerceIn(0f, 1f) - EditChromeStart) / (1f - EditChromeStart)).coerceIn(0f, 1f)
 
-/** Where act one ends and act two begins, as fractions of the travel. They overlap slightly:
- *  a hard handover reads as two animations rather than one. */
-private const val EditTravelSpan = 0.62f
+/** Where the chrome starts arriving, as a fraction of the travel. */
 private const val EditChromeStart = 0.55f
 
 /**
@@ -1501,7 +1505,7 @@ private fun AssignmentTable(
                         Box(
                             Modifier
                                 .layoutId(DividerSlot(rowIndex, column))
-                                .graphicsLayer { alpha = 1f - editTravelAt(progress()) }
+                                .graphicsLayer { alpha = 1f - progress().coerceIn(0f, 1f) }
                                 .background(dividerColor),
                         )
                     }
@@ -1542,7 +1546,7 @@ private fun MeasureScope.measureTable(
         val plans = rows.mapIndexed { rowIndex, row ->
             rowPlan(row, metrics) { column -> restCells[rowIndex][column]?.width ?: 0 }
         }
-        val travel = editTravelAt(progress())
+        val travel = progress().coerceIn(0f, 1f)
         // The width is a lerp of the two ENDPOINT widths, floors included — never a max() taken
         // afresh each frame. A max of a rising run against a falling floor dips before it
         // climbs, and that dip is a reversal: the box narrows for a few frames in the middle of

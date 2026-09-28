@@ -1728,7 +1728,14 @@ private fun StageBasicContent(
                 } else Modifier,
             )
             .testTag("simple-group:${group.name}")
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            // **The panel's air above and below its rows is the air BETWEEN them** (Dylan,
+            // 2026-09-27). The box wraps its rows exactly, and its rectangle is inset from the box
+            // by the line's own end trim ([GroupOutlineEndInset], see [StageGroupBacking]) — so a
+            // hand-picked padding left the outermost tiles all but touching the panel's ends while
+            // their neighbours inside had a clear gap. Carrying the trim in the padding is what
+            // makes the VISIBLE air equal [rowTileGap] at any density, rather than at the one this
+            // number was chosen on.
+            .padding(horizontal = 8.dp, vertical = rowTileGap() + GroupOutlineEndInset),
         // Every box wraps its own rows now, so centring costs nothing and covers the case where
         // one is ever given more room than it asked for.
         contentAlignment = Alignment.Center,

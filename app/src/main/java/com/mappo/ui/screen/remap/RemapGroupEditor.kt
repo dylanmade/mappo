@@ -1584,7 +1584,13 @@ internal fun CommandTile(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (chrome == null) {
+        // **The "+" arrives WITH the outline it sits in** (Dylan, 2026-09-27: the pluses "are
+        // appearing a moment after the tile outlines fade in, and don't seem to have an animate in
+        // at all"). A defined tile's label is the one the host is walking into place, so drawing it
+        // here too would double it — but an EMPTY slot has no travelling label: its "+" is part of
+        // the face, exactly as it is in [TileChrome], and it fades in on the same alpha because it
+        // is inside the same layer.
+        if (chrome == null || output == null) {
             TileContent(
                 colors = colors,
                 pressType = pressType,
