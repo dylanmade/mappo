@@ -203,8 +203,7 @@ internal fun RemapSimpleView(
     var editSettled by remember { mutableStateOf(true) }
     var editTick by remember { mutableIntStateOf(0) }
 
-    // The morph, whichever way each group is going. Focus is seated only once the tiles are REAL
-    // — mid-travel they are inert ghosts with nothing to focus (see EditPhase).
+    // The morph, whichever way each group is going.
     LaunchedEffect(editTarget) {
         if (editTarget == editShown) return@LaunchedEffect
         // Snapshot where every group IS, not where the last travel meant to leave it: a travel
@@ -228,6 +227,16 @@ internal fun RemapSimpleView(
         val landed = AllSimpleGroups.all { group ->
             here.getValue(group) == (if (group in editTarget) 1f else 0f)
         }
+        // **Seat the cursor on the group that has just been REVEALED — BEFORE the travel, not
+        // after it** (Dylan, 2026-09-27: "focus does not land on an activated input group's tile
+        // until the animation completes, which is not great"). The tiles of a group on its way in
+        // are the real thing from the first frame ([EditPhase.ARRIVING]), so there is nothing left
+        // to wait for; waiting was 260ms of the cursor parked on a box that had stepped aside.
+        //
+        // The group the cursor was already in needs nothing, and a landing tile claims the cursor
+        // for itself (see `seatCommand`).
+        val subject = editSubject
+        if (!carrying && subject != null && here.getValue(subject) < 1f) editSeat = subject
         if (!landed) {
             editSettled = false
             editTravel.snapTo(0f)
@@ -236,10 +245,6 @@ internal fun RemapSimpleView(
         } else {
             editTravel.snapTo(1f)
         }
-        // Seat the cursor on the group that has just been REVEALED — the one it was already in
-        // needs nothing, and a landing tile claims the cursor for itself (see `seatCommand`).
-        val subject = editSubject
-        if (!carrying && subject != null && here.getValue(subject) < 1f) editSeat = subject
     }
     /** Everything the stage needs to know about the reveal, as one value. */
     val editReveal = remember(editFrom, editShown, editSettled, editTick, editSubject, editGroup) {
@@ -771,6 +776,9 @@ internal class RowEditHost(
     val editable: Boolean,
     val onLabel: (LabelEdit) -> Unit,
     val onType: (TypeEdit) -> Unit,
+    /** The cursor landed on this cell. The stage remembers it so that opening the next group can
+     *  seat the cursor on the tile nearest where it came from. */
+    val onCellFocused: (CellKey) -> Unit = {},
 )
 
 /**
@@ -851,6 +859,11 @@ private fun RowCommandTile(
     config: ControllerConfig?,
     look: TileLook,
     modifier: Modifier,
+    /** Still travelling in: draw the chrome at [chrome]'s strength and leave the label to the
+     *  host, which is walking it into place (see [EditPhase.ARRIVING]). */
+    arriving: Boolean = false,
+    /** How far the tile chrome has arrived — act two of the morph. Draw phase only. */
+    chrome: () -> Float = { 1f },
 ) {
     val command = slot.command
     val display = command?.let { commandDisplay(it.binding, listOf(it.output), config) }
@@ -926,7 +939,14 @@ private fun RowCommandTile(
                 )
             },
             look = look,
-            modifier = Modifier.focusRequester(edit.focusHandle(slot.key)),
+            chrome = chrome.takeIf { arriving },
+            modifier = Modifier
+                .focusRequester(edit.focusHandle(slot.key))
+                // Where the cursor IS, reported to the stage: walking into a group seats the
+                // cursor on the tile nearest the one it came from, and this is how that is known
+                // (Dylan, 2026-09-27). On the caller rather than inside [CommandTile] because the
+                // cell key and the requester already live out here.
+                .onFocusChanged { if (it.isFocused) edit.onCellFocused(slot.key) },
         )
     }
 }
@@ -951,11 +971,33 @@ internal enum class EditPhase {
     /** The resting view: text runs and dividers, and no tile exists anywhere. */
     REST,
 
-    /** Mid-travel, either way. Nothing here is interactive — see [RowTileGhost]. */
-    MORPH,
+    /**
+     * **Travelling INTO tiles — and already live** (Dylan, 2026-09-27).
+     *
+     * The tiles here are the real [CommandTile]s: focusable, clickable, carryable, from the first
+     * frame of the travel. They merely wear the arriving chrome — the host is still drawing the
+     * label that is travelling into place, so the tile draws only its own fill and ring, at the
+     * strength act two has reached.
+     *
+     * It used to be a ghost, which cost the cursor 260ms: "focus does not land on an activated
+     * input group's tile until the animation completes, which is not great". The animation is
+     * unchanged; what changed is that there is something under it to act on.
+     */
+    ARRIVING,
 
-    /** Edit mode proper: real [CommandTile]s, focusable and carryable. */
-    EDIT,
+    /** Travelling back OUT of tiles: inert ghosts fading away while the labels walk home (see
+     *  [RowTileGhost]). Nothing here is interactive, and nothing needs to be — the tiles are
+     *  about to stop existing, and a focus target that vanishes takes the cursor with it. */
+    LEAVING,
+
+    /** Edit mode proper: real [CommandTile]s drawing their own labels. */
+    EDIT;
+
+    /** Mid-travel, either way — where the host draws the labels and the chrome is part-strength. */
+    val morphing: Boolean get() = this == ARRIVING || this == LEAVING
+
+    /** Does a real, interactive tile exist in this phase? */
+    val live: Boolean get() = this == ARRIVING || this == EDIT
 }
 
 /**
@@ -1017,8 +1059,8 @@ internal class EditReveal(
         // open or close around it. Said the simple way — every group MORPHs while the travel runs
         // — a tile lifted in one group lost its focus the moment the others revealed to receive
         // it, which is the one case where losing it matters most.
-        group in expanded -> if (settled || fromOf(group) >= 1f) EditPhase.EDIT else EditPhase.MORPH
-        !settled && fromOf(group) > 0f -> EditPhase.MORPH
+        group in expanded -> if (settled || fromOf(group) >= 1f) EditPhase.EDIT else EditPhase.ARRIVING
+        !settled && fromOf(group) > 0f -> EditPhase.LEAVING
         else -> EditPhase.REST
     }
 
@@ -1413,26 +1455,33 @@ private fun AssignmentTable(
                         MorphingCellText(
                             cell = restCell,
                             style = cellStyle,
-                            editColor = if (phase == EditPhase.MORPH && tile?.command != null) {
+                            editColor = if (phase.morphing && tile?.command != null) {
                                 tileLabelColor(tile.command)
                             } else null,
-                            fadesOut = phase == EditPhase.MORPH && tile?.command == null && row.morphs,
+                            fadesOut = phase.morphing && tile?.command == null && row.morphs,
                             progress = progress,
                             modifier = Modifier.layoutId(RestSlot(rowIndex, column)),
                         )
                     }
                     if (tile != null) {
                         when (phase) {
-                            EditPhase.EDIT -> RowCommandTile(
+                            // ARRIVING is the SAME tile as EDIT, which is the whole point: the
+                            // cursor and the finger get a real control the instant the group is
+                            // opened, and the travel is only what it looks like on the way in.
+                            // It draws no content of its own because the label it would draw is
+                            // the one [MorphingCellText] is walking into place above it.
+                            EditPhase.EDIT, EditPhase.ARRIVING -> RowCommandTile(
                                 row = row,
                                 slot = tile,
                                 // A tile is only built where GroupRows was given a host.
                                 edit = edit!!,
                                 config = config,
                                 look = look,
+                                arriving = phase == EditPhase.ARRIVING,
+                                chrome = { editChromeAt(progress()) },
                                 modifier = Modifier.layoutId(TileSlot(rowIndex, column)),
                             )
-                            EditPhase.MORPH -> RowTileGhost(
+                            EditPhase.LEAVING -> RowTileGhost(
                                 tile = tile,
                                 look = look,
                                 progress = progress,

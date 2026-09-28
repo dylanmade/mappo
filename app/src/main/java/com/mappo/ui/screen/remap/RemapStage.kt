@@ -224,6 +224,28 @@ internal fun RemapStage(
     val stepTarget: (CellKey, Int, Int) -> CellKey? = { key, dRow, dCol ->
         stepCellAcrossGroups(key, dRow, dCol, slotsOf)
     }
+    /**
+     * **A carried command has been written but not yet seen** (Dylan, 2026-09-27).
+     *
+     * The reveal is held open across this window, which is what keeps the camera's motion the
+     * animation it has always been: the write lands a frame or several after the carry ends, the
+     * group it lands in changes shape, and that change is [ReframePlan]'s job — a travel of its own
+     * with its own easing, the very one that frames a group when a command is added to it. Let the
+     * reveal start collapsing first and the reframe stands down for the length of it, leaving the
+     * shape change to be applied raw ("the camera movement is now instantaneous").
+     */
+    var landing by remember { mutableStateOf(false) }
+    /**
+     * **Where a claimed command was when it was claimed** — for a MOVE, the cell it is leaving.
+     *
+     * A claim exists so the cursor can follow a command that does not exist YET (an add goes out to
+     * the picker and back). A MOVED command exists all along, at its old address, so the claim would
+     * otherwise resolve on the very next frame against the config as it stands BEFORE the write
+     * lands — seating the cursor straight back where the command came from and spending the claim,
+     * which is precisely what claiming by id was introduced to stop (Dylan, 2026-09-24: "very
+     * unintuitive"). So a claim ignores the command sitting where it already was.
+     */
+    var claimedFrom by remember { mutableStateOf<CellKey?>(null) }
     val onMoveCommitted: (CellKey, CellKey) -> Unit = { from, to ->
         // Rows resolve INDIVIDUALLY: one card can span two sources (the shoulder is a trigger
         // plus a bumper), and those are separate binding groups. A command only points at its
@@ -234,6 +256,8 @@ internal fun RemapStage(
         if (lifted != null && toId != null) {
             // A null landing command means the row's "+": an ADD, not a swap.
             callbacks.onMoveCommand(lifted.id, toId, to.inputKey, landedOn?.id)
+            landing = true
+            claimedFrom = from
             // The cursor goes WITH the command. Two steps, because the move is a round trip
             // through the repository: the destination cell exists NOW, so take it immediately
             // and keep the cursor inside the body while the write comes back — otherwise focus
@@ -263,6 +287,11 @@ internal fun RemapStage(
         pair?.let { (from, to) -> onMoveCommitted(from, to) }
     }
     // Whatever exists of edit mode, including through a collapse that has outlived the intent.
+    // Where the cursor last was, in WINDOW space (the space the cells register themselves in).
+    // A plain holder rather than snapshot state on purpose: it is written from a focus callback and
+    // read only inside the seating effect, and a state write in that callback would recompose the
+    // whole stage on every d-pad step — the same reason [onFocusWithin] writes nothing either.
+    val cursorTrace = remember { CursorTrace() }
     val editHost = if (editing) {
         RowEditHost(
             moveState = moveState,
@@ -273,11 +302,28 @@ internal fun RemapStage(
             editable = viewingLayer == null,
             onLabel = { labelTarget = it },
             onType = { typeTarget = it },
+            onCellFocused = { key ->
+                cursorTrace.slot = key.slot
+                moveState.boundsOf(key)?.takeIf { !it.isEmpty }?.let { cursorTrace.y = it.center.y }
+            },
         )
     } else null
     // A tile in flight is the reveal's one exception — every group opens for as long as one is
     // being carried, so it can be taken anywhere (see [EditReveal]).
-    LaunchedEffect(moveState.active) { onCarrying(moveState.active) }
+    LaunchedEffect(moveState.active, landing) { onCarrying(moveState.active || landing) }
+    // The claim is the window's end: it is cleared the moment the command turns up and the cursor
+    // has been put on it (below), and cleared as stale if edit mode is left first. Keyed on the
+    // claim rather than set from that one place so a claim that never resolves cannot wedge the
+    // reveal open.
+    LaunchedEffect(seatCommand) {
+        if (seatCommand == null) {
+            landing = false
+            claimedFrom = null
+        }
+    }
+    // ...and the window's other end: a new config IS the write, whatever it turns out to say. A
+    // move that changes nothing would otherwise hold the reveal open on a claim that never resolves.
+    LaunchedEffect(viewingSet, viewingLayer) { landing = false }
     // ...and that reveal moves every cell out from under a finger that has not itself moved, so the
     // drop target has to be re-resolved once it lands. The pointer path only re-resolves on pointer
     // events, which is why carrying to the window's edge does the same thing (see the edge-scroll).
@@ -290,15 +336,49 @@ internal fun RemapStage(
     // focus on the box that is no longer a focus target. It waits for the morph to land: a tile
     // mid-travel is an inert ghost with no focus to take. Re-runs on [editFocusTick] too, since
     // a tap clears Compose focus wholesale and in edit mode there is no box to recover onto.
+    /**
+     * **The tile of [group] nearest to where the cursor came from** (Dylan, 2026-09-27: "walking
+     * into a collapsed group should focus the tile closest to where you came from").
+     *
+     * Nearest is answered in the two dimensions separately, because only one of them is measurable
+     * at the moment it is asked — the seat happens on the frame the tiles appear, while they are
+     * still collapsed on top of one another at the start of their travel:
+     *
+     *  - the ROW comes from geometry, the y of its own registered cell rect against the y the cursor
+     *    left. Rows keep their height and their place throughout the morph, so this is stable from
+     *    the first frame — and it is the dimension that matters, since a group's rows are what a
+     *    hop up or down chooses between.
+     *  - the SLOT is carried over by index, clamped to what this row has. Tiles are one fixed width
+     *    ([TileLook]), so slot n sits at the same x in every row of a column; and a hop ACROSS the
+     *    columns can only ever start from slot 0, the inner edge, because everything outboard of it
+     *    is reached by stepping along the row first.
+     *
+     * Falls back to the group's first tile, which is where every seat used to land: with no trace
+     * yet (edit mode opened from the resting view) there is nothing to be near.
+     */
+    fun nearestCell(group: RemapSimpleGroup, from: CursorTrace): CellKey {
+        val fallback = CellKey(group, group.rows.first(), 0)
+        val y = from.y ?: return fallback
+        val rows = group.summaryRows.filter { it in group.rows }
+        val row = rows.minByOrNull { spec ->
+            val rect = moveState.boundsOf(CellKey(group, spec, 0))?.takeIf { !it.isEmpty }
+                ?: return@minByOrNull Float.MAX_VALUE
+            abs(rect.center.y - y)
+        } ?: return fallback
+        val slots = slotsOf(group, row)
+        if (slots <= 0) return fallback
+        return CellKey(group, row, from.slot.coerceIn(0, slots - 1))
+    }
     LaunchedEffect(editSeatGroup, editFocusTick) {
         // A named command outranks a group: it says which tile, not merely which neighbourhood,
         // and it is the whole reason the cursor stopped being returned to where it came in.
         if (seatCommand != null) return@LaunchedEffect
         val group = editSeatGroup ?: editGroup.takeIf { editFocusTick > 0 && editSettled }
             ?: return@LaunchedEffect
-        // The tiles compose on this frame; their requesters attach with them.
+        // The tiles compose on this frame; their requesters attach with them — and so do the cell
+        // rects [nearestCell] measures against, which is why it is asked for after the wait.
         withFrameNanos { }
-        runCatching { focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus() }
+        runCatching { focusHandle(nearestCell(group, cursorTrace)).requestFocus() }
         onEditSeated()
     }
     // Where a command sits in the tiled rows right now, if it is on screen at all.
@@ -321,6 +401,9 @@ internal fun RemapStage(
         if (editGroup == null) return@LaunchedEffect onSeatCommand(null)
         if (!editSettled) return@LaunchedEffect
         val cell = locate(claimed) ?: return@LaunchedEffect
+        // Still where it was: the write behind the move has not come back yet, and the cursor is
+        // already waiting at the destination (see [claimedFrom]).
+        if (cell == claimedFrom) return@LaunchedEffect
         // Bring the whole group into view, "+" tile and all — not merely the tile itself, which
         // is all focus does on its own (Dylan, 2026-09-25: "the camera and scroll migrate to the
         // very edge of that group, including the empty tiles"). The travel overrides that minimal
@@ -922,11 +1005,12 @@ internal fun RemapStage(
                 // one before it — the columns from the boxes' current widths, the camera from
                 // the scroller's current value, which the scroller was itself clamping against
                 // the width being reported — chased its own tail into a visible shake.
-                val travel = reveal.gridTravel()
+                val gridTravel = reveal.gridTravel()
                 val measuredWidths = IntArray(count) { restBasic[it]!!.width }
                 if (editMorph.begin(
                         settled = editSettled,
                         token = reveal.tick,
+                        travel = gridTravel,
                         measured = measuredWidths,
                     )
                 ) {
@@ -1016,6 +1100,10 @@ internal fun RemapStage(
                 val toCentre = centreBeside(toLeft, toRight)
                 val fromSpan = spanFor(fromLeft, fromRight, fromCentre)
                 val toSpan = spanFor(toLeft, toRight, toCentre)
+                // **The plan's own parameter, not the travel's.** They differ only after a travel
+                // has been re-planned in flight — a command landing mid-collapse — where what is
+                // left to interpolate is the remainder of the journey (see [EditMorphPlan.at]).
+                val travel = editMorph.at(gridTravel)
                 // Everything between is the SAME function of the interpolated columns, rather than
                 // an interpolation of the two finished spans (2026-09-27). The two agree at both
                 // ends; in between, only this one agrees with the boxes it is placing — the grid
@@ -1043,6 +1131,7 @@ internal fun RemapStage(
                 editMorph.captureScrolls(
                     settled = editSettled,
                     scroll = bodyScroll.value.coerceIn(0, maxScrollAt(travel)),
+                    shift = contentShift.floatValue.roundToInt(),
                 ) { from ->
                     reveal.focus?.let { group ->
                         editScrollTarget(toSpan, group, toWidths, groups, viewport, edgeX, from)
@@ -1973,17 +2062,25 @@ private class EditMorphPlan {
     private var pending: Int? = null
     private var target: Int? = null
     private var token: Any? = null
+    /** The travel value this plan's two ends were captured at — 0 for a travel planned from its
+     *  start, and wherever it had got to for one re-planned in flight. See [at]. */
+    private var base = 0f
+
 
     /**
-     * True on the one frame a travel begins, when the other end still needs capturing.
+     * True on the one frame a travel begins — or is re-planned — when the other end still needs
+     * capturing.
      *
      * **Every travel goes forwards, 0 → 1**, and [token] says which one this is (2026-09-27).
      * The single global morph it replaced could only ever be the one journey traversed one way
      * or the other, so an interruption needed nothing; a second group opened mid-travel is a
      * DIFFERENT pair of ends, and keeping the old pair would interpolate towards a shape nothing
      * is heading for any more.
+     *
+     * A travel is also re-planned when a box turns out to have [outgrown] the journey it was
+     * given — see there.
      */
-    fun begin(settled: Boolean, token: Any?, measured: IntArray): Boolean {
+    fun begin(settled: Boolean, token: Any?, travel: Float, measured: IntArray): Boolean {
         if (settled) {
             // Keep the plan alive until the scroller has taken over the shift it is holding.
             if (pending == null) {
@@ -1991,16 +2088,59 @@ private class EditMorphPlan {
                 toWidths = null
                 scrollsKnown = false
                 this.token = null
+                base = 0f
             }
             return false
         }
-        if (fromWidths != null && token == this.token) return false
+        val fresh = fromWidths == null || token != this.token
+        if (!fresh && !outgrown(measured)) return false
         this.token = token
+        // A re-plan starts HERE rather than back at the travel's beginning, so the journey it
+        // describes is only what is left of it (see [at]).
+        base = if (fresh) 0f else travel.coerceIn(0f, 1f)
         fromWidths = measured
         toWidths = null
         // Re-planned from here, since where the view is going has changed too.
         scrollsKnown = false
         return true
+    }
+
+    /**
+     * **Has a box changed shape for a reason this travel does not own?** (2026-09-27.)
+     *
+     * Every box interpolates monotonically between the width it had when the travel began and the
+     * one it is heading for, so a measured width OUTSIDE that interval cannot be the travel's
+     * doing: an intrinsic has changed underneath it — a command has landed in a row, or left one.
+     *
+     * That happens on every cross-group MOVE, because the write comes back a frame or several
+     * after the carry ends, which is right in the middle of the reveal collapsing around the
+     * group the command landed in. Left alone, the placement (which measures the boxes) moved and
+     * the scroll plan (which does not) did not, and the difference was a one-frame lurch of up to
+     * a tile's width — Dylan, 2026-09-27: "the camera movement is now instantaneous and has no
+     * animation/easing when moving a tile to a new input group".
+     */
+    private fun outgrown(measured: IntArray): Boolean {
+        val from = fromWidths ?: return false
+        val to = toWidths ?: return false
+        if (measured.size != from.size || measured.size != to.size) return true
+        return measured.indices.any { index ->
+            val low = minOf(from[index], to[index]) - WidthSlack
+            val high = maxOf(from[index], to[index]) + WidthSlack
+            measured[index] < low || measured[index] > high
+        }
+    }
+
+    /**
+     * The travel's position as THIS plan sees it: 0 where its ends were captured, 1 at the end.
+     *
+     * A re-plan mid-flight rebases rather than restarting, which is what keeps the motion
+     * continuous — the view is already where the old plan put it, and what is left to do is the
+     * remainder of the journey in the remainder of the time.
+     */
+    fun at(travel: Float): Float {
+        if (base <= 0f) return travel.coerceIn(0f, 1f)
+        if (base >= 1f) return 1f
+        return ((travel.coerceIn(0f, 1f) - base) / (1f - base)).coerceIn(0f, 1f)
     }
 
     fun captureOtherEnd(widths: IntArray) {
@@ -2011,13 +2151,18 @@ private class EditMorphPlan {
     fun captureScrolls(
         settled: Boolean,
         scroll: Int,
+        /** Everything displacing the content right now, this plan's own share included — the
+         *  stage's total shift from the previous pass. */
+        shift: Int,
         targetFor: (from: Int) -> Int,
     ) {
         if (settled || scrollsKnown) return
-        // Where the view VIRTUALLY is. A shift an interrupted travel was still applying is part of
-        // where the content sits — the scroller has not taken it over yet — so a fresh plan that
-        // started from the scroller's own value alone would jump the content by exactly that much.
-        val here = (scroll + (pending ?: 0)).toFloat()
+        // Where the view VIRTUALLY is, which is NOT the scroller's value: a shift someone is still
+        // applying is part of where the content sits — the scroller has not taken it over yet — so
+        // a plan that started from the scroller's value alone would jump the content by exactly
+        // that much. "Someone" is this plan when a travel interrupts another, and the RE-FRAME plan
+        // when a command landing hands over to a collapse (see [ReframePlan]).
+        val here = (scroll + shift).toFloat()
         scrollAtFrom = here
         scrollAtTo = targetFor(here.roundToInt()).toFloat()
         scrollsKnown = true
@@ -2057,7 +2202,13 @@ private class EditMorphPlan {
         toWidths = null
         scrollsKnown = false
         token = null
+        base = 0f
         return landed
+    }
+
+    private companion object {
+        /** A pixel of rounding either way before a width counts as having outgrown its journey. */
+        const val WidthSlack = 1
     }
 }
 
@@ -2215,6 +2366,15 @@ internal fun lerpRect(a: StageRect, b: StageRect, p: Float): StageRect = when {
 }
 
 private fun lerpInt(a: Int, b: Int, p: Float): Int = a + ((b - a) * p).roundToInt()
+
+/**
+ * Where the cursor last was: which ROW it was on, as a y in window space, and how far along that
+ * row. A one-slot holder, deliberately not snapshot state — see its use in [RemapStage].
+ */
+private class CursorTrace {
+    var y: Float? = null
+    var slot: Int = 0
+}
 
 /** One band of the rest grid: the flank group on each side of the controller. */
 internal class GridBand(val left: RemapSimpleGroup, val right: RemapSimpleGroup)

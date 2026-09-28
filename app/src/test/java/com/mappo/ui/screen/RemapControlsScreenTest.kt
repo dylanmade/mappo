@@ -2175,39 +2175,70 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **The morph's two ends must be the real thing.**
+     * **The morph plays, but nothing waits for it** (Dylan, 2026-09-27: "focus does not land on an
+     * activated input group's tile until the animation completes, which is not great. The focus
+     * should land immediately and the tile should be immediately interactive").
      *
-     * Entering edit mode now travels (Dylan, 2026-09-24): the labels widen into their tiles and
-     * the buttons fade in behind them. Mid-travel the tiles are inert ghosts, so this walks the
-     * clock through the middle — where nothing should be focusable or tagged — and on to the end,
-     * where the real tiles must have taken over.
+     * A tile on its way in used to be an inert ghost, so for 260ms the cursor sat on a box that had
+     * already stepped aside and a tap had nothing to hit. The tiles of a group being opened are the
+     * real thing from the first frame now ([EditPhase.ARRIVING]) — they simply wear the chrome act
+     * two is still fading in, and the label travelling above them belongs to the row.
+     *
+     * So this checks both halves at a few frames in, nowhere near the end of the travel: the tile
+     * holds the cursor and answers a click, AND it is still growing, which is the animation.
      */
     @Test
-    fun selectingAGroup_morphsIntoTiles_ratherThanCutting() {
+    fun selectingAGroup_morphsIntoTiles_thatAreUsableFromTheFirstFrame() {
         composeRule.mainClock.autoAdvance = false
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
 
-        // Mid-travel: the resting label is still on screen and no tile has been built yet.
-        composeRule.mainClock.advanceTimeBy(80)
-        composeRule.onAllNodesWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertCountEquals(0)
+        // A handful of frames — the morph runs for EditMorphMillis, and this is a fraction of it.
+        repeat(4) { composeRule.mainClock.advanceTimeByFrame() }
+        // The group's first row — which for the face buttons is Y, the top of the diamond.
+        val tile = "cell:FACE:BUTTON_DIAMOND:button_y:0"
+        composeRule.onNodeWithTag(tile, useUnmergedTree = true).assertIsFocused()
+        composeRule.onNode(
+            androidx.compose.ui.test.hasClickAction() and hasAnyAncestor(hasTestTag(tile)),
+            useUnmergedTree = true,
+        ).assertExists()
+        val midway = composeRule.onNodeWithTag(tile, useUnmergedTree = true)
+            .fetchSemanticsNode().size.width
 
-        // Landed: the real tiles are there.
+        // Landed.
         composeRule.mainClock.advanceTimeBy(600)
-        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertExists()
+        val arrived = composeRule.onNodeWithTag(tile, useUnmergedTree = true)
+            .fetchSemanticsNode().size.width
+        assert(midway < arrived) {
+            "the tile was already its full ${arrived}px wide four frames in — the travel is gone"
+        }
         composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **Walking into a group lands on the tile nearest where the cursor came from** (Dylan,
+     * 2026-09-27) — not on that group's first tile, which is a jump across the whole box whenever
+     * you arrive from below or from the far side of a row.
+     *
+     * The cursor enters from the DPAD's TOP row, and the shoulder group is directly above it, so
+     * the nearest tile in it is the one on its BOTTOM row — the opposite end from where a seat used
+     * to land. Driven by a tap on the box, which is the same path the d-pad takes (both seat the
+     * cursor in the group and then open it).
+     */
+    @Test
+    fun walkingIntoAGroup_seatsTheCursorOnTheTileNearestWhereItCameFrom() {
+        setScreenRevealing(TileReveal.FOCUSED_GROUP)
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0").requestFocus()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cell:LEFT_SHOULDER:LEFT_BUMPER:click:0", useUnmergedTree = true)
+            .assertIsFocused()
     }
 
     /**
@@ -2272,6 +2303,152 @@ class RemapControlsScreenTest {
                 "across" to { composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick() },
             )
         }
+
+    /**
+     * **A carried command's write lands while every group is still revealed** (Dylan, 2026-09-27:
+     * "the screen/camera movement is now instantaneous and has no animation/easing when moving a
+     * tile to a new input group that adjusts the width/camera").
+     *
+     * The write comes back a frame or several after the carry ends, and the group it lands in
+     * changes shape when it does. Framing that change is [ReframePlan]'s travel — the same one that
+     * frames a group when a command is ADDED to it, and the one
+     * `addingACommand_framesTheWholeGroup_notJustTheNewTile` pins. But it stands down for the length
+     * of any reveal travel, on purpose: mid-morph every box is changing width and it would fight
+     * the morph for the view. So if the reveal collapses the instant the tile is dropped, the write
+     * arrives with nobody holding the view and its shape change is applied in a single frame.
+     *
+     * The reveal therefore waits for the command to be SEEN. This drives the write late on purpose
+     * — which is what a repository round trip is — and checks the reveal is still open when it
+     * lands, then closes around the group the command went to.
+     */
+    @Test
+    fun carryingACommandIntoAnotherGroup_keepsEveryGroupRevealed_untilTheWriteLands() {
+        composeRule.mainClock.autoAdvance = false
+        var write: (() -> Unit)? = null
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.FOCUSED_GROUP,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = live.value,
+                            onOpenInputEditor = { _, _, _ -> },
+                            // A repository round trip: the config changes LATER, not on this call.
+                            onMoveRowCommand = { bindingId, _, toKey, _ ->
+                                write = {
+                                    live.value = live.value
+                                        .withCommandMovedTo(bindingId, InputSource.LEFT_TRIGGER, toKey)
+                                }
+                            },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1_200L)
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.waitForIdle()
+        }
+        settle()
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settle()
+        val tile = "cell:DPAD:DPAD:dpad_up:0"
+        composeRule.onNodeWithTag(tile).requestFocus()
+        settle()
+        // Lift it, steer up into the shoulder group, and let go.
+        composeRule.onNodeWithTag(tile).performKeyInput { keyDown(Key.ButtonA) }
+        settle()
+        composeRule.onNodeWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0").assertExists()
+        composeRule.onNodeWithTag(tile).performKeyInput {
+            keyDown(Key.DirectionUp)
+            keyUp(Key.DirectionUp)
+        }
+        settle()
+        composeRule.onNodeWithTag(tile).performKeyInput { keyUp(Key.ButtonA) }
+        // A full morph's worth of frames with the write still outstanding — long enough that a
+        // reveal collapsing on its own would be over and done with.
+        composeRule.mainClock.advanceTimeBy(320L)
+        composeRule.waitForIdle()
+        assert(write != null) { "the carry never committed — nothing to measure" }
+        // Still open, so the write has something holding the view when it lands.
+        composeRule.onNodeWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0").assertExists()
+        composeRule.onNodeWithTag(tile).assertExists()
+
+        composeRule.runOnUiThread { write!!.invoke() }
+        settle()
+
+        // Landed: the reveal has closed around the group the command went to.
+        composeRule.onNodeWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0").assertExists()
+        composeRule.onAllNodesWithTag(tile).assertCountEquals(0)
+        composeRule.mainClock.autoAdvance = true
+    }
+
+    /** Move the command with this binding id onto [toSource]/[toKey], the way the repository does:
+     *  it leaves the row it was on, and keeps its identity so the cursor can follow it. */
+    private fun ControllerConfig.withCommandMovedTo(
+        bindingId: Long,
+        toSource: InputSource,
+        toKey: String,
+    ): ControllerConfig {
+        var carried: ActivatorGraph? = null
+        val stripped = actionSets.map { set ->
+            set.copy(
+                preset = set.preset.map { entry ->
+                    entry.copy(
+                        group = entry.group.copy(
+                            inputs = entry.group.inputs.map { input ->
+                                val (out, keep) = input.activators.partition { activator ->
+                                    activator.bindings.any { it.id == bindingId }
+                                }
+                                if (out.isEmpty()) {
+                                    input
+                                } else {
+                                    carried = out.first()
+                                    input.copy(activators = keep)
+                                }
+                            },
+                        ),
+                    )
+                },
+            )
+        }
+        val moved = carried ?: return this
+        return copy(
+            actionSets = stripped.map { set ->
+                set.copy(
+                    preset = set.preset.map { entry ->
+                        if (entry.inputSource != toSource) return@map entry
+                        entry.copy(
+                            group = entry.group.copy(
+                                inputs = entry.group.inputs.map { input ->
+                                    if (input.input.inputKey != toKey) {
+                                        input
+                                    } else {
+                                        input.copy(
+                                            activators = input.activators + moved.copy(
+                                                activator = moved.activator.copy(
+                                                    groupInputId = input.input.id,
+                                                    orderIndex = input.activators.size,
+                                                ),
+                                            ),
+                                        )
+                                    }
+                                },
+                            ),
+                        )
+                    },
+                )
+            },
+        )
+    }
 
     private fun assertMorphDoesNotShake(
         reveal: TileReveal,

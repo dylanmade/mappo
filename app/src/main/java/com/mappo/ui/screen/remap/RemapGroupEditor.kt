@@ -1331,6 +1331,16 @@ internal fun CommandTile(
     modifier: Modifier = Modifier,
     /** How big this tile is and how much it says — the table's, or the basic view's row tile. */
     look: TileLook = TableTileLook,
+    /**
+     * **Non-null while the tile is still travelling into place**: how far its chrome has arrived,
+     * read in the DRAW phase (Dylan, 2026-09-27).
+     *
+     * A tile that is arriving draws its fill and ring at that strength and NO content, because the
+     * label it would draw is the one its host is walking into place above it (see
+     * `EditPhase.ARRIVING`). Everything else about it is already real — it takes focus, it answers
+     * a tap, it can be lifted — which is the point: the cursor no longer waits out the animation.
+     */
+    chrome: (() -> Float)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // TWO interaction sources, deliberately.
@@ -1558,6 +1568,7 @@ internal fun CommandTile(
                         translationY = slide.value.y
                     }
                 }
+                chrome?.let { alpha = it() }
                 if (carried) alpha = 0f
             }
             .minputInteractiveMotion(pressInteraction)
@@ -1573,15 +1584,17 @@ internal fun CommandTile(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        TileContent(
-            colors = colors,
-            pressType = pressType,
-            output = output,
-            label = label,
-            outputText = outputText,
-            showDeviceIcon = showDeviceIcon,
-            look = look,
-        )
+        if (chrome == null) {
+            TileContent(
+                colors = colors,
+                pressType = pressType,
+                output = output,
+                label = label,
+                outputText = outputText,
+                showDeviceIcon = showDeviceIcon,
+                look = look,
+            )
+        }
 
         // Beside the tile, not over it: the cell IS the thing being acted on, and a menu
         // dropped on top of it hides the command you're deciding about. Mirrors to the start
