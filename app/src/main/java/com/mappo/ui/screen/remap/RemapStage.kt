@@ -510,6 +510,7 @@ internal fun RemapStage(
             reframeTravel.snapTo(0f)
             reframeTravel.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
             val landed = reframe.handOff() ?: return@LaunchedEffect
+            editMorph.finishRetarget()
             bodyScroll.scrollTo(landed.coerceIn(0, bodyScroll.maxValue))
         }
         // The travel is over: fold the shift the anchor has been applying into the scroller
@@ -868,23 +869,22 @@ internal fun RemapStage(
                 /** The controller column's width beside these flanks — squeezed if that is what
                  *  lands the grid inside the window, otherwise its natural size. */
                 fun centreBeside(leftW: Int, rightW: Int): Int {
-                    // A grid no wider than the window has NO scroll range at all (see [gridSpan]):
-                    // nothing to squeeze for.
-                    if (spanFor(leftW, rightW, centreMax).gridW <= viewportGridW) return centreMax
+                    // Both halves already inside half a window: centred as it is, nothing to
+                    // squeeze for.
+                    if (spanFor(leftW, rightW, centreMax).centred) return centreMax
                     // Both halves inside half a window each: leftW + gap + centre/2 <= half, and
                     // the same for the right. (It implies the whole grid fitting, so it is the
                     // only condition worth solving.)
                     val fitting = (viewportGridW / 2 - columnGap - maxOf(leftW, rightW)) * 2
                     val squeezed = centreMax.coerceAtMost(fitting).coerceAtLeast(centreFloor)
-                    // **Only if the squeeze actually lands the whole grid inside the window.**
-                    // Half a fix is worse than none here: shrinking the column moves the
-                    // controller's middle inward, and the grid's padding is measured from that
-                    // middle — so a squeeze that still leaves the grid overflowing can turn a
-                    // flush scroll end into a strip of pad the user scrolls out into, which is
-                    // exactly what [gridSpan]'s rule exists to prevent (Dylan, 2026-09-25). If the
-                    // screen is too narrow either way, the picture keeps its size and the body
-                    // scrolls, as it always did.
-                    val fits = spanFor(leftW, rightW, squeezed).gridW <= viewportGridW
+                    // **Only if the squeeze actually centres the grid inside the window.** Half a fix
+                    // is worse than none here: shrinking the column moves the controller's middle
+                    // inward, and the grid's padding is measured from that middle — so a squeeze
+                    // that still leaves the grid overflowing can turn a flush scroll end into a
+                    // strip of pad the user scrolls out into, which is exactly what [gridSpan]'s
+                    // rule exists to prevent (Dylan, 2026-09-25). Otherwise the picture keeps its
+                    // size: the grid sits off centre if it fits, and the body scrolls if not.
+                    val fits = spanFor(leftW, rightW, squeezed).centred
                     return if (fits) squeezed else centreMax
                 }
                 /** A column of the grid, as wide as its widest box in [widths]. */
@@ -942,19 +942,21 @@ internal fun RemapStage(
                     )
                 }
                 val reach = panReach.reach
-                val onLeftFlank = focused != null && focused in LeftColumnGroups
-                val overflows = toSpanPlain.gridW > viewportGridW
-                val glyphEdge = focused?.let { groupGlyphEdge(toSpanPlain, it) }
-                editMorph.captureSlack(
-                    settled = editSettled,
-                    // The part of the region that falls outside the content altogether: before the
-                    // grid's start on the leading side, past its end on the trailing one.
-                    target = when {
-                        glyphEdge == null || !overflows -> 0
-                        onLeftFlank -> (reach - glyphEdge).coerceAtLeast(0)
-                        else -> -(glyphEdge + reach - toSpanPlain.totalW).coerceAtLeast(0)
-                    },
-                )
+                /**
+                 * **The reserved scroll room** for [group] reaching [reach] out of the grid [plain]
+                 * (a span with no slack of its own): the part of the region that falls outside the
+                 * content altogether — before the grid's start on the leading side, past its end on
+                 * the trailing one. Zero on a grid that fits, which pays with [biasTargetFor].
+                 */
+                fun slackTargetFor(plain: GridSpan, group: RemapSimpleGroup?, reach: Int): Int {
+                    if (group == null || plain.gridW <= viewportGridW) return 0
+                    val glyph = groupGlyphEdge(plain, group)
+                    return if (group in LeftColumnGroups) {
+                        (reach - glyph).coerceAtLeast(0)
+                    } else {
+                        -(glyph + reach - plain.totalW).coerceAtLeast(0)
+                    }
+                }
                 // **What the grid already gives the region is the widest TILED box in its column**
                 // — not the focused group's own box, and not the column as a whole.
                 //
@@ -968,27 +970,43 @@ internal fun RemapStage(
                 //    the screen" on a default layout that fits the window (Dylan, 2026-09-28). A text
                 //    row is not room the group's tiles are shown in.
                 //
-                // Only ever a SHORTAGE: the view is nudged toward the group, never away from it.
-                val focusColumn = if (onLeftFlank) LeftColumnGroups else groups.toSet() - LeftColumnGroups
-                val columnRoom = focusColumn
-                    .filter { it in reveal.expanded }
-                    .maxOfOrNull { toWidths[groups.indexOf(it)] }
-                    ?: if (onLeftFlank) toLeft else toRight
+                // Only ever a SHORTAGE: the view is nudged toward the group, never away from it —
+                // and never by more than the pad on the far side, so nothing is pushed off screen.
+                fun biasTargetFor(
+                    plain: GridSpan,
+                    group: RemapSimpleGroup?,
+                    reach: Int,
+                    widths: IntArray,
+                ): Int {
+                    if (group == null || plain.gridW > viewportGridW) return 0
+                    val onLeft = group in LeftColumnGroups
+                    val column = if (onLeft) LeftColumnGroups else groups.toSet() - LeftColumnGroups
+                    val room = column
+                        .filter { it in reveal.expanded }
+                        .maxOfOrNull { widths[groups.indexOf(it)] }
+                        ?: if (onLeft) plain.leftW else plain.rightW
+                    val shortage = (reach - room).coerceAtLeast(0)
+                    return if (onLeft) {
+                        shortage.coerceAtMost(plain.padTrailing)
+                    } else {
+                        -shortage.coerceAtMost(plain.padLeading)
+                    }
+                }
+                editMorph.captureSlack(
+                    settled = editSettled,
+                    target = slackTargetFor(toSpanPlain, focused, reach),
+                )
                 editMorph.captureBias(
                     settled = editSettled,
-                    target = when {
-                        focused == null || overflows -> 0
-                        onLeftFlank ->
-                            (reach - columnRoom).coerceAtLeast(0)
-                                .coerceAtMost(toSpanPlain.padTrailing)
-                        else ->
-                            -(reach - columnRoom).coerceAtLeast(0)
-                                .coerceAtMost(toSpanPlain.padLeading)
-                    },
+                    target = biasTargetFor(toSpanPlain, focused, reach, toWidths),
                 )
                 val travel = editMorph.at(gridTravel)
-                val slack = editMorph.slackAt(travel)
-                val bias = editMorph.biasAt(travel)
+                // Re-planned by a re-frame, the drawn pan and reserved room follow ITS travel.
+                val panTravel = if (editMorph.retargeted) {
+                    reframe.progressOf(reframeTravel.value)
+                } else travel
+                val slack = editMorph.slackAt(panTravel)
+                val bias = editMorph.biasAt(panTravel)
                 val fromSpan = spanFor(fromLeft, fromRight, fromCentre, editMorph.slackFrom)
                 val toSpan = spanFor(toLeft, toRight, toCentre, editMorph.slackTo)
                 // Everything between is the SAME function of the interpolated columns, rather than
@@ -1070,22 +1088,33 @@ internal fun RemapStage(
                     maxScrollAt = ::maxScrollAt,
                     anchorX = grid.centreX + bias,
                 )
+                // What the scroller will clamp its value to this pass: the width reported below.
+                val layoutMax = (grid.totalW - viewport).coerceAtLeast(0)
                 val shift = morphShift + reframe.shiftAt(
                     // Only while edit mode is SETTLED: mid-morph the grid is meant to be
                     // changing shape, and that travel already owns the view.
                     active = editSettled && editing,
-                    centreX = grid.centreX,
+                    anchorX = grid.centreX + bias,
                     widths = measuredWidths,
                     scroll = bodyScroll.value,
-                    max = maxScrollAt(travel),
-                    virtual = bodyScroll.value + morphShift,
+                    max = layoutMax,
                     progress = reframeTravel.value,
                     groupAt = { groups[it] },
-                    // A tile landing in a group, or leaving one, shows that group whole again.
-                    targetFor = { group, at ->
-                        val width = measuredWidths[groups.indexOf(group)]
-                        panReach.reframe(group, width, panTarget)
-                        editScrollTarget(grid, group, viewport, edgeX, at, panReach.reach)
+                    // A tile landing in a group, or leaving one, shows that group whole again —
+                    // reach, reserved room and drawn pan all planned afresh for its new shape.
+                    planTo = { group, screenFrom ->
+                        panReach.reframe(group, measuredWidths[groups.indexOf(group)], panTarget)
+                        val reachNow = panReach.reach
+                        val plain = spanFor(toLeft, toRight, toCentre)
+                        val slackTo = slackTargetFor(plain, group, reachNow)
+                        val biasTo = biasTargetFor(plain, group, reachNow, measuredWidths)
+                        editMorph.retarget(slackTo, biasTo)
+                        val framed = spanFor(toLeft, toRight, toCentre, slackTo)
+                        // Where the view is now, as a scroll of the framed grid — the one that
+                        // leaves the controller drawn where it is.
+                        val here = (framed.centreX + biasTo - screenFrom).roundToInt()
+                        val scrollTo = editScrollTarget(framed, group, viewport, edgeX, here, reachNow)
+                        (framed.centreX + biasTo - scrollTo).toFloat()
                     },
                 )
                 contentShift.floatValue = shift.toFloat()
@@ -1095,6 +1124,9 @@ internal fun RemapStage(
                 val startX = grid.startX - shift + bias
                 val centreX = grid.centreX - shift + bias
                 val rightX = grid.rightX - shift + bias
+                // Where the controller's column lands in the WINDOW, for the next re-frame to start
+                // from ([ReframePlan.lastDrawn]).
+                reframe.lastDrawn = (centreX - bodyScroll.value.coerceIn(0, layoutMax)).toFloat()
 
                 // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
                 // bottom band on the CEILING of its own, and the middle band centres on the
@@ -1658,6 +1690,7 @@ internal const val ControllerImageTestTag = "controller-image"
 /** The grid's horizontal metrics at one end of the morph — everything the placement needs. */
 private class GridSpan(
     val leftW: Int,
+    val rightW: Int,
     /** The controller column's width at this end — the flanks' content can squeeze it; see
      *  `centreFor` in the stage's layout. */
     val centreW: Int,
@@ -1672,6 +1705,9 @@ private class GridSpan(
      *  what the pan on a fitting grid is allowed to spend (see the stage's `biasIn`). */
     val padLeading: Int,
     val padTrailing: Int,
+    /** Whether the controller could be put dead centre with no scroll range — each HALF of the
+     *  content inside half the window. What the controller column's squeeze aims for. */
+    val centred: Boolean,
 )
 
 private fun gridSpan(
@@ -1722,8 +1758,24 @@ private fun gridSpan(
     // The controller's middle, as a distance from the content's leading edge.
     val toCentre = leftW + columnGap + centreW / 2
     val half = viewportGridW / 2
-    val padLeading = (half - toCentre).coerceAtLeast(0) + slack.coerceAtLeast(0)
-    val padTrailing = (half - (contentW - toCentre)).coerceAtLeast(0) + (-slack).coerceAtLeast(0)
+    var centringLead = (half - toCentre).coerceAtLeast(0)
+    var centringTrail = (half - (contentW - toCentre)).coerceAtLeast(0)
+    // **Content that FITS is never padded past the window** (Dylan, 2026-09-28). A LOPSIDED grid —
+    // one half wider than half the window, which one group revealed at a time makes routine — was
+    // padded on its short side all the way out to half a window regardless, which made the grid
+    // wider than the window with nothing extra in it: the fade and chevron lit up over the far
+    // column, promising content "on the opposite column" that was only padding, and vanished again
+    // as the cursor moved to a narrower group. Where the content fits, the pads share out exactly
+    // the room the window has left, as near the centring as that allows — the controller sits a
+    // little off centre rather than invent a scroll.
+    val centred = centringLead + centringTrail + contentW <= viewportGridW + 1
+    if (contentW <= viewportGridW && !centred) {
+        val spare = viewportGridW - contentW
+        centringLead = centringLead.coerceAtMost(spare)
+        centringTrail = spare - centringLead
+    }
+    val padLeading = centringLead + slack.coerceAtLeast(0)
+    val padTrailing = centringTrail + (-slack).coerceAtLeast(0)
     // The floor covers the rounding when both pads apply: two halves of an odd viewport are a
     // pixel short of it, and a grid narrower than the window it fills has no valid scroll range.
     val gridW = maxOf(contentW + padLeading + padTrailing, viewportGridW)
@@ -1731,6 +1783,7 @@ private fun gridSpan(
     val centreX = startX + leftW + columnGap
     return GridSpan(
         leftW = leftW,
+        rightW = rightW,
         centreW = centreW,
         gridW = gridW,
         totalW = gridW + edgeX * 2,
@@ -1740,6 +1793,7 @@ private fun gridSpan(
         centreScroll = (padLeading + toCentre - half).coerceIn(0, gridW - viewportGridW),
         padLeading = padLeading,
         padTrailing = padTrailing,
+        centred = centred,
     )
 }
 
@@ -1873,6 +1927,13 @@ private class EditMorphPlan {
     private var biasTo = 0
     private var biasPlanned = false
     private var scrollsKnown = false
+    /**
+     * **The drawn pan and reserved room have been re-planned by a RE-FRAME** — a group changed shape
+     * while edit mode was settled (a tile cleared, pasted or landed). Both then follow the re-frame's
+     * own travel rather than this plan's; see [retarget].
+     */
+    var retargeted = false
+        private set
     private var pending: Int? = null
     private var target: Int? = null
     private var token: Any? = null
@@ -1912,6 +1973,8 @@ private class EditMorphPlan {
         // A re-plan starts HERE rather than back at the travel's beginning, so the journey it
         // describes is only what is left of it (see [at]).
         base = if (fresh) 0f else travel.coerceIn(0f, 1f)
+        // A travel of this plan's own supersedes any re-frame's: it re-plans both from where they are.
+        retargeted = false
         fromWidths = measured
         toWidths = null
         // Re-planned from here, since where the view is going has changed too.
@@ -2015,6 +2078,34 @@ private class EditMorphPlan {
         biasPlanned = true
     }
 
+    /**
+     * **Re-plan the drawn pan and the reserved room for a group that has just changed shape** (Dylan,
+     * 2026-09-28). Both used to be planned only by this plan's travels — a reveal or a collapse — so
+     * a tile cleared or pasted with the view settled kept the pan planned for the group's OLD width:
+     * clearing a tile left the view narrower than the group had ever been opened at, and pasting one
+     * panned a whole tile past its end. From where each is now to where the new shape wants it,
+     * along the re-frame's travel (pass that as the progress to [slackAt] and [biasAt]).
+     */
+    fun retarget(slackTarget: Int, biasTarget: Int) {
+        slackFrom = slack
+        slackTo = slackTarget
+        slackPlanned = true
+        biasFrom = bias
+        biasTo = biasTarget
+        biasPlanned = true
+        retargeted = true
+    }
+
+    /** The re-frame has landed: both hold where it left them. */
+    fun finishRetarget() {
+        if (!retargeted) return
+        slack = slackTo
+        bias = biasTo
+        slackPlanned = false
+        biasPlanned = false
+        retargeted = false
+    }
+
     /** The drawn offset at this point in the travel. With nothing planned it HOLDS. */
     fun biasAt(travel: Float): Int {
         if (!biasPlanned) return bias
@@ -2116,22 +2207,36 @@ private class EditMorphPlan {
  * So a shape change is treated as a TRAVEL, exactly like entering edit mode: hold the view
  * precisely where it was — past the new clamp if need be, which simply means the space the tile
  * vacated stays on screen for the length of the animation — and interpolate from there to the
- * scroll that frames the whole changed group, empty edge tiles included ([editScrollTarget], the
+ * view that frames the whole changed group, empty edge tiles included ([editScrollTarget], the
  * same function that frames a group being opened).
+ *
+ * **Interpolated ON SCREEN, like the morph's camera** (2026-09-28): what travels is where the
+ * controller's column is DRAWN, from where it was last frame to where the new shape frames it. The
+ * re-frame now re-plans the drawn pan and reserved room too ([EditMorphPlan.retarget]), which move
+ * the content by themselves as they travel — a camera interpolated in scroll space would fight them.
  *
  * The change is detected in the LAYOUT, by comparing this pass's box widths against the last
  * one's, because an effect would only notice a frame later — and that frame is the jump.
  */
 private class ReframePlan {
-    /** Every group's box width, and where the controller's column sat, last layout. */
+    /** Every group's box width, last layout. */
     private var widths: IntArray? = null
-    private var anchor: Int? = null
-    private var from = 0f
-    private var to = 0f
+    /** Where the controller's column is drawn in the window, at each end of the travel. */
+    private var screenFrom = 0f
+    private var screenTo = 0f
     private var live = false
-    private var pending: Int? = null
     private var landing: Int? = null
     private var armedFor = 0
+
+    /**
+     * **Where the controller's column was DRAWN last layout**, in the window — written by the stage
+     * at the end of every pass, whatever is moving the view. A travel starts from exactly this, so
+     * its first frame cannot move anything.
+     */
+    var lastDrawn: Float? = null
+
+    /** Whether a travel is under way. */
+    val running: Boolean get() = live
 
     /** Bumped when a shape change needs animating; the stage arms the travel in answer. */
     val request = mutableIntStateOf(0)
@@ -2158,29 +2263,32 @@ private class ReframePlan {
      *  view at the destination on the very frame that is supposed to hold it still. */
     fun arm(id: Int) { armedFor = id }
 
+    /** The travel's progress as it stands — 0 until it has been reset for THIS request. */
+    fun progressOf(progress: Float): Float = if (armedFor == request.intValue) progress else 0f
+
     fun shiftAt(
         active: Boolean,
-        /** Where the controller's column starts — the anchor the hold is measured against. */
-        centreX: Int,
+        /** Where the grid puts the controller's column this pass, drawn pan included. */
+        anchorX: Int,
         widths: IntArray,
         scroll: Int,
+        /** The scroller's own range this pass — what it will clamp [scroll] to. */
         max: Int,
-        /** Where the view sits right now, whatever else is displacing it. */
-        virtual: Int,
         progress: Float,
         groupAt: (index: Int) -> RemapSimpleGroup,
-        /** The scroll that frames a whole group, "+" tiles included, from a given position. */
-        targetFor: (group: RemapSimpleGroup, from: Int) -> Int,
+        /**
+         * Frame [group] afresh, starting from the controller drawn at `screenFrom`: re-plan whatever
+         * the new shape needs, and say where the controller's column is drawn once it is framed.
+         */
+        planTo: (group: RemapSimpleGroup, screenFrom: Float) -> Float,
     ): Int {
+        val effective = scroll.coerceIn(0, max)
         if (!active) {
             this.widths = null
-            this.anchor = null
             live = false
-            pending = null
             return 0
         }
         val wasW = this.widths
-        val wasAnchor = this.anchor
         val claimed = frameGroup.takeIf { frameTick != servedTick }
         // A shape change nobody claimed — a tile cleared or pasted — frames the box it happened
         // to, which is the best guess available and the right one for a single-row change.
@@ -2193,37 +2301,26 @@ private class ReframePlan {
         // one out meant two journeys, the first of them to the wrong place.
         if (claimed != null || (!live && changed != null)) {
             servedTick = frameTick
-            // **The CONTROLLER is the anchor** for the hold, not the box that changed — the box
-            // that changed is, more often than not, the one thing that did NOT move. A left-flank
-            // box is right-aligned in a column it is itself sizing, so losing a tile leaves its
-            // outer edge where it was and pulls its inner edge — and the controller, and the
-            // entire right half of the grid — a whole tile's width across. Holding the picture
-            // still is what makes the change read as one tile appearing or leaving rather than
-            // the view lurching (Dylan proposed this anchor for the morph, 2026-09-24, for the
-            // same reason; the way out of edit mode has used it since). With no previous layout
-            // to measure against — the picker trip rebuilds the screen — there is nothing to
-            // hold and the travel simply starts from where the view is.
-            // Where the view visually IS: mid-travel that is the position the travel last
-            // placed it at, not the scroller's value, which the travel has been overriding.
-            val here = (if (live) landing ?: from.roundToInt() else virtual) +
-                if (wasAnchor != null) centreX - wasAnchor else 0
-            from = here.toFloat()
-            to = targetFor(claimed ?: groupAt(changed!!), here).toFloat()
+            // **Held where it was DRAWN**, which is what keeps the change reading as one tile
+            // appearing or leaving rather than the view lurching: a left-flank box is right-aligned
+            // in a column it is itself sizing, so losing a tile pulls the controller — and the
+            // whole right half — a tile across unless the picture is what stays put (Dylan
+            // proposed this anchor for the morph, 2026-09-24, for the same reason). With no layout
+            // yet to have drawn anything — the picker trip rebuilds the screen — the view simply
+            // starts from where the scroller has it.
+            screenFrom = lastDrawn ?: (anchorX - effective).toFloat()
+            screenTo = planTo(claimed ?: groupAt(changed!!), screenFrom)
             live = true
             request.intValue++
         }
         this.widths = widths
-        this.anchor = centreX
-        if (!live) {
-            pending = null
-            return 0
-        }
-        val at = if (armedFor == request.intValue) progress else 0f
+        if (!live) return 0
+        val at = progressOf(progress)
         // NOT clamped to the scrollable range: the hold is allowed to sit past the end while the
         // content is narrower than the view was, which is the whole point of animating out of it.
-        val wanted = from + (to - from) * at
+        val wanted = anchorX - (screenFrom + (screenTo - screenFrom) * at)
         landing = wanted.roundToInt()
-        return (wanted - scroll.coerceIn(0, max)).roundToInt().also { pending = it }
+        return (wanted - effective).roundToInt()
     }
 
     /** The scroll the scroller should take over once the travel has landed. */
@@ -2232,7 +2329,6 @@ private class ReframePlan {
         val landed = landing ?: return null
         live = false
         landing = null
-        pending = null
         return landed
     }
 }

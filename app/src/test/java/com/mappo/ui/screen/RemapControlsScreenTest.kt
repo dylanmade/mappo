@@ -3391,7 +3391,9 @@ class RemapControlsScreenTest {
         setPanScreen(
             aspect = aspect,
             reveal = reveal,
-            width = 900,
+            // Narrow enough that the content genuinely overruns it: where everything fits, every
+            // group is simply on screen and there is no target to land on.
+            width = 700,
             config = seedShapedConfig()
                 .withPressStack(InputSource.DPAD, 7000L)
                 .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
@@ -3402,7 +3404,8 @@ class RemapControlsScreenTest {
             // Every group is tiles: the cursor crosses by landing on one, as the d-pad does.
             composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true).requestFocus()
         } else {
-            composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+            // Walked into, as the d-pad does — the box may well be off screen, out of a tap's reach.
+            composeRule.onNodeWithTag("simple-group:DPAD").requestFocus()
         }
         settlePan()
 
@@ -3587,7 +3590,9 @@ class RemapControlsScreenTest {
 
     private fun assertSameColumnHopGetsTheTarget(from: String, to: String, onLeft: Boolean) {
         setPanScreen(
-            width = 900,
+            // Narrow enough that the content genuinely overruns it: where everything fits, every
+            // group is simply on screen and there is no target to land on.
+            width = 700,
             config = seedShapedConfig()
                 .withPressStack(InputSource.DPAD, 7000L)
                 .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
@@ -3662,5 +3667,176 @@ class RemapControlsScreenTest {
             .assertCountEquals(0)
         composeRule.onAllNodesWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0", useUnmergedTree = true)
             .assertCountEquals(0)
+    }
+
+    /** Resizes the live screen by a dp and back — see [relayout]. */
+    private val nudge = androidx.compose.runtime.mutableStateOf(0)
+
+    /**
+     * **Lay the stage out again from its STATE**, as the next unrelated recomposition on the device
+     * would. A travel that hands off to a scroll the scroller already has invalidates nothing, so the
+     * last frame it drew can stay on screen looking right while the state behind it says otherwise
+     * — and the device shows the truth the moment anything else re-lays the view out.
+     */
+    private fun relayout() {
+        nudge.value = 1
+        settlePan()
+        nudge.value = 0
+        settlePan()
+    }
+
+    /** A screen whose config the test can change under it — a paste or a clear, as it lands. */
+    private fun setLiveScreen(
+        live: androidx.compose.runtime.MutableState<ControllerConfig>,
+        reveal: TileReveal = TileReveal.FOCUSED_GROUP,
+        // LANDSCAPE, like the device: the controller's column is sized from the height, so a tall
+        // surface overruns the window and pays the pan in scroll range, never exercising the DRAWN
+        // pan that a grid which fits uses. Inside the class's w1280dp-h800dp window, or it is
+        // clamped to it and [relayout]'s nudge changes nothing.
+        width: Int = 1200,
+        height: Int = 700,
+    ) {
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
+                    Surface(
+                        modifier = androidx.compose.ui.Modifier.size((width + nudge.value).dp, height.dp),
+                    ) {
+                        RemapControlsScreen(
+                            config = live.value,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+    }
+
+    private fun controllerX() = composeRule
+        .onNodeWithTag("controller-image", useUnmergedTree = true).fetchSemanticsNode().positionInRoot.x
+
+    private fun utilityPitch(): Float {
+        fun left(slot: Int) = composeRule
+            .onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        return kotlin.math.abs(left(1) - left(0))
+    }
+
+    /**
+     * **A pasted tile re-plans the pan for the group's NEW width** (Dylan, 2026-09-28: pasting into
+     * a group whose rows each hold one command "pans a whole tile beyond the newly resultant empty
+     * tile" — on a screen larger than 1:1 only).
+     *
+     * On a grid that fits, the pan is DRAWN, and it was only ever planned by a reveal or a collapse.
+     * Opening the two-tile group drew it one tile out (three-tile target); the paste made the group
+     * three tiles wide, which needs no drawn pan at all — but the one-tile pan stayed. Now the
+     * re-frame re-plans it, so the controller comes back to where the resting grid centres it.
+     */
+    @Test
+    fun pastingATile_rePlansThePan_forTheGroupsNewWidth_oneGroupRevealed() =
+        assertPasteRePlansThePan(TileReveal.FOCUSED_GROUP)
+
+    @Test
+    fun pastingATile_rePlansThePan_forTheGroupsNewWidth_everyGroupRevealed() =
+        assertPasteRePlansThePan(TileReveal.ALL_GROUPS)
+
+    private fun assertPasteRePlansThePan(reveal: TileReveal) {
+        val live = androidx.compose.runtime.mutableStateOf(seedShapedConfig())
+        setLiveScreen(live, reveal)
+        assertNothingToScroll("the fixture should fit the window, so the pan is DRAWN")
+        val rest = controllerX()
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
+        settlePan()
+        val pitch = utilityPitch()
+        assert(kotlin.math.abs(controllerX() - rest - pitch) <= 1f) {
+            "opening the two-tile group should draw the view one tile out: ${controllerX() - rest} vs $pitch"
+        }
+
+        live.value = seedShapedConfig().withTwoCommands(InputSource.SWITCH_SELECT, "click", 800L)
+        settlePan()
+        relayout()
+        assert(kotlin.math.abs(controllerX() - rest) <= 1f) {
+            "a three-tile group needs no drawn pan, but the view sits ${controllerX() - rest}px out"
+        }
+    }
+
+    /**
+     * **A cleared tile never leaves the view narrower than the target** (Dylan, 2026-09-28:
+     * removing a tile "truncates the view so it's now narrower than it ever was upon first
+     * opening").
+     *
+     * The mirror of the paste: a three-tile group opened with no drawn pan, then cleared back to two
+     * tiles, has to be drawn one tile out — exactly as if the two-tile group had been opened fresh.
+     */
+    @Test
+    fun clearingATile_neverLeavesTheViewShortOfTheTarget_oneGroupRevealed() =
+        assertClearKeepsTheTarget(TileReveal.FOCUSED_GROUP)
+
+    @Test
+    fun clearingATile_neverLeavesTheViewShortOfTheTarget_everyGroupRevealed() =
+        assertClearKeepsTheTarget(TileReveal.ALL_GROUPS)
+
+    private fun assertClearKeepsTheTarget(reveal: TileReveal) {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withTwoCommands(InputSource.SWITCH_SELECT, "click", 800L),
+        )
+        setLiveScreen(live, reveal)
+        assertNothingToScroll("the fixture should fit the window, so the pan is DRAWN")
+        val rest = controllerX()
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
+        settlePan()
+
+        live.value = seedShapedConfig()
+        settlePan()
+        relayout()
+        val pitch = utilityPitch()
+        assert(kotlin.math.abs(controllerX() - rest - pitch) <= 1f) {
+            "the two-tile group should be drawn one tile out, as when opened: " +
+                "${controllerX() - rest} vs $pitch"
+        }
+    }
+
+    /**
+     * **Content that fits never scrolls** (Dylan, 2026-09-28: a group with two commands made "a
+     * scroll appear along with a chevron + fade on the opposite screen edge", as if there were
+     * content to scroll to in the other column).
+     *
+     * One half of the grid wider than half the window used to have its other half padded out to
+     * half a window regardless, to keep the controller dead centre — making the grid wider than the
+     * window with nothing in the extra. Asserted as the invariant: every group shown whole means
+     * everything is on screen, so there must be nothing to scroll.
+     */
+    @Test
+    fun aLopsidedGridThatFits_hasNothingToScroll() {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        setLiveScreen(live, width = 900, height = 1600)
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val everyGroupOnScreen = listOf(
+            "LEFT_SHOULDER", "DPAD", "LEFT_STICK", "LEFT_UTILITY",
+            "RIGHT_SHOULDER", "FACE", "RIGHT_STICK", "RIGHT_UTILITY",
+        ).all { group ->
+            composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode().let {
+                    it.positionInRoot.x >= window.left - 1f &&
+                        it.positionInRoot.x + it.size.width <= window.right + 1f
+                }
+        }
+        assert(everyGroupOnScreen) { "the fixture should fit the window" }
+        assertNothingToScroll("everything is on screen, yet the body can scroll")
+    }
+
+    private fun assertNothingToScroll(message: String) {
+        val range = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        assert(range.maxValue() == 0f) { "$message: range ${range.maxValue()}px" }
     }
 }
