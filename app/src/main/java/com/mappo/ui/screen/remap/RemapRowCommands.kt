@@ -78,6 +78,18 @@ internal val LocalTileReveal =
     staticCompositionLocalOf { com.mappo.data.settings.TileRevealSettings.Default }
 
 /**
+ * **How far opening a group must pan the view, in tiles** — the user's setting, carried down the
+ * same way [LocalTileReveal] is.
+ *
+ * Read by the STAGE, which is the only place that knows both where a group's box is and how wide
+ * a tile comes out on this screen (see `editScrollTarget`). Provided by `MainScreen` from
+ * [com.mappo.data.settings.MinVisibleTilesSettings].
+ */
+internal val LocalMinVisibleTiles =
+    staticCompositionLocalOf { com.mappo.data.settings.MinVisibleTilesSettings.Default }
+
+
+/**
  * The commands on one input row, in display order.
  *
  * Unbound bindings are left out: "New" creates the binding BEFORE the picker opens, so a

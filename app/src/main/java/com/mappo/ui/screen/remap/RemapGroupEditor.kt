@@ -153,41 +153,28 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
- * The expanded ("advanced") in-place editor a group box grows into.
+ * **The COMMAND TILE and everything that acts on one** — the face it wears, the menu it offers,
+ * the dialogs that menu summons, the press-type picker, and the machinery for carrying one across
+ * the grid.
  *
- * **Rebuilt 2026-09-11 as a TABLE.** The old form was a vertical list of command rows that grew
- * downward as the user added commands, each row carrying its own press-type pill, output button,
- * label field, cog and kebab. The table replaces it: one row per physical input, one COLUMN per
- * press type, and a cell at every intersection. Reading "what does Y do when I hold it" is now a
- * lookup instead of a scan, and the grid is fixed-size — it can't grow unboundedly, which is what
- * made the list form hard to design the basic views against.
+ * It was an expanded ("advanced") in-place editor: a card a group box grew into, holding a TABLE
+ * of these tiles with a header of its own (group identity · mode pill · cog · kebab · close). That
+ * editor is gone (Dylan, 2026-09-27: "I am all in on this experimental view/edit mode, which means
+ * I think we can finally ditch any code related to the former Advanced view") — the basic view's
+ * rows became these very tiles in place, which is what made the card redundant. What the card
+ * carried and edit mode needed a home for now lives on the stage: its dialogs at the stage's root
+ * ([CommandTileDialogs]), its mode settings and Reset in each group's own action menu.
  *
- * The trade, accepted deliberately: a cell holds at most ONE command, so the old "several
- * commands of the same press type on one input" affordance is gone from the UI. The schema still
- * allows it (see the cell-ops block in `ControllerConfigRepository`); the table just doesn't
- * surface it.
- *
- * Anatomy: sticky header (group identity · flow arrow · mode pill · cog/kebab/close) over an
- * inset divider, then the table — a frozen glyph column and a horizontally scrolling body
- * carrying the press-type header row and every cell.
- *
- * Two changes on 2026-09-17, both making a card match the basic-view box it grows out of:
- * overflow is cued by [MinputOverflowScroll]'s edge fades + chevrons rather than scrollbars,
- * and a LEFT-flank group's table is MIRRORED — glyph column at the card's right edge, press
- * columns running outward to the left (see [RemapSimpleGroup.editorMirrored]). The header bar
- * above it is not mirrored. A column's INDEX still counts outward from the glyph either way,
- * so everything keyed on it (scroll offsets, d-pad stepping) is untouched by mirroring; only
- * the rendered order and the sign of a column step flip.
- *
- * **Every card in the scene carries the full header** (Dylan, 2026-09-21). Only the card the
- * camera was parked on used to, on the reasoning that seven live mode pills, cogs, kebabs and
- * Close buttons are seven of everything. But with the scene now a canvas the user roams — by
- * finger as much as by d-pad — "the card the camera is on" stopped meaning "the card being
- * worked on", and a card you could see, scroll and edit tiles in but not change the mode of read
- * as broken rather than restful.
+ * The tile's own history is worth keeping. It replaced a vertical list of command rows, each with
+ * its own press-type pill, output button, label field, cog and kebab (2026-09-11); the table that
+ * replaced THAT pre-exposed every (input × press type) intersection, six columns of mostly nothing,
+ * until a row became a STACK of the commands that exist plus one "+" (2026-09-20, see
+ * [RowCommand]). A row's slots count outward from its input glyph, and a LEFT-flank row runs
+ * outward to the left — so everything keyed on the index is untouched by mirroring; only the
+ * rendered order and the sign of a column step flip.
  *
  * Base-set view edits inline; layer view resolves override→base, renders read-only, and routes
- * cell taps to the full-screen editor (which materializes the override).
+ * tile taps to the full-screen editor (which materializes the override).
  */
 internal class RemapGroupEditorCallbacks(
     val onSetBindingGroupMode: (bindingGroupId: Long, mode: BindingMode) -> Unit,
@@ -320,180 +307,6 @@ internal data class CellKey(
     val source: InputSource get() = row.source
 }
 
-@Composable
-internal fun RemapGroupEditor(
-    group: RemapSimpleGroup,
-    viewingSet: ActionSetGraph?,
-    viewingLayer: ActionLayerGraph?,
-    config: ControllerConfig?,
-    callbacks: RemapGroupEditorCallbacks,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-    // ── Moves (2026-09-17) ──
-    // A host showing SEVERAL editors at once (the zoomed scene) owns the move: one state
-    // spanning every table, stepping that can cross from one to the next, a commit that knows
-    // both ends' binding groups, and focus handles it can reach any cell through. On its own,
-    // an editor keeps the single-table behaviour these defaults describe.
-    moveState: MoveModeState<CellKey> = rememberMoveModeState(),
-    stepTarget: ((CellKey, Int, Int) -> CellKey?)? = null,
-    onMoveCommitted: ((from: CellKey, to: CellKey) -> Unit)? = null,
-    focusHandle: ((CellKey) -> FocusRequester)? = null,
-    // Landing spot for controller focus when the editor opens (and after a tap wipes focus):
-    // the TOP-LEFT tile — the first input's Press cell — falling back to the always-present
-    // Close button when the table can't take focus (layer view). Directional focus can't step
-    // INTO an overlay from a focused container that spatially contains everything, so the
-    // simple view requests focus here explicitly.
-    focusRequester: FocusRequester? = null,
-) {
-    // The header's mode pill edits the group's PRIMARY source (first row's source). Multi-source
-    // groups (shoulder = trigger + bumper, utility = Start + Select) keep their secondary
-    // sources' modes reachable through the cells' full-screen editor for now.
-    val primarySource = group.rows.first().source
-    val primaryGroup = viewingLayer?.presetFor(primarySource)?.group?.group
-        ?: viewingSet?.presetFor(primarySource)?.group?.group
-    val validModes = SourceModeCatalog.modesValidFor(primarySource)
-    val modeName = primaryGroup?.mode?.displayNameFor(primarySource) ?: "mode"
-    val editable = viewingLayer == null
-    var headerMore by remember { mutableStateOf(false) }
-
-    // Escape hatch for d-pad UP out of the table's top row: the table is a focus group whose
-    // bounds contain every tile, so an unresolved UP search would pick the group itself as
-    // "above" and re-enter at its first focusable, trapping focus. Top-row tiles route UP
-    // explicitly, set DIRECTLY on each tile's own node — an ancestor-cascaded route proved to
-    // win over per-child overrides, collapsing every route to one target.
-    // A focus handle per cell, so focus can FOLLOW a committed move to the destination.
-    // Leaving it on the origin (which now holds the swapped-in command, or nothing at all)
-    // read as the cursor snapping backwards.
-    val ownFocusHandles = remember(group) { mutableStateMapOf<CellKey, FocusRequester>() }
-    val cellFocusHandle = focusHandle
-        ?: { key -> ownFocusHandles.getOrPut(key) { FocusRequester() } }
-    // A standalone editor resolves its own move: which command was lifted, and what (if
-    // anything) it landed on. The scene passes its own, which can reach across groups.
-    val order = LocalCommandOrder.current
-    // How many tiles each row has — the commands plus its "+". Rows differ in length now, so
-    // the stepper is handed this rather than assuming a fixed column count.
-    val slotsOf: (RemapSimpleGroup, SimpleRowSpec) -> Int = { _, spec ->
-        rowSlotCount(rowCommandsFor(viewingSet, viewingLayer, spec, order).size)
-    }
-    val stepper = stepTarget
-        ?: { key: CellKey, dRow: Int, dCol: Int -> stepCellWithinGroup(key, dRow, dCol, slotsOf) }
-    val commitMove = onMoveCommitted ?: { from: CellKey, to: CellKey ->
-        val lifted = rowCommandsFor(viewingSet, viewingLayer, from.row, order).getOrNull(from.slot)
-        val landedOn = rowCommandsFor(viewingSet, viewingLayer, to.row, order).getOrNull(to.slot)
-        val bindingGroupId = viewingSet?.presetFor(to.source)?.group?.group?.id
-        if (lifted != null && bindingGroupId != null) {
-            callbacks.onMoveCommand(lifted.id, bindingGroupId, to.inputKey, landedOn?.id)
-        }
-    }
-    val headerKebabFocus = remember { FocusRequester() }
-    val headerModePillFocus = remember { FocusRequester() }
-    val headerCloseFocus = remember { FocusRequester() }
-    val modePillFocusable = primaryGroup != null && validModes.isNotEmpty() &&
-        editable && validModes.size > 1
-    val headerCogFocusable = primaryGroup != null &&
-        SourceModeSettingsSchema.hasSettings(primarySource, primaryGroup.mode)
-    val tableUpTarget = if (modePillFocusable) headerModePillFocus else headerKebabFocus
-
-    Column(modifier = modifier) {
-        // ── Sticky header ─────────────────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = EditorHeaderHeight)
-                // Same horizontal inset as the table — the header's chrome must sit flush
-                // with the table's columns.
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Group identity + mode, as ONE control (Dylan, 2026-09-19): the card's caption
-            // used to read "BUTTON PAD > MODE: BUTTON PAD", naming the group twice with a flow
-            // arrow between, and then kept the hardware glyph outside the button it belongs to.
-            // The glyph is the group's identity AND the button's leading icon; the caption says
-            // the rest.
-            ModeDropdownLabel(
-                source = primarySource,
-                // The utility group states its NAME, not a mode (Dylan, 2026-09-21). Start and
-                // Select have no mode to pick — theirs is auto-managed by the repository's
-                // bound/cleared rule — so a caption reading "MODE: SINGLE BUTTON" was naming an
-                // internal state as though it were a choice.
-                currentMode = primaryGroup?.mode.takeIf { group.headerShowsMode && validModes.isNotEmpty() },
-                validModes = validModes,
-                identity = group.headerLabel(),
-                statesMode = group.headerShowsMode,
-                enabled = group.headerShowsMode && editable && primaryGroup != null && validModes.size > 1,
-                onPick = { mode -> primaryGroup?.let { callbacks.onSetBindingGroupMode(it.id, mode) } },
-                modifier = Modifier.focusRequester(headerModePillFocus),
-            )
-            Spacer(Modifier.weight(1f))
-            MinputIconButton(
-                icon = Icons.Filled.Settings,
-                contentDescription = "Configure $modeName",
-                onClick = { primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) } },
-                enabled = headerCogFocusable,
-            )
-            Box {
-                RowKebab(
-                    onClick = { headerMore = true },
-                    contentDescription = "Group options",
-                    modifier = Modifier.focusRequester(headerKebabFocus),
-                )
-                DropdownMenu(expanded = headerMore, onDismissRequest = { headerMore = false }) {
-                    RichMenuItem(
-                        title = "Import $modeName",
-                        helper = "Bring in a mode and inputs from another layout.",
-                        icon = Icons.Filled.Download,
-                        // Future: layout import. Inert while the acquisition flow lands.
-                        onClick = { headerMore = false },
-                    )
-                    RichMenuItem(
-                        title = "Reset $modeName",
-                        helper = "Return this group to its defaults.",
-                        icon = Icons.Filled.RestartAlt,
-                        enabled = editable && primaryGroup != null,
-                        onClick = {
-                            headerMore = false
-                            primaryGroup?.let { callbacks.onResetGroup(it.id) }
-                        },
-                    )
-                }
-            }
-            // No spacer: cog·kebab·close sit adjacent at one rhythm.
-            MinputIconButton(
-                icon = Icons.Filled.Close,
-                contentDescription = "Close",
-                onClick = onClose,
-                modifier = Modifier
-                    .focusRequester(headerCloseFocus)
-                    .then(
-                        if (focusRequester != null && !editable) {
-                            Modifier.focusRequester(focusRequester)
-                        } else Modifier,
-                    ),
-            )
-        }
-        // No rule under the header (Dylan, 2026-09-20): the card's own edge already separates
-        // it from the view, and the tiles below carry enough weight of their own that a line
-        // between them and the caption was only more ink.
-
-        AdvancedTable(
-            group = group,
-            viewingSet = viewingSet,
-            viewingLayer = viewingLayer,
-            config = config,
-            callbacks = callbacks,
-            editable = editable,
-            // A resting card has no header controls to route UP into, and an unattached
-            // requester would throw the moment focus searched that way.
-            upTarget = tableUpTarget,
-            focusRequester = focusRequester.takeIf { editable },
-            moveState = moveState,
-            stepTarget = stepper,
-            onMoveCommitted = commitMove,
-            focusHandle = cellFocusHandle,
-        )
-    }
-}
-
 /** What the label editor is editing: the command's label, the name it falls back to, and how
  *  it prints. */
 internal data class LabelEdit(
@@ -504,593 +317,8 @@ internal data class LabelEdit(
     val showDeviceInitials: Boolean,
 )
 
-/**
- * The table proper.
- *
- * Two side-by-side columns inside ONE vertical scroller: a frozen glyph column, then the body
- * in a horizontal scroller. Freezing the glyphs is the whole point of splitting them out — a
- * user scrolled to the Up column must still be able to see which button the row belongs to.
- * Alignment between the two halves is structural, not synchronized: both use the same fixed
- * [TileHeight] and [TileRowGap], so they can't drift.
- */
-/** One row of the table, resolved: its spec, whether a layer overrides it, and its commands. */
-private data class RowCommands(
-    val spec: SimpleRowSpec,
-    val overridden: Boolean,
-    val commands: List<RowCommand>,
-)
-
 /** What the "Type" verb is editing: one command, and the press type it currently fires on. */
 internal data class TypeEdit(val bindingId: Long, val current: ActivatorType)
-
-/**
- * One pane of a card's body: the rows it draws, which side its frozen glyph column sits on,
- * and the horizontal scroller it reads through.
- *
- * Most cards are ONE pane. The centre group is two (2026-09-20), meeting at the card's centre
- * line — see [CentreSplit], which its basic-view box uses for the same reason.
- */
-private data class Pane(
-    val rows: List<RowCommands>,
-    val mirrored: Boolean,
-    /** Does this pane's glyph column meet another one on the card's centre line? Its inner edge
-     *  then tightens to [CentreGlyphInset], so the two columns read as one cluster. */
-    val centred: Boolean,
-    val scroll: ScrollState,
-    val onViewport: (Rect) -> Unit,
-)
-
-@Composable
-private fun AdvancedTable(
-    group: RemapSimpleGroup,
-    viewingSet: ActionSetGraph?,
-    viewingLayer: ActionLayerGraph?,
-    config: ControllerConfig?,
-    callbacks: RemapGroupEditorCallbacks,
-    editable: Boolean,
-    upTarget: FocusRequester,
-    focusRequester: FocusRequester?,
-    // Moves are SCENE-wide (2026-09-17): the state, the stepping, the commit and the focus
-    // handles all belong to whoever hosts the tables, because a command can be carried out of
-    // this one. Standalone hosts get the single-table behaviour from the defaults.
-    moveState: MoveModeState<CellKey>,
-    stepTarget: (CellKey, Int, Int) -> CellKey?,
-    onMoveCommitted: (CellKey, CellKey) -> Unit,
-    focusHandle: (CellKey) -> FocusRequester,
-) {
-    // The flanking groups on the LEFT of the controller read as the right flank's reflection
-    // (Dylan, 2026-09-17), exactly as their basic-view boxes do: input glyph pinned to the
-    // card's right edge, the commands running outward to the left from it. Only the ORDER and
-    // the side change — the header bar above stays as it is. A slot's INDEX always counts
-    // outward from the glyph, so everything keyed on it (stepping, scroll offsets) is untouched
-    // by mirroring.
-    val mirrored = group.editorMirrored()
-    val order = LocalCommandOrder.current
-    val vScroll = rememberScrollState()
-    val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
-    // The grid has gutters between rows (and between tiles), which belong to no cell. Without
-    // a tolerance a finger crossing one resolves to nothing and the drop target snaps back to
-    // the origin — visible as the landing marker flickering home mid-drag.
-    // The radius within which the grid claims a carried tile. Generous: the cards are spread
-    // across the zoomed scene with air between them, and a tile crossing that air is still on
-    // its way somewhere. Past it the move reads as abandoned — see [MoveModeState.outOfRange].
-    moveState.hitTolerancePx = with(density) { MoveCancelDistance.toPx() }
-    // What the "Label" and "Type" verbs are editing. Both are summoned from a tile's menu, and
-    // both live here rather than on the tile so they survive the menu closing.
-    var labelTarget by remember { mutableStateOf<LabelEdit?>(null) }
-    var typeTarget by remember { mutableStateOf<TypeEdit?>(null) }
-
-    // Every row's commands, resolved ONCE for the whole composition — the tiles, the slot
-    // counts the d-pad clamps against, the move's identities and the drop rules all read this
-    // one list, so they cannot disagree about what a row holds.
-    val rows = group.rows.map { spec ->
-        val layerGroupInput = viewingLayer?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-        val baseGroupInput = viewingSet?.presetFor(spec.source)?.group?.inputByKey(spec.subInputKey)
-        RowCommands(
-            spec = spec,
-            overridden = layerGroupInput != null,
-            commands = (layerGroupInput ?: baseGroupInput).rowCommands(order),
-        )
-    }
-    // The CENTRE group's card SPLITS like its basic-view box (Dylan, 2026-09-20): rows
-    // anchored END draw on the left half reading outward, rows anchored START on the right
-    // half, and their glyph columns meet on the card's centre line. Every other card is one
-    // pane, mirrored or not as its flank dictates — so this reads the same [anchorFor] the
-    // basic view does rather than special-casing the utility group.
-    val endRows = rows.filter { group.anchorFor(it.spec) == RowAnchor.END }
-    val startRows = rows.filter { group.anchorFor(it.spec) == RowAnchor.START }
-    val split = endRows.isNotEmpty() && startRows.isNotEmpty()
-    val endScroll = rememberScrollState()
-    val startScroll = rememberScrollState()
-    var endViewport by remember { mutableStateOf<Rect?>(null) }
-    var startViewport by remember { mutableStateOf<Rect?>(null) }
-    val endPane = Pane(endRows, mirrored = true, centred = true, scroll = endScroll) { endViewport = it }
-    val startPane = Pane(
-        rows = if (split) startRows else rows,
-        mirrored = if (split) false else mirrored,
-        centred = split,
-        scroll = startScroll,
-    ) { startViewport = it }
-    /** Which way a row's slots run on screen: outward from its own pane's glyph column. */
-    fun paneMirroredFor(spec: SimpleRowSpec): Boolean =
-        if (split) group.anchorFor(spec) == RowAnchor.END else mirrored
-    fun scrollFor(spec: SimpleRowSpec): ScrollState =
-        if (split && group.anchorFor(spec) == RowAnchor.END) endScroll else startScroll
-
-    fun rowAt(spec: SimpleRowSpec): RowCommands? = rows.firstOrNull { it.spec == spec }
-    /** The command a cell holds, or null for the row's trailing "+" slot. */
-    fun commandAt(key: CellKey): RowCommand? =
-        rowAt(key.row)?.commands?.getOrNull(key.slot)
-
-    fun cellAt(key: CellKey): Pair<Int, Int>? {
-        val r = group.rows.indexOf(key.row).takeIf { it >= 0 } ?: return null
-        return r to key.slot
-    }
-
-    // Whichever table holds the drop target does the stepping; the others keep out of it.
-    fun stepMoveTarget(dRow: Int, dCol: Int) = stepMoveTargetBy(
-        moveState = moveState,
-        stepTarget = stepTarget,
-        focusHandle = focusHandle,
-        haptic = haptic,
-        dRow = dRow,
-        dCol = dCol,
-        owns = { it.group == group },
-    )
-
-    // Resolve the binding group that owns a row's source. Rows in a multi-source group
-    // (shoulder = trigger + bumper) resolve independently.
-    fun bindingGroupIdFor(spec: SimpleRowSpec): Long? =
-        viewingSet?.presetFor(spec.source)?.group?.group?.id
-
-    // The move being previewed. Everything visual (displacement, z-order) reads THESE rather
-    // than moveState's fields directly. Scoped to this table: a command carried INTO another
-    // group displaces nothing here.
-    val previewOrigin = moveState.origin?.takeIf { it.group == group }
-    val previewTarget = moveState.target?.takeIf { it.group == group }
-    // Is the HOST drawing the tiles in flight above the stage? Then this table draws neither of
-    // them: the overlay is standing in for both, and a card can't show a tile leaving it anyway
-    // (see [LocalMoveOverlay]). A move that has been CALLED OFF still counts — its tiles are
-    // flying home, and they would flash back into their slots the instant the state cleared.
-    val overlayHosted = LocalMoveOverlay.current
-    val overlayInFlight = overlayHosted &&
-        (moveState.origin ?: moveState.returning?.first) != null
-
-    // Is the button that lifted the current tile STILL held? Owned here rather than on the tile
-    // because a held activate button auto-repeats while focus moves, so the release can arrive
-    // at a different tile than the one that was lifted — there is no single tile that can
-    // reliably see both ends of the press. The table sees all of it.
-    var liftPress by remember { mutableStateOf(LiftPress.None) }
-    val commitGesture = LocalMoveCommitGesture.current
-
-    fun commitMove(pair: Pair<CellKey, CellKey>?) {
-        val (from, to) = pair ?: return
-        liftPress = LiftPress.None
-        onMoveCommitted(from, to)
-        // No focus handling here, deliberately. On the controller path focus already TRACKS the
-        // drop target (see stepMoveTarget), so by the time a move commits it is on the
-        // destination — nothing to move, and nothing that could lag a frame behind the data.
-    }
-
-    // GREEN marks where the lifted tile will land, BLUE where it was picked up from; green wins
-    // when they're the same cell, which is how "put it back where I found it" reads as a real
-    // destination rather than an absence of one.
-    val extras = LocalMappoExtraColors.current
-    fun moveMarkerFor(key: CellKey): Color? = when {
-        !moveState.active -> null
-        // Out of range there is no destination to mark — the tile is going back where it came
-        // from, so the origin reads BLUE and the carried tile carries the red.
-        moveState.target == key && !moveState.outOfRange ->
-            extras.dropZoneValid.copy(alpha = MoveMarkerAlpha)
-        previewOrigin == key -> extras.dropZoneOrigin.copy(alpha = MoveMarkerAlpha)
-        else -> null
-    }
-
-    // Where a tile sits while a move is in flight, as a grid-step offset from its own slot.
-    // This is the swap PREVIEW: the lifted tile slides toward the drop target and the tile
-    // currently there slides back into the vacated slot, so the exchange is visible before
-    // it's committed — and visibly undone the moment the target moves on.
-    fun displacementFor(key: CellKey): DpOffset {
-        // The overlay carries both ends of the exchange; nothing in the grid moves.
-        if (overlayInFlight) return DpOffset.Zero
-        val origin = previewOrigin ?: return DpOffset.Zero
-        val target = previewTarget ?: return DpOffset.Zero
-        if (origin == target) return DpOffset.Zero
-        val (originRow, originCol) = cellAt(origin) ?: return DpOffset.Zero
-        val (targetRow, targetCol) = cellAt(target) ?: return DpOffset.Zero
-        val (row, col) = cellAt(key) ?: return DpOffset.Zero
-        // A mirrored pane lays its slots out right-to-left, so a step toward a higher slot
-        // index moves a tile the other way on screen. Taken from the LIFTED tile's pane: a
-        // carry between the centre card's two halves crosses panes, and the preview follows
-        // the tile being carried.
-        val stepX = (TileWidth + TileGap) * if (paneMirroredFor(origin.row)) -1 else 1
-        val stepY = TileHeight + TileRowGap
-        return when (key) {
-            // The lifted tile rides to the target. On the POINTER path it follows the finger
-            // instead (raw translation in CommandTile), so no grid animation there.
-            origin ->
-                if (moveState.pointerDriven) DpOffset.Zero
-                else DpOffset(stepX * (targetCol - col), stepY * (targetRow - row))
-            // The displaced occupant takes the vacated slot — but only if there IS one.
-            // Dropping onto a row's "+" is an ADD, not a swap, so nothing comes back the
-            // other way.
-            target ->
-                if (commandAt(target) != null) {
-                    DpOffset(stepX * (originCol - col), stepY * (originRow - row))
-                } else DpOffset.Zero
-            else -> DpOffset.Zero
-        }
-    }
-
-    // Keep the drop target on screen. A controller move walks the target with the d-pad and
-    // will happily walk it off the visible slots; there is no free hand to scroll with, so
-    // the table follows the target instead.
-    LaunchedEffect(moveState.target, moveState.active) {
-        val target = moveState.target.takeIf { moveState.active && it?.group == group }
-            ?: return@LaunchedEffect
-        val (row, col) = cellAt(target) ?: return@LaunchedEffect
-        val hScroll = scrollFor(target.row)
-        val stepX = with(density) { (TileWidth + TileGap).toPx() }
-        val stepY = with(density) { (TileHeight + TileRowGap).toPx() }
-        val cellW = with(density) { TileWidth.toPx() }
-        val cellH = with(density) { TileHeight.toPx() }
-        // The scroller's content starts after the table's own top padding, applied INSIDE
-        // verticalScroll. (There is no column-header row any more — see AdvancedTable's KDoc.)
-        val headerH = with(density) { TableTopPadding.toPx() }
-
-        val left = col * stepX
-        if (left < hScroll.value) {
-            hScroll.animateScrollTo(left.roundToInt())
-        } else if (left + cellW > hScroll.value + hScroll.viewportSize) {
-            hScroll.animateScrollTo((left + cellW - hScroll.viewportSize).roundToInt())
-        }
-
-        val top = headerH + row * stepY
-        if (top < vScroll.value) {
-            vScroll.animateScrollTo(top.roundToInt())
-        } else if (top + cellH > vScroll.value + vScroll.viewportSize) {
-            vScroll.animateScrollTo((top + cellH - vScroll.viewportSize).roundToInt())
-        }
-    }
-
-    // Edge-scroll during a FINGER drag: the target is resolved by hit-testing whatever is
-    // under the pointer, so without this a touch user simply cannot reach a slot that isn't
-    // already on screen. Holding near an edge scrolls, and the hit test re-runs each frame so
-    // the target keeps up with the cells moving under a stationary finger.
-    LaunchedEffect(moveState.pointerDriven) {
-        if (!moveState.pointerDriven) return@LaunchedEffect
-        val zone = with(density) { EdgeScrollZone.toPx() }
-        val step = with(density) { EdgeScrollStep.toPx() }
-        while (isActive && moveState.pointerDriven) {
-            withFrameNanos { }
-            val x = moveState.pointerWindow.x
-            // Each pane scrolls on its own, so the finger's x picks which one it is reaching
-            // out of — on the centre card the two halves run in opposite directions.
-            val panes = if (split) {
-                listOf(endViewport to endPane, startViewport to startPane)
-            } else {
-                listOf(startViewport to startPane)
-            }
-            panes.forEach { (viewport, p) ->
-                if (viewport == null) return@forEach
-                if (x < viewport.left - zone || x > viewport.right + zone) return@forEach
-                // Scroll VALUE runs from the glyph outward either way (a mirrored pane's
-                // scroller is reversed), so the edge that increases it is the outward one —
-                // right normally, left when the pane is mirrored.
-                val direction = if (p.mirrored) -1 else 1
-                val delta = when {
-                    x > viewport.right - zone -> step * direction
-                    x < viewport.left + zone -> -step * direction
-                    else -> 0f
-                }
-                if (delta != 0f) {
-                    p.scroll.scrollBy(delta)
-                    moveState.refreshTargetAtPointer()
-                }
-            }
-        }
-    }
-
-    /** The slot indices of a row, laid out in the order they are DRAWN. */
-    fun slotOrder(row: RowCommands, paneMirrored: Boolean): List<Int> {
-        val slots = (0 until rowSlotCount(row.commands.size)).toList()
-        return if (paneMirrored) slots.reversed() else slots
-    }
-
-    // ONE PANE of the card: a frozen glyph column plus the tiles reading outward from it.
-    //
-    // A card normally has one. The CENTRE group has TWO (2026-09-20), meeting at the card's
-    // centre line — its glyphs in the middle with their commands radiating outward, exactly as
-    // its basic-view box reads ([CentreSplit]). Which side a pane's glyphs sit on is its own
-    // [Pane.mirrored], not the card's: the centre card's left pane is mirrored and its right
-    // pane is not.
-    val pane: @Composable (Pane, Modifier) -> Unit = { p, paneModifier ->
-        // On the centre card the two glyph columns meet in the middle, so each drops its INNER
-        // padding to [CentreGlyphInset] — the glyphs cluster on the centre line instead of
-        // sitting a full column's padding apart across the split (Dylan, 2026-09-21).
-        // A centred pane's INNER padding is the one that shrinks — and it is applied as padding
-        // rather than by narrowing the box, so the glyph sits that far from the centre line
-        // instead of merely re-centring in a narrower column (which only moves it half as far).
-        // A mirrored pane's inner edge is its END; a normal one's is its START.
-        val innerPad = if (p.centred) CentreGlyphInset else GlyphColumnPadding
-        val glyphColumn: @Composable () -> Unit = {
-            Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                p.rows.forEach { row ->
-                    Box(
-                        modifier = Modifier
-                            .width(TableGlyphSize + GlyphColumnPadding + innerPad)
-                            .height(TileHeight)
-                            .padding(
-                                start = if (p.mirrored) GlyphColumnPadding else innerPad,
-                                end = if (p.mirrored) innerPad else GlyphColumnPadding,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        InputGlyphs.SubInputGlyph(
-                            source = row.spec.source,
-                            subInputKey = row.spec.subInputKey,
-                            size = TableGlyphSize,
-                        )
-                    }
-                }
-            }
-        }
-        Row(
-            modifier = paneModifier,
-            // A mirrored pane reads toward its glyphs, so it sits at the card's END edge
-            // rather than leaving its gap there (Dylan, 2026-09-20).
-            horizontalArrangement = if (p.mirrored) Arrangement.End else Arrangement.Start,
-        ) {
-            if (!p.mirrored) {
-                glyphColumn()
-                Spacer(Modifier.width(TileGap))
-            }
-            MinputOverflowScroll(
-                state = p.scroll,
-                orientation = Orientation.Horizontal,
-                // A mirrored pane reads outward from a glyph pinned to its right edge, so its
-                // resting position is the scroller's far end — same bargain the basic view's
-                // mirrored rows strike.
-                reverseScrolling = p.mirrored,
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .onGloballyPositioned { p.onViewport(it.boundsInWindow()) },
-            ) {
-                // LAYER 0 — the tiles themselves.
-                Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                    p.rows.forEach { row ->
-                        val spec = row.spec
-                        val subLabel = RemapSections.labelFor(spec.source, spec.subInputKey)
-                        val groupId = bindingGroupIdFor(spec)
-                        val topRow = spec == group.rows.first()
-
-                        Row(
-                            modifier = Modifier.zIndex(
-                                when (spec) {
-                                    previewOrigin?.row -> 10f
-                                    previewTarget?.row -> 5f
-                                    else -> 0f
-                                },
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(TileGap),
-                        ) {
-                            slotOrder(row, p.mirrored).forEach { slot ->
-                                val cellKey = CellKey(group, spec, slot)
-                                val command = row.commands.getOrNull(slot)
-                                // How this command prints — the SAME resolution the basic
-                                // view's rows use, so one binding reads the same way in
-                                // both (see [commandDisplay]).
-                                val display = command?.let {
-                                    commandDisplay(it.binding, listOf(it.output), config)
-                                }
-                                val type = command?.type ?: ActivatorType.FULL_PRESS
-                                val title = "$subLabel · ${type.activatorDisplayLabel()}"
-
-                                CommandTile(
-                                    colors = type.columnColors(),
-                                    // The "+" slot wears no press type: it isn't a command
-                                    // yet, and colouring it would claim one.
-                                    pressType = type.takeIf { command != null },
-                                    output = command?.output,
-                                    label = display?.label,
-                                    outputText = display?.text.orEmpty(),
-                                    showDeviceIcon = display?.glyph != null,
-                                    enabled = editable && groupId != null,
-                                    cellKey = cellKey,
-                                    moveState = moveState,
-                                    carried = moveState.carriedByOverlay(
-                                        key = cellKey,
-                                        hasCommand = command != null,
-                                        hosted = overlayHosted,
-                                    ),
-                                    displacement = displacementFor(cellKey),
-                                    previewOrigin = previewOrigin,
-                                    onCommitMove = { commitMove(it) },
-                                    onControllerLift = { liftPress = it },
-                                    actions = {
-                                        commandCellActions(
-                                            cellKey = cellKey,
-                                            command = command,
-                                            subLabel = subLabel,
-                                            title = title,
-                                            bindingGroupId = groupId,
-                                            overridden = row.overridden,
-                                            editable = editable,
-                                            callbacks = callbacks,
-                                            moveState = moveState,
-                                            onLabel = { labelTarget = it },
-                                            onType = { typeTarget = it },
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .focusRequester(focusHandle(cellKey))
-                                        .then(
-                                            // Top row escapes UP to the header; every other
-                                            // row steps normally.
-                                            if (topRow) {
-                                                Modifier.focusProperties { up = upTarget }
-                                            } else Modifier,
-                                        )
-                                        .then(
-                                            if (focusRequester != null && topRow && slot == 0) {
-                                                Modifier.focusRequester(focusRequester)
-                                            } else Modifier,
-                                        ),
-                                )
-                            }
-                        }
-                    }
-
-                // LAYER 1 — the move markers, drawn OVER every tile (Dylan, 2026-09-25).
-                //
-                // They were underneath until now, on the theory that a marker belongs to the
-                // SLOT rather than to whatever is standing in it. Over the top reads better
-                // during a move: the pair of washes says which tile is going where, instead of
-                // being hidden by the two tiles trading places on top of them.
-                //
-                // Still their own layer rather than a per-cell background: z-order between
-                // tiles is per-Row (zIndex only orders siblings), so a marker drawn on a cell
-                // could still end up under a neighbour sliding across it. Up here nothing can
-                // get over one. Purely decorative — no pointer input, so it takes no touches
-                // off the tiles beneath it.
-                //
-                // While the HOST is drawing the tiles in flight, it draws the markers too: its
-                // overlay sits above this whole card, so a marker down here would be under the
-                // very tiles it is trying to describe. Drawing both would also double the wash.
-                if (!overlayInFlight) Column(verticalArrangement = Arrangement.spacedBy(TileRowGap)) {
-                    p.rows.forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
-                            slotOrder(row, p.mirrored).forEach { slot ->
-                                val marker = moveMarkerFor(CellKey(group, row.spec, slot))
-                                Box(
-                                    modifier = Modifier
-                                        .width(TileWidth)
-                                        .height(TileHeight)
-                                        .then(
-                                            if (marker != null) {
-                                                Modifier
-                                                    .clip(RoundedCornerShape(TileCorner))
-                                                    .background(marker)
-                                            } else Modifier,
-                                        ),
-                                )
-                            }
-                        }
-                    }
-                }
-                }
-            }
-            if (p.mirrored) {
-                Spacer(Modifier.width(TileGap))
-                glyphColumn()
-            }
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                // While a CONTROLLER move is in flight the table owns the WHOLE keyboard:
-                // arrows walk the drop target, B/Escape cancels, and the activate keys confirm.
-                // The activate keys belong here rather than on the focused tile because a held
-                // button auto-repeats while focus moves, so a press and its release can land on
-                // different tiles — no single tile sees both ends of the gesture. Pointer-driven
-                // moves don't take this path; the finger is already saying where to land.
-                .onKeyEvent { event ->
-                    moveModeKeyEvent(
-                        event = event,
-                        moveState = moveState,
-                        // The target may have been carried into another group's table, which
-                        // then owns the keys (focus followed it there).
-                        owns = { it.group == group },
-                        liftPress = liftPress,
-                        onLiftPress = { liftPress = it },
-                        gesture = commitGesture,
-                        onStep = { dRow, dCol -> stepMoveTarget(dRow, dCol) },
-                        onCommit = { commitMove(it) },
-                    )
-                },
-        ) {
-            MinputOverflowScroll(
-                state = vScroll,
-                orientation = Orientation.Vertical,
-                // On the scrollable node, not the container — test scroll-to-node and
-                // accessibility scroll actions both need the semantics to sit where the
-                // scroll modifier is.
-                scrollModifier = Modifier.testTag(editorTableTestTag(group)),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            start = 8.dp,
-                            end = 8.dp,
-                            top = TableTopPadding,
-                            bottom = TableBottomPadding,
-                        ),
-                ) {
-                    if (split) {
-                        CentreSplit(
-                            modifier = Modifier.fillMaxWidth(),
-                            end = { pane(endPane, Modifier) },
-                            start = { pane(startPane, Modifier) },
-                        )
-                    } else {
-                        pane(startPane, Modifier.fillMaxWidth())
-                    }
-                }
-            }
-            // Scrollbars ALONGSIDE the fades and chevrons (Dylan, 2026-09-18) rather than
-            // instead of them: a card is a dense grid inside a viewport that usually can't show
-            // all of it, and the bar is the part that says HOW MUCH more and WHERE — which a
-            // fade at the rim can't. Indicators only; see MinputScrollbar.
-            MinputScrollbar(
-                state = vScroll,
-                orientation = Orientation.Vertical,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(top = TableTopPadding, bottom = TableBottomPadding),
-            )
-        }
-        // Under the body, inset to the table's own margin. Outside the vertical scroller so it
-        // stays at the card's floor instead of scrolling away with the rows it describes — and
-        // one bar PER PANE, since the centre card's halves scroll independently.
-        Row(
-            modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = TableScrollbarGap),
-            horizontalArrangement = Arrangement.spacedBy(CentreSplitGap),
-        ) {
-            if (split) {
-                MinputScrollbar(
-                    state = endPane.scroll,
-                    orientation = Orientation.Horizontal,
-                    reverse = true,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            MinputScrollbar(
-                state = startPane.scroll,
-                orientation = Orientation.Horizontal,
-                // Value 0 is the RIGHT end on a mirrored pane, so its thumb starts there too.
-                reverse = startPane.mirrored,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(TableBottomGap))
-
-        CommandTileDialogs(
-            labelTarget = labelTarget,
-            typeTarget = typeTarget,
-            config = config,
-            callbacks = callbacks,
-            onCloseLabel = { labelTarget = null },
-            onCloseType = { typeTarget = null },
-        )
-    }
-}
 
 /**
  * The verbs one tile's menu offers, wired to the callbacks that carry them out.
@@ -1329,8 +557,8 @@ internal fun CommandTile(
     onControllerLift: (LiftPress) -> Unit,
     actions: () -> List<MinputAction>,
     modifier: Modifier = Modifier,
-    /** How big this tile is and how much it says — the table's, or the basic view's row tile. */
-    look: TileLook = TableTileLook,
+    /** How big this tile is — see [rowTileLook]. */
+    look: TileLook,
     /**
      * **Non-null while the tile is still travelling into place**: how far its chrome has arrived,
      * read in the DRAW phase (Dylan, 2026-09-27).
@@ -1598,7 +826,6 @@ internal fun CommandTile(
                 label = label,
                 outputText = outputText,
                 showDeviceIcon = showDeviceIcon,
-                look = look,
             )
         }
 
@@ -1678,8 +905,8 @@ internal fun MoveOverlay(
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     modifier: Modifier = Modifier,
-    /** The size the tiles in flight are drawn at — whichever tile the user actually picked up. */
-    look: TileLook = TableTileLook,
+    /** The size the tiles in flight are drawn at. */
+    look: TileLook,
 ) {
     val live = moveState.origin
     // A move that has been called off is still on screen: its tiles fly home rather than
@@ -1861,7 +1088,7 @@ private fun FloatingTile(
     command: RowCommand,
     config: ControllerConfig?,
     position: Offset,
-    look: TileLook = TableTileLook,
+    look: TileLook,
     /** Painted over the tile — the cancel signal, when the carry has left the grid's reach. */
     wash: Color? = null,
 ) {
@@ -1896,7 +1123,6 @@ private fun FloatingTile(
             label = display.label,
             outputText = display.text,
             showDeviceIcon = display.glyph != null,
-            look = look,
         )
     }
 }
@@ -1933,7 +1159,7 @@ internal fun TileChrome(
             Icon(
                 Icons.Filled.Add,
                 contentDescription = null,
-                modifier = Modifier.size(if (look.compact) RowTilePlusSize else EmptyTilePlusSize),
+                modifier = Modifier.size(RowTilePlusSize),
                 tint = colors.plus,
             )
         }
@@ -1953,7 +1179,7 @@ private fun tileOutline(
     container: Color,
     defined: Boolean,
     shape: RoundedCornerShape,
-    corner: Dp = TileCorner,
+    corner: Dp,
 ): Modifier =
     if (defined) {
         Modifier.border(minputBevelBorder(container, corner), shape)
@@ -1985,93 +1211,27 @@ private fun TileContent(
     label: String?,
     outputText: String,
     showDeviceIcon: Boolean,
-    look: TileLook = TableTileLook,
 ) {
     if (output == null) {
         // The row's create affordance. A plus and nothing else: it is a slot, not a command.
         Icon(
             Icons.Filled.Add,
             contentDescription = null,
-            modifier = Modifier.size(if (look.compact) RowTilePlusSize else EmptyTilePlusSize),
+            modifier = Modifier.size(RowTilePlusSize),
             // Alpha rides in the palette color itself — no extra .alpha() here, or the
             // value in Theme.kt would stop being what renders.
             tint = colors.plus,
         )
         return
     }
-    if (look.compact) {
-        RowTileContent(
-            colors = colors,
-            pressType = pressType,
-            output = output,
-            label = label,
-            outputText = outputText,
-            showDeviceIcon = showDeviceIcon,
-        )
-        return
-    }
-    val pressGlyph = pressType?.pressIcon()
-    Box(modifier = Modifier.fillMaxSize().padding(horizontal = TileContentPadding)) {
-        // The device glyph belongs to the COMMAND line, not to the tile (Dylan, 2026-09-19):
-        // spanning both rows it read as an icon for the label as well, and left the label hanging
-        // off the start of the thing it names. The label now sits centred OVER its command.
-        Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth()
-                // Reserved symmetrically, so the name stays centred in the TILE. Regular Press
-                // has no glyph and no gutter, and takes the whole width.
-                .padding(horizontal = if (pressGlyph != null) TilePressGlyphSize + TilePressGlyphGap else 0.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (label != null) {
-                Text(
-                    text = label.uppercase(),
-                    style = minputOverlineTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                if (showDeviceIcon) {
-                    InputGlyphs.outputPainter(output)?.let { painter ->
-                        Icon(
-                            painter,
-                            contentDescription = null,
-                            modifier = Modifier.size(TileOutputGlyphSize),
-                            tint = LocalContentColor.current,
-                        )
-                        Spacer(Modifier.width(MinputGlyphLabelGap))
-                    }
-                }
-                Text(
-                    text = outputText,
-                    style = minputMiniTextStyle(),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    // ALWAYS one line, label or no label. A wrapped command pushed the
-                    // glyph off-centre and made a labelled tile and an unlabelled one
-                    // read as different components; ellipsis is the honest overflow.
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (pressGlyph != null) {
-            Icon(
-                pressGlyph,
-                contentDescription = pressType.columnLabel(),
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = TilePressGlyphStartBias)
-                    .size(TilePressGlyphSize),
-                tint = colors.icon,
-            )
-        }
-    }
+    RowTileContent(
+        colors = colors,
+        pressType = pressType,
+        output = output,
+        label = label,
+        outputText = outputText,
+        showDeviceIcon = showDeviceIcon,
+    )
 }
 
 /**
@@ -2129,7 +1289,8 @@ private fun RowTileContent(
 
 /**
  * The tile menu's verbs. Icons, no helper text (per the design) — these are self-evident, and
- * the two-line [RichMenuItem] form is reserved for actions that genuinely need tutorializing.
+ * the two-line icon + title + helper form is reserved for actions that genuinely need
+ * tutorializing.
  *
  * Paste stays LISTED but greyed when nothing has been copied, so the menu's shape doesn't
  * shift between cells.
@@ -2362,9 +1523,6 @@ internal fun MoveModeState<CellKey>.carriedByOverlay(
         (hasCommand && key == flightHovered && flightHovered != flightOrigin)
 }
 
-/** The scrolling table of [group]'s editor — one per group in the scene. */
-internal fun editorTableTestTag(group: RemapSimpleGroup): String = "group-editor-table:${group.name}"
-
 /** Keys that activate a focused tile. Mirrors what Compose's own `clickable` accepts, plus the
  *  gamepad A button so a controller's primary action works without a d-pad center. */
 /** The keys that walk a move's drop target — and, before a hold has ripened, the ones that mean
@@ -2394,116 +1552,7 @@ internal fun RemapSimpleGroup.headerLabel(): String = when (this) {
     RemapSimpleGroup.RIGHT_UTILITY -> "Right Utility"
 }
 
-/**
- * Does this group's table read right-to-left — glyph column on the card's RIGHT, press columns
- * running outward to the left?
- *
- * The groups on the LEFT of the controller do (Dylan, 2026-09-17), so that a card and the basic
- * view box it grew out of have the same shape, and so the two flanks read as each other's
- * reflection around the controller between them — the same rule [RemapSimpleGroup.anchorFor]
- * applies to the basic view's rows. Since 2026-09-26 every group is on a flank (the utility
- * pair split per side), so every group mirrors with the column it belongs to.
- */
-internal fun RemapSimpleGroup.editorMirrored(): Boolean = when (this) {
-    RemapSimpleGroup.LEFT_SHOULDER, RemapSimpleGroup.DPAD, RemapSimpleGroup.LEFT_STICK,
-    RemapSimpleGroup.LEFT_UTILITY -> true
-    else -> false
-}
 
-/**
- * The header's mode indicator — "MODE: <input mode>", with a filled downward arrow when it can
- * be changed.
- *
- * It replaced the mode PILL on 2026-09-18 (Dylan). The pill made a second button of what is
- * really the group's own caption, sitting beside the group identity it describes; this is the
- * indicator itself, made to open the menu. A card that can't be edited from here — a resting one
- * in the zoomed scene, a layer view, a source with only one valid mode — keeps the caption and
- * drops the arrow, so the affordance is never claimed where there is nothing to pick.
- */
-@Composable
-private fun ModeDropdownLabel(
-    source: InputSource,
-    // Null when the group has no binding group yet, or its source has no modes at all: the
-    // caption then states the device default and opens nothing.
-    currentMode: BindingMode?,
-    validModes: List<BindingMode>,
-    /** The group's own name. Normally only a screen reader sees it — the glyph states the
-     *  group on screen — but a group with no mode to offer prints it as the caption. */
-    identity: String,
-    /** Does this caption say what MODE the group is in? False for a group whose mode is not the
-     *  user's to pick (the utility buttons), which prints its own name instead. It keeps the
-     *  same glyph, treatment and inset either way, so the captions line up across the scene. */
-    statesMode: Boolean,
-    enabled: Boolean,
-    onPick: (BindingMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var open by remember { mutableStateOf(false) }
-    val interaction = remember { MutableInteractionSource() }
-    val color = MaterialTheme.colorScheme.onSurfaceVariant
-    val caption = if (statesMode) {
-        "$ModeLabelPrefix ${(currentMode?.displayNameFor(source) ?: ModeLabelDefault).uppercase()}"
-    } else {
-        identity.uppercase()
-    }
-    Box {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = modifier
-                .clip(RoundedCornerShape(ModeLabelCorner))
-                .then(
-                    if (enabled) {
-                        Modifier.clickable(
-                            interactionSource = interaction,
-                            indication = minputIndication(),
-                            onClickLabel = "Change input mode",
-                        ) { open = true }
-                    } else Modifier,
-                )
-                .padding(horizontal = ModeLabelPadding, vertical = ModeLabelVerticalPadding),
-        ) {
-            // The Kenney prompt is single-color, so it tints down to the overline treatment
-            // safely.
-            Icon(
-                InputGlyphs.sourcePainter(source),
-                contentDescription = identity,
-                modifier = Modifier.size(MinputPillIconSize),
-                tint = color,
-            )
-            Spacer(Modifier.width(MinputGlyphLabelGap))
-            Text(
-                text = caption,
-                style = minputOverlineTextStyle(),
-                color = color,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (enabled) {
-                Spacer(Modifier.width(ModeArrowGap))
-                Icon(
-                    // The STANDARD Material dropdown arrow. A dropdown wears the platform's own
-                    // indicator, never a shape borrowed from elsewhere and rotated into place
-                    // (Dylan, 2026-09-19).
-                    Icons.Filled.ArrowDropDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(ModeDropdownArrowSize),
-                    tint = color,
-                )
-            }
-        }
-        if (currentMode != null) {
-            MinputDropdownMenu(
-                expanded = open,
-                onDismissRequest = { open = false },
-                current = currentMode,
-                options = validModes,
-                optionLabel = { it.displayNameFor(source) },
-                onPick = onPick,
-                optionIcon = { InputGlyphs.modePainter(it) },
-            )
-        }
-    }
-}
 
 // ── Shared press-type vocabulary (moved from the retired detail-pane editor) ─────────────────
 
@@ -2563,156 +1612,18 @@ internal fun ActivatorType.pressIcon(): ImageVector? = when (this) {
     ActivatorType.SOFT_PRESS -> Icons.Filled.Adjust
 }
 
-/** The shared kebab ("more" button) used by the editor header. */
-@Composable
-internal fun RowKebab(
-    onClick: () -> Unit,
-    contentDescription: String = "Options",
-    modifier: Modifier = Modifier,
-) {
-    MinputIconButton(
-        icon = Icons.Filled.MoreVert,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        modifier = modifier,
-    )
-}
-
-/** A `DropdownMenuItem` with a leading icon and two-line title + helper text — the
- *  tutorializing form, for menus whose actions aren't self-evident. Self-evident verb menus
- *  use `MinputActionMenu` instead. [titleContent] swaps in a custom title composable; [title]
- *  still names the item for readers of the code. */
-@Composable
-internal fun RichMenuItem(
-    title: String,
-    helper: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    enabled: Boolean = true,
-    selected: Boolean = false,
-    titleContent: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    androidx.compose.material3.DropdownMenuItem(
-        enabled = enabled,
-        leadingIcon = { Icon(icon, contentDescription = null, tint = tint) },
-        text = {
-            Column {
-                if (titleContent != null) {
-                    titleContent()
-                } else {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                Text(helper, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        trailingIcon = if (selected) {
-            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-        } else null,
-        onClick = onClick,
-    )
-}
-
-// Header height is the family standard shared with the panel surfaces.
-private val EditorHeaderHeight = MinputPanelHeaderHeight
-
-/** What the header's mode caption is prefixed with. Uppercase at the source: the caption is set
- *  in the overline treatment, and the mode's own name is uppercased beside it. */
-private const val ModeLabelPrefix = "MODE:"
-
-/** The mode caption's dropdown arrow. Material's own glyph inks well inside its box, so it
- *  takes the pill family's icon scale rather than the caption's cap height. */
-private val ModeDropdownArrowSize = MinputPillIconSize
-
-/** What the caption says when the group has no mode of its own. */
-private const val ModeLabelDefault = "Default"
-
-/** Air between the caption and its arrow. Material's glyph carries its own generous padding, so
- *  a normal label gap reads as a gulf (Dylan, 2026-09-19). */
-private val ModeArrowGap = 1.dp
-
-/** Hit area around the mode caption: enough for the press ripple to read as a button's without
- *  the caption drifting from the identity it follows. */
-private val ModeLabelPadding = 6.dp
-private val ModeLabelVerticalPadding = 3.dp
-private val ModeLabelCorner = 6.dp
-
 // ── Table metrics ────────────────────────────────────────────────────────────────────────────
 
-/** GOVERNING VARIABLE for column width. Every cell, and the header above it, is exactly this
- *  wide — a table whose columns flexed to content would put the same press type at a different
- *  x-offset on every row, destroying the scan the table exists to enable. */
-private val TileWidth = 134.dp
-
-/** Cell height. Taller than the old 38dp command rows because a cell now stacks an overline
- *  label above the output text where the row had a separate label field beside it — and taller
- *  again on 2026-09-21 (Dylan), narrowing in the same pass: a tile reads as a chunkier key that
- *  way, and more of them fit across a row. */
-private val TileHeight = 46.dp
-
-/** Horizontal gap between columns, and between the glyph column and the body. */
-private val TileGap = 4.dp
-
-/** VERTICAL gap BETWEEN rows. Separate from [TileGap] on purpose: the rows want more air than
- *  the columns do — it gives the enlarged input glyphs room and uses up vertical space the
- *  full-height panel has going spare.
- *
- *  Strictly between: it is applied by an inner Column that holds ONLY the rows, so raising it
- *  can't also push the header away or pad the bottom of the table. Those are the table's own
- *  top/bottom padding, and they stay put.
- *
- *  Tightened from 16dp on 2026-09-21 (Dylan), in the same pass that made the tiles taller: the
- *  rows carry more weight of their own now and needed less air between them. */
-private val TileRowGap = 11.dp
-
-/** Input glyphs render LARGER here than in the old rows — with the press-type word gone from
- *  the cell, the glyph is the row's only identity, so it carries the weight of one. */
-private val TableGlyphSize = 38.dp
-
-/** Breathing room either side of the input glyph, inside the frozen column. */
-private val GlyphColumnPadding = 11.dp
-
-/** The frozen glyph column — derived, so widening the glyph or its padding can't leave the
- *  column too narrow for what it holds. */
-private val GlyphColumnWidth = TableGlyphSize + GlyphColumnPadding * 2
-
-/** The INNER padding of a glyph column on the centre card, where two panes meet: the two glyph
- *  columns sat a full [GlyphColumnPadding] apart on either side of [CentreSplitGap], which put a
- *  visible gulf down the middle of the card (Dylan, 2026-09-21; tightened again the same day).
- *  The outer side keeps its full padding, so only the meeting edge closes up. */
-private val CentreGlyphInset = 2.dp
-
-/** FULLY rounded (Dylan, 2026-09-18): half the tile's height, so a cell is a capsule. An
- *  absolute radius rather than a percentage, per the minput rule — a percentage turns anything
- *  taller than it is wide into a lozenge. */
-private val TileCorner = TileHeight / 2
-private val TileContentPadding = 8.dp
 private val TileOutputGlyphSize = 14.dp
 
 /** The PRESS-TYPE glyph leading a tile. Larger than the output's device glyph (Dylan,
  *  2026-09-20): it identifies the tile, where the device glyph only qualifies its name. */
 private val TilePressGlyphSize = 19.dp
 
-/** Air between that glyph and the command it fronts. */
-private val TilePressGlyphGap = 6.dp
-
-/** How far in from the tile's content edge the press glyph sits (Dylan, 2026-09-21). Flush
- *  against a capsule's start it read as crowded by the curve; the glyphs ink well inside their
- *  boxes, so a couple of dp buys the optical inset without a visible gap. */
-private val TilePressGlyphStartBias = 3.dp
-
 /** The press-type picker's row rhythm. */
 private val TypeDialogTitleGap = 10.dp
 private val TypeDialogRowCorner = 8.dp
 private val TypeDialogRowPadding = 8.dp
-
-/** The row's "+": present enough to invite a tap, faint enough that it doesn't read as a
- *  command. Its COLOR (and opacity) comes from `PressTypePalette`. */
-private val EmptyTilePlusSize = 22.dp
 
 /** How strongly the "+" tile's outline reads. A hairline ring (Dylan, 2026-09-21) that gives the
  *  create affordance a FOOTPRINT — a bare glyph floating in the row didn't say how big the thing
@@ -2749,46 +1660,6 @@ private const val MoveWashAlpha = 0.55f
  *  it, and how far it scrolls per frame while it stays there. */
 private val EdgeScrollZone = 28.dp
 private val EdgeScrollStep = 6.dp
-
-/**
- * Vertical breathing room inside the table.
- *
- * Split top from bottom on 2026-09-21 (Dylan): the caption above and the first row of tiles sat
- * too far apart, and the two were one value, so closing the gap under the header also shaved the
- * air under the last row.
- */
-private val TableTopPadding = 2.dp
-private val TableBottomPadding = 6.dp
-
-/** Air under the table, so the last row isn't flush with the card's edge. */
-private val TableBottomGap = 4.dp
-
-/** Gap between the table's last row and the horizontal scrollbar beneath it. The bar came back
- *  on 2026-09-18 (Dylan), joining the fade + chevron cues rather than replacing them. */
-private val TableScrollbarGap = 3.dp
-
-/**
- * The height the advanced editor wants for [group] — header + divider + the table's own rows.
- *
- * Computable rather than measured because every part of the table is a fixed size, which is
- * what lets the editor's HOST size itself to the content instead of filling the screen (a
- * two-row group used to leave most of a screen empty below it). Callers should still clamp to
- * the space available; the table scrolls vertically if it doesn't fit.
- *
- * **Floored at [MinTableRows] rows** (Dylan, 2026-09-20): a one-row group — either stick — made
- * a card barely taller than a single tile, which is a small thing to aim a controller at and a
- * hard one to pan to. A card is at least two rows tall whether it has two rows or not.
- */
-internal fun advancedEditorHeight(group: RemapSimpleGroup): Dp {
-    val rows = group.rows.size.coerceAtLeast(MinTableRows)
-    val table = TableTopPadding + TableBottomPadding +
-        TileHeight * rows + TileRowGap * (rows - 1).coerceAtLeast(0)
-    return EditorHeaderHeight + table +
-        TableScrollbarGap + MinputScrollbarThickness + TableBottomGap
-}
-
-/** The shortest a card may be, in tile rows. See [advancedEditorHeight]. */
-private const val MinTableRows = 2
 
 // ── The basic view's tiles (edit mode, 2026-09-22) ───────────────────────────────────────────
 
@@ -2839,31 +1710,28 @@ private val RowTilePlusSize = 14.dp
 private val RowTileTintedText = Color.White
 
 /**
- * **How big a tile is, and how much it says.**
+ * **How big a tile is** — one shape, asked for by every surface that draws one.
  *
- * The basic view's edit mode renders the SAME [CommandTile] the advanced table does (Dylan,
- * 2026-09-22) — same menu, same move, same press-type palette — at a smaller size and with less
- * on its face. That parity is the point of the experiment: if a tile in a row behaves like a
- * tile in a table, the table stops being a place you have to go.
+ * There used to be two: the advanced table's (two lines, a press-type glyph, room for both) and
+ * the row's, the experiment rendering the SAME [CommandTile] at a smaller size with less on its
+ * face. The advanced view is gone (2026-09-27), so what is left is the row's, and its face says
+ * ONE line — the user's label if there is one, else the command's name
+ * ([CommandDisplay.line], which is what the resting row already showed) — with no press-type
+ * glyph, the press type being carried by the tile's colour alone.
  *
- * [compact] is the "less on its face" half: ONE line (the user's label if there is one, else the
- * command's name — [CommandDisplay.line], which is what the resting row already showed) and no
- * press-type glyph, the press type being carried by the tile's colour alone.
+ * Kept as a value rather than folded into constants because the tile is drawn in three places
+ * (the grid, the move overlay's floating copy, the move marker) and they must never disagree.
  */
 internal class TileLook(
     val width: Dp,
     val height: Dp,
     val corner: Dp,
-    val compact: Boolean,
 )
 
-/** The advanced table's tile: two lines, a press-type glyph, room for both. */
-internal val TableTileLook = TileLook(TileWidth, TileHeight, TileCorner, compact = false)
-
-/** The basic view's tile: one line, at the row height both modes share. */
+/** The one tile shape: a row's, at the row height both the resting rows and the tiles share. */
 @Composable
 internal fun rowTileLook(): TileLook {
     val height = rowTileHeight()
-    return remember(height) { TileLook(RowTileWidth, height, height / 2, compact = true) }
+    return remember(height) { TileLook(RowTileWidth, height, height / 2) }
 }
 

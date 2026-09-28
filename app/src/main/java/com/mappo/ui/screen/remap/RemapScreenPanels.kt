@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Tune
@@ -59,6 +60,7 @@ import com.mappo.R
 import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.MoveCommitGesture
+import com.mappo.data.settings.MinVisibleTiles
 import com.mappo.data.settings.TileReveal
 import com.mappo.data.settings.TextSize
 import com.composables.icons.lucide.Lucide
@@ -445,6 +447,45 @@ internal fun TileRevealRow(current: TileReveal, onPick: (TileReveal) -> Unit) {
             optionLabel = { it.label },
             onPick = onPick,
             onClickLabel = "Change which groups show tiles",
+        )
+    }
+}
+
+/**
+ * **How far opening an input group pans the view, in tiles** — the floor under the "frame the
+ * group" rule, so a group already on screen still answers being opened with some camera
+ * movement. See [MinVisibleTiles].
+ *
+ * Global rather than layout-scoped, so it sits in the wordmark drawer beside its neighbours.
+ */
+@Composable
+internal fun MinVisibleTilesRow(current: MinVisibleTiles, onPick: (MinVisibleTiles) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .padding(horizontal = MinputPillContentPadding),
+    ) {
+        Icon(
+            Icons.Filled.Straighten,
+            contentDescription = null,
+            modifier = Modifier.size(PanelRowIconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Minimum pan on open",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
+        MinputPillDropdown(
+            current = current,
+            options = MinVisibleTiles.entries,
+            optionLabel = { it.label },
+            onPick = onPick,
+            onClickLabel = "Change how far opening a group pans the view",
         )
     }
 }

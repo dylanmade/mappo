@@ -112,11 +112,12 @@ private fun shizukuOutputInGroup(group: com.mappo.data.model.steam.BindingGroupG
     }
 
 /**
- * The Remap Controls screen (2026-07): set/layer tabs on top, then the simplified view — group
- * boxes around the controller image, with the tapped box morphing in place into the advanced
- * group editor (`RemapGroupEditor`); the whole band rides one plate pod. The planned mapping
- * wizard (the "Map" CTA) becomes the primary mapping flow later. (The Inherit/Overlay/Gyro
- * strip that used to close the view retired 2026-08-30 — see RemapSimpleView's KDoc.)
+ * The Remap Controls screen (2026-07): the identity/sets bar on top, then the controls view —
+ * group boxes around the controller image, each one's rows turning into command tiles in place
+ * when it is selected (`RemapSimpleView` / `RemapStage`). The separate advanced editor those boxes
+ * used to grow into was retired 2026-09-27. The planned mapping wizard (the "Map" CTA) becomes the
+ * primary mapping flow later. (The Inherit/Overlay/Gyro strip that used to close the view retired
+ * 2026-08-30 — see RemapSimpleView's KDoc.)
  *
  * Command picking still navigates to the full-screen picker and pops back with [pickerResult];
  * binding edits ride the same callbacks the previous incarnations used.
@@ -187,7 +188,7 @@ fun RemapControlsScreen(
         showDeviceInitials: Boolean,
     ) -> Unit = { _, _, _, _ -> },
     onDeleteInputRow: (bindingId: Long) -> Unit = {},
-    // ── Advanced-table command ops (the group editor's table; see its command-ops block) ──
+    // ── Command ops (see ControllerConfigRepository's input-row block) ──
     // [onAddRowCommand] is the one async shape here: creating the command may have to hit the
     // database before there's a bindingId to open the command picker against.
     onAddRowCommand: (
@@ -446,7 +447,7 @@ fun RemapControlsScreen(
             val mode = groupClipboard?.mode
             if (settingsGroupId != null && mode != null) gatedSetBindingGroupMode(settingsGroupId, mode)
         },
-        // The advanced header's Reset had a callback that was never wired to a repository op
+        // The retired card header's Reset had a callback that was never wired to a repository op
         // (it did nothing); both menus now reach the real reset.
         onResetGroups = onResetBindingGroups,
         onResetGroup = { onResetBindingGroups(listOf(it)) },

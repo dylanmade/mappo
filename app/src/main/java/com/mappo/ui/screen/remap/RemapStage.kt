@@ -70,6 +70,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -96,65 +97,55 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Settings
+import com.mappo.ui.minput.MinputAction
+import com.mappo.ui.minput.MinputActionMenu
+import com.mappo.ui.minput.MinputMenuPlacement
+import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
 
 /**
- * The remap controls view — basic AND advanced — as ONE set of elements that zoom between two
- * geometries.
+ * The remap controls view: the controller's own 3 × 3 grid, and every group's commands edited in
+ * place on it.
  *
- * **This is a real zoom, not a transition between two screens** (Dylan, 2026-09-17, after
- * frame-by-frame review of the first attempt): "it should not be a facsimile of zooming; it
- * should be an actual smooth zoom using the existing elements". The first cut kept the basic
- * plate and the zoomed scene as separate layers and crossfaded them while both scaled — which
- * is exactly what it looked like. There is now one plate, one controller image, and one card
- * per input group, and they travel:
- *
- * - every element has a REST rect (the basic 3 × 3 grid) and a ZOOM rect (the advanced scene
- *   under a camera parked on the open group), and its live rect is the two interpolated by
- *   `progress`. Nothing is created or destroyed on the way;
- * - a card's CONTENTS are measured once at their own natural size — the basic summary rows at
- *   rest size, the advanced table at card size — and placed through a scaling layer, so they
- *   zoom like the vector artwork they are instead of re-laying out every frame. The two
- *   crossfade over the middle of the travel;
- * - the controller image shares one aspect ratio across both geometries, so it scales
- *   uniformly rather than re-fitting.
+ * **There is one view now** (Dylan, 2026-09-27: "I am all in on this experimental view/edit mode,
+ * which means I think we can finally ditch any code related to the former Advanced view"). Until
+ * then this stage was a real ZOOM — every element carrying a REST rect in the grid and a ZOOM rect
+ * in a scene under a camera parked on one group's card, with its live rect the two interpolated —
+ * because the basic view and a separate advanced editor were being compared against each other on
+ * the device. Edit mode won, so the zoom, the camera, the scene geometry (RemapZoomScene.kt), the
+ * cards and the advanced tables are all gone; what the zoom taught the stage stayed, because edit
+ * mode needed exactly the same things: one move state spanning every group, one focus handle per
+ * cell, and a stepper that crosses between them.
  *
  * ```
- *  REST (progress 0)                     ZOOM (progress 1, camera on the d-pad)
- *  ┌──────────────────────────┐          ┌──────────────────────────┐
- *  │  LT│RT      ▲       LB│RB│          │ D-PAD table         │ ◀── controller
- *  │ dpad│face  ███  face│   │    ⟶      │ (the same card,     │     (the same
- *  │  LS│ util │RS        │   │          │  grown)             │      image, grown)
- *  └──────────────────────────┘          └──────────────────────────┘
+ *  ┌──────────────────────────┐        ┌──────────────────────────┐
+ *  │  LT│RT      ▲       LB│RB│        │ LT│RT     ▲      LB│RB   │
+ *  │ dpad│face  ███  face│   │   tap   │ ▢▢▢│     ███         │   │
+ *  │  LS│ util │RS        │   │   ⟶     │ ▢▢▢│ (tiles)         │   │
+ *  └──────────────────────────┘        └──────────────────────────┘
  * ```
  *
- * The REST grid is a 3 × 3 matrix: the two flanks, the controller between them, the utility
- * group under it. Every cell ANCHORS TOWARD THE CENTRE one (Dylan, 2026-09-17) — the top band
- * sits on the bottom of its row, the bottom band on the top of its own, and each flank hugs its
- * inner edge — so the eight boxes cluster around the controller instead of being flung to the
- * four corners of the plate.
+ * The grid is a 3 × 3 matrix: the two flanks, the controller between them, the utility group under
+ * it. Every cell ANCHORS TOWARD THE CENTRE one (Dylan, 2026-09-17) — the top band sits on the
+ * bottom of its row, the bottom band on the top of its own, and each flank hugs its inner edge —
+ * so the eight boxes cluster around the controller instead of being flung to the four corners.
  *
- * The ZOOM geometry, the camera and the navigation map live in RemapZoomScene.kt.
+ * What a group's rows turn into, and how, is [EditReveal] and the rows themselves
+ * (RemapSimpleView.kt); what this file owns is the GRID they sit in, the one scroller under it,
+ * and the travels that keep the view still while they change shape ([EditMorphPlan],
+ * [ReframePlan]).
  */
 @Composable
 internal fun RemapStage(
-    // The group the camera is on, or null for the plain basic view. Non-null through a close
-    // animation too: the host clears it once the travel is over.
-    focus: RemapSimpleGroup?,
-    progress: () -> Float,
-    // False while a zoom is travelling. Expensive per-frame chrome (the blurred card shadows,
-    // which re-rasterize on every size change) is skipped until it settles.
-    settled: Boolean,
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
     callbacks: RemapGroupEditorCallbacks,
-    /** A group box was activated — in the experiment's wiring, enter EDIT MODE on it. */
+    /** A group box was activated — enter EDIT MODE on it. */
     onOpenGroup: (RemapSimpleGroup) -> Unit,
-    /** A group box was HELD — zoom into its advanced card. The way into the separate view while
-     *  edit mode is being tried out against it (Dylan, 2026-09-22). */
-    onOpenAdvanced: (RemapSimpleGroup) -> Unit,
-    onLookAt: (RemapSimpleGroup) -> Unit,
-    onClose: () -> Unit,
     /** The cursor entered this group — in edit mode, what makes it the group revealed. */
     onGroupFocused: (RemapSimpleGroup) -> Unit = {},
     /** A tile was lifted, or put down. */
@@ -189,15 +180,12 @@ internal fun RemapStage(
     seatCommand: Long? = null,
     /** Claim a command for the cursor, or clear the claim with null. */
     onSeatCommand: (Long?) -> Unit = {},
-    // One-shot: the basic box that should reclaim controller focus (the zoom just collapsed
-    // back into it, or the screen is being seated for the first time).
+    // One-shot: the box that should reclaim controller focus (edit mode was just left, or the
+    // screen is being seated for the first time).
     focusSeatGroup: RemapSimpleGroup? = null,
     onFocusSeated: () -> Unit = {},
-    // Landing spot for controller focus inside the opened group's table.
-    entryFocus: FocusRequester? = null,
 ) {
     val groups = remember { RemapSimpleGroup.values().toList() }
-    val zoomed = focus != null
     // Aliases for the three things the whole stage asks of the reveal. `editGroup` is the group
     // the CURSOR is in — which, when only one group reveals its tiles, is the group revealed.
     val editing = reveal.editing
@@ -211,6 +199,9 @@ internal fun RemapStage(
     // Frames a group when its tiles change — a tile added, cleared or carried in. Declared up
     // here because the cursor-seating effects below are what claim it. See [ReframePlan].
     val reframe = remember { ReframePlan() }
+    /** Which group's action menu is up, if any — one at a time, so it lives here rather than in
+     *  each box. Summoned by HOLDING a group, which is what used to open the advanced view. */
+    var menuGroup by remember { mutableStateOf<RemapSimpleGroup?>(null) }
     val cellFocus = remember { mutableStateMapOf<CellKey, FocusRequester>() }
     val focusHandle: (CellKey) -> FocusRequester = { key ->
         cellFocus.getOrPut(key) { FocusRequester() }
@@ -448,12 +439,28 @@ internal fun RemapStage(
     ) {
         val viewportW = maxWidth
         val viewportH = maxHeight
-        val scene = remember(viewportW, viewportH, aspect) { sceneGeometry(viewportW, viewportH, aspect) }
         val density = LocalDensity.current
         // The window's own size in pixels. The stage measures against THIS rather than its
         // incoming constraints, which the body scroller leaves unbounded across.
         val viewportWPx = with(density) { viewportW.roundToPx() }
         val viewportHPx = with(density) { viewportH.roundToPx() }
+        /**
+         * **The narrowest region opening a group may settle for** — the minimum-visible-tiles
+         * floor in pixels (see [com.mappo.data.settings.MinVisibleTiles]).
+         *
+         * "Automatic" asks the WINDOW's shape, not this box's: the stage is always wider than it
+         * is tall once the bars have taken their share, so its own aspect says nothing about
+         * whether the app is running 1:1 or expanded. It is a plus-the-box-padding figure because
+         * the widths it is compared against are box widths.
+         */
+        val windowAspect = LocalConfiguration.current.let { config ->
+            if (config.screenHeightDp <= 0) 1f else config.screenWidthDp.toFloat() / config.screenHeightDp
+        }
+        val minFramedSpan = with(density) {
+            val tiles = LocalMinVisibleTiles.current.countFor(squareScreen = windowAspect <= SquareWindowAspect)
+            val table = tiledTableWidth(tiles)
+            if (table <= 0) 0 else table + GroupBoxPaddingX.roundToPx() * 2
+        }
         // The BODY's one scroller. Whether the right stick belongs to it is not asked here any
         // more: every scroller that can scroll puts itself forward and the arbiter picks (see
         // [com.mappo.ui.component.StickScrollArbiter]). Zoomed, this measures exactly one
@@ -552,164 +559,6 @@ internal fun RemapStage(
             if (bodyScroll.value == 0) bodyScroll.scrollTo(centre.coerceIn(0, max))
         }
 
-        // The camera: where the scene sits under the viewport once zoomed. Opening SNAPS it (the
-        // zoom itself carries that motion); moving between groups while zoomed PANS.
-        val camera = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
-        var cameraSeated by remember { mutableStateOf(false) }
-        val cameraTarget = remember(scene, focus) {
-            val group = focus ?: return@remember null
-            with(density) {
-                val rect = scene.cards.getValue(group)
-                Offset(
-                    x = cameraAxis(rect.x.toPx(), rect.width.toPx(), viewportW.toPx(), scene.width.toPx()),
-                    y = cameraAxis(rect.y.toPx(), rect.height.toPx(), viewportH.toPx(), scene.height.toPx()),
-                )
-            }
-        }
-        /**
-         * **Has the user taken the camera into their own hands?**
-         *
-         * The camera parks on a group, which is right for a d-pad and wrong for a finger: a
-         * canvas that keeps re-centring itself on the nearest group fights every drag (Dylan,
-         * 2026-09-21). So parking is a GAMEPAD behaviour. A pan hands the camera to the user and
-         * it stays theirs — the view is a free canvas, and each drag leaves it exactly where they
-         * let go — until the gamepad is used again, at which point the camera is handed back and
-         * resumes following focus.
-         *
-         * Note it is the PAN that flips this, not touch in general: tapping a tile, opening a
-         * menu, scrolling a table all leave the camera doing what it was doing.
-         */
-        var touchNavigating by remember { mutableStateOf(false) }
-        LaunchedEffect(cameraTarget) {
-            val target = cameraTarget ?: run {
-                cameraSeated = false
-                touchNavigating = false
-                return@LaunchedEffect
-            }
-            // Seating the camera on open is not "following focus" — it is where the zoom lands —
-            // so it happens either way.
-            if (!cameraSeated) {
-                cameraSeated = true
-                camera.snapTo(target)
-            } else if (!touchNavigating) {
-                camera.animateTo(target, tween(CameraMillis, easing = FastOutSlowInEasing))
-            }
-        }
-
-        // ── Touch panning (2026-09-21, Dylan) ────────────────────────────────────────────────
-        //
-        // The camera parks on a GROUP, which is the right model for a d-pad: it follows focus,
-        // and there is no free-roaming cursor to get lost with. A finger has no focus to follow,
-        // so that left touch users tapping the sliver of a neighbouring card to get to it, when
-        // the instinct is to drag the scene. The scene is now draggable — the camera is the same
-        // camera and obeys the same [clampCameraAxis] bounds, so both ways of navigating reach
-        // exactly the same views, and nothing about the gamepad path changes.
-        val panScope = rememberCoroutineScope()
-        val panEnabled = zoomed && !moveState.active
-        fun clampCamera(value: Offset): Offset = with(density) {
-            Offset(
-                x = clampCameraAxis(value.x, viewportW.toPx(), scene.width.toPx()),
-                y = clampCameraAxis(value.y, viewportH.toPx(), scene.height.toPx()),
-            )
-        }
-        /** Drag the scene by [delta]; returns the part of it the scene's edges actually allowed. */
-        fun pan(delta: Offset): Offset {
-            val from = camera.value
-            val to = clampCamera(from - delta)
-            if (from == to) return Offset.Zero
-            touchNavigating = true
-            panScope.launch { camera.snapTo(to) }
-            return from - to
-        }
-        /**
-         * Adopt whichever group the viewport has come to rest over.
-         *
-         * The camera does NOT move for this — [touchNavigating] is set by then, so the view stays
-         * exactly where the finger left it. What it does is keep the SCENE's idea of where the
-         * user is looking in step with the picture, so that handing back to the gamepad lands
-         * somewhere sensible rather than wherever the cursor was left before the pan began.
-         */
-        fun settleOnNearestGroup() {
-            val centre = with(density) {
-                camera.value + Offset(viewportW.toPx() / 2f, viewportH.toPx() / 2f)
-            }
-            val nearest = groups.minByOrNull { group ->
-                val rect = scene.cards.getValue(group)
-                with(density) {
-                    val dx = rect.x.toPx() + rect.width.toPx() / 2f - centre.x
-                    val dy = rect.y.toPx() + rect.height.toPx() / 2f - centre.y
-                    dx * dx + dy * dy
-                }
-            }
-            if (nearest != null && nearest != focus) onLookAt(nearest)
-        }
-        /**
-         * **Is a finger actually dragging right now?**
-         *
-         * The gate on the nested-scroll route below, and it is not optional. Compose scrolls a
-         * newly focused node into view through the very same `scrollable` machinery a finger
-         * uses — `ContentInViewNode` dispatches it as `NestedScrollSource.UserInput` — so a card
-         * whose table has nothing left to scroll hands the leftover straight to this connection.
-         * Ungated, walking the d-pad from one card to the next SNAPPED the camera, which cancels
-         * the pan that focus had just started: the camera sat where it was while focus carried
-         * on without it (Dylan, 2026-09-21). Checking the `source` can't tell the two apart;
-         * only the presence of a finger can.
-         *
-         * Observed in the Initial pass and never consumed, so nothing downstream is disturbed.
-         */
-        var dragging by remember { mutableStateOf(false) }
-        // Drags that START on a card belong to that card's own scrollers first; the scene takes
-        // only what they leave — which is what makes "keep dragging past the end of a table"
-        // carry on into the scene instead of stopping dead.
-        val panConnection = remember(scene, panEnabled) {
-            object : NestedScrollConnection {
-                override fun onPostScroll(
-                    consumed: Offset,
-                    available: Offset,
-                    source: NestedScrollSource,
-                ): Offset = if (panEnabled && dragging && available != Offset.Zero) {
-                    pan(available)
-                } else {
-                    Offset.Zero
-                }
-            }
-        }
-
-        /**
-         * Which groups' advanced tables exist right now: NONE at rest, ALL of them once zoomed.
-         *
-         * Zoomed in, the scene is one canvas the user pans around (by d-pad or by finger), so
-         * every card on it has to be a real, finished card — a table that materializes as you
-         * arrive at it is the thing that reads as the view still loading (Dylan, 2026-09-21).
-         * They used to arrive one per frame, nearest first, and the reason has expired: the table
-         * that made seven of them too expensive pre-exposed a tile for every (input × press type)
-         * intersection, and a row is now just the commands that exist (see [rowCommands]).
-         *
-         * **What survives is the one-frame deferral, and it is load-bearing.** Composing the
-         * tables on the frame the box is TAPPED is what made opening a group feel sluggish — the
-         * frame that should be starting the zoom spends itself building tables instead. The
-         * opened group's table still arrives immediately (it is the one being zoomed into, and
-         * the crossfade needs it); everything else lands one frame later, while the zoom is
-         * already travelling. And nothing is composed at all while the basic view is at rest, so
-         * the screen still costs what it always did to show.
-         *
-         * If a big configuration ever makes that second frame drop, the fix is inside the table —
-         * the rows are plain Columns, and going lazy there would spend the effort where the tiles
-         * actually are — not by staggering the cards again.
-         */
-        val live = remember { mutableStateListOf<RemapSimpleGroup>() }
-        LaunchedEffect(focus) {
-            val open = focus
-            if (open == null) {
-                live.clear()
-                return@LaunchedEffect
-            }
-            if (open !in live) live.add(open)
-            if (live.size == groups.size) return@LaunchedEffect
-            withFrameNanos { }
-            live.addAll(groups.filter { it !in live })
-        }
-
         val slots = buildList<@Composable () -> Unit> {
             add {
                 Box(
@@ -725,20 +574,16 @@ internal fun RemapStage(
                     StageGroupBacking(
                         group = group,
                         light = backingLight.getValue(group),
-                        progress = progress,
                         // The panel is the group's own tap target, exactly as its box is — the
                         // same gate, the same two gestures, the same cursor seating.
-                        interactive = !zoomed && reveal.phaseOf(group) != EditPhase.EDIT,
+                        interactive = reveal.phaseOf(group) != EditPhase.EDIT,
                         onOpenGroup = {
                             runCatching { boxFocus.getValue(group).requestFocus() }
                             onOpenGroup(group)
                         },
-                        onOpenAdvanced = { onOpenAdvanced(group) },
+                        onOpenMenu = { menuGroup = group },
                     )
                 }
-            }
-            groups.forEach { group ->
-                add { StageCardChrome(settled, zoomed, progress) }
             }
             groups.forEach { group ->
                 add {
@@ -747,6 +592,7 @@ internal fun RemapStage(
                         viewingSet = viewingSet,
                         viewingLayer = viewingLayer,
                         config = config,
+                        callbacks = callbacks,
                         interaction = interactions.getValue(group),
                         focusRequester = boxFocus.getValue(group),
                         // A zoomed-out box is the control; a zoomed-in one is just the ghost
@@ -766,7 +612,7 @@ internal fun RemapStage(
                         // keeps its box, so the d-pad walking out of one group's tiles has
                         // something in the next group to land ON — and landing there is what
                         // opens it. Without that the collapsed groups would be unreachable.
-                        interactive = !zoomed && reveal.phaseOf(group) != EditPhase.EDIT,
+                        interactive = reveal.phaseOf(group) != EditPhase.EDIT,
                         // Straight into the animation, in the focus pass itself: no state to
                         // write, nothing to recompose, and a later travel on the same group
                         // cancels the one before it (see [StageGroupBacking]).
@@ -791,32 +637,13 @@ internal fun RemapStage(
                         seatFocus = focusSeatGroup == group,
                         onFocusSeated = onFocusSeated,
                         onOpenGroup = onOpenGroup,
-                        onOpenAdvanced = onOpenAdvanced,
+                        onOpenMenu = { menuGroup = it },
+                        menuOpen = menuGroup == group,
+                        onDismissMenu = { menuGroup = null },
                         // No host where there are no tiles: a resting group resolves no tiles at
                         // all, which is what keeps its rows exactly the rows they always were.
                         edit = editHost?.takeIf { reveal.phaseOf(group) != EditPhase.REST },
                     )
-                }
-            }
-            groups.forEach { group ->
-                add {
-                    if (group in live) {
-                        StageAdvancedContent(
-                            group = group,
-                            focused = group == focus,
-                            viewingSet = viewingSet,
-                            viewingLayer = viewingLayer,
-                            config = config,
-                            callbacks = callbacks,
-                            onLookAt = { if (group != focus) onLookAt(group) },
-                            onClose = onClose,
-                            moveState = moveState,
-                            stepTarget = stepTarget,
-                            onMoveCommitted = onMoveCommitted,
-                            focusHandle = focusHandle,
-                            focusRequester = entryFocus.takeIf { group == focus },
-                        )
-                    }
                 }
             }
         }
@@ -824,30 +651,6 @@ internal fun RemapStage(
         Box(
             Modifier
                 .fillMaxSize()
-                /*
-                 * Handing the camera back to the gamepad.
-                 *
-                 * Any hardware key means the user has put the screen down and picked the pad up,
-                 * so the camera resumes following focus. But focus is still on whatever tile it
-                 * was on before the panning started — possibly a screen away from what the user
-                 * is now looking at — and left alone, the first d-pad press would yank the
-                 * camera back there. So the cursor is seated into the group the pan came to rest
-                 * over FIRST, in the preview pass, before the focus system sees the key: the
-                 * press then steps from where the user is looking.
-                 *
-                 * Nothing is consumed — this only observes.
-                 */
-                .onPreviewKeyEvent { event ->
-                    if (touchNavigating && event.type == KeyEventType.KeyDown) {
-                        touchNavigating = false
-                        focus?.let { group ->
-                            runCatching {
-                                focusHandle(CellKey(group, group.rows.first(), 0)).requestFocus()
-                            }
-                        }
-                    }
-                    false
-                }
                 // While a CONTROLLER move is in flight in EDIT MODE, the stage owns the whole
                 // keyboard: arrows walk the drop target, B/Escape calls it off, the activate
                 // keys confirm. It sits at the stage rather than on a group because a carried
@@ -867,39 +670,6 @@ internal fun RemapStage(
                         },
                         onCommit = commitMove,
                     )
-                }
-                // Watch for a finger past touch slop, consuming nothing. See [dragging].
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        var downAt: Offset? = null
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            val change = event.changes.firstOrNull()
-                            if (change == null || !change.pressed) {
-                                downAt = null
-                                dragging = false
-                                continue
-                            }
-                            val from = downAt ?: change.position.also { downAt = it }
-                            if ((change.position - from).getDistance() > viewConfiguration.touchSlop) {
-                                dragging = true
-                            }
-                        }
-                    }
-                }
-                .nestedScroll(panConnection)
-                // And drags that start anywhere ELSE — the plate, the controller, the gaps
-                // between cards — pan directly. Nothing is consumed until the gesture has passed
-                // touch slop without a card claiming it, so taps, tile menus and the long-press
-                // carry are all untouched.
-                .pointerInput(panEnabled) {
-                    if (!panEnabled) return@pointerInput
-                    detectDragGestures(
-                        onDragEnd = { settleOnNearestGroup() },
-                    ) { change, delta ->
-                        change.consume()
-                        pan(delta)
-                    }
                 },
         ) {
         // ── The BODY is the scroller (Dylan, 2026-09-22) ─────────────────────────────────────
@@ -909,8 +679,6 @@ internal fun RemapStage(
         // overruns the window is scrolled here, once, for the whole grid. The cues are the ones
         // the boxes used to wear (edge fade + chevrons), plus the bar beneath.
         //
-        // Zoomed, the stage measures exactly one viewport wide, so this has nothing to scroll
-        // and quietly gets out of the camera's way.
         CompositionLocalProvider(LocalMoveOverlay provides true) {
             MinputOverflowScroll(
                 state = bodyScroll,
@@ -931,16 +699,11 @@ internal fun RemapStage(
                 // the camera's, and the grid's centring.
                 val viewport = viewportWPx
                 val height = viewportHPx
-                val p = progress().coerceIn(0f, 1f)
-                val camOffset = camera.value
                 val count = groups.size
 
                 val controllerM = measurables[0].single()
                 val backingM = List(count) { measurables[1 + it].single() }
-                val chromeM = List(count) { measurables[1 + count + it].single() }
-                val basicM = List(count) { measurables[1 + count * 2 + it].single() }
-                val advancedM: List<Measurable?> =
-                    List(count) { measurables[1 + count * 3 + it].firstOrNull() }
+                val basicM = List(count) { measurables[1 + count + it].single() }
 
                 // ── REST: the 3 × 3 grid, inside the plate's inset ────────────────────────────
                 val edgeX = MinputBarEdgePadding.roundToPx()
@@ -1134,7 +897,9 @@ internal fun RemapStage(
                     shift = contentShift.floatValue.roundToInt(),
                 ) { from ->
                     reveal.focus?.let { group ->
-                        editScrollTarget(toSpan, group, toWidths, groups, viewport, edgeX, from)
+                        editScrollTarget(
+                            toSpan, group, toWidths, groups, viewport, edgeX, from, minFramedSpan,
+                        )
                     } ?: (from + toSpan.centreX - fromSpan.centreX).coerceIn(0, maxScrollAt(1f))
                 }
                 // ── The grid ON SCREEN ───────────────────────────────────────────────────────
@@ -1161,6 +926,56 @@ internal fun RemapStage(
                     ),
                     centreW = lerpInt(fromCentre, toCentre, travel),
                 )
+                // ── The PAN a grid with no scroll range can still give (Dylan, 2026-09-27) ───
+                //
+                // Opening a group frames it, and framing is a SCROLL — so a grid that fits the
+                // window has no pan to give at all. Worse, a group's growth on a fitting grid is
+                // invisible: `gridSpan` pads whichever side falls short of half a viewport, so a
+                // left-flank box widening eats its own leading pad and every other element,
+                // controller included, stays exactly put. Dylan saw precisely that: the groups
+                // "whose inputs all only have one assigned tile ... don't shift the camera at all
+                // when activated (again on a 4:3 screen or larger)".
+                //
+                // So when there is no scroll range, the grid is DRAWN shifted toward the group
+                // being worked on, by however much of [minFramedSpan] that group's own box falls
+                // short of — the minimum-visible-tiles floor. The room comes out of the pad on the
+                // OTHER side, and never out of more than that pad, so nothing is ever pushed off
+                // the window: what the shift reveals on the group's own side is the group's own
+                // backing rectangle, which runs off that edge anyway.
+                //
+                // With scroll range there is no need for it — `editScrollTarget`'s own floor pans
+                // the view properly — so exactly one of the two mechanisms is ever in play.
+                fun biasIn(span: GridSpan, group: RemapSimpleGroup?, widths: IntArray): Int {
+                    if (group == null || minFramedSpan <= 0) return 0
+                    if (span.gridW > viewportGridW) return 0
+                    val want = (minFramedSpan - widths[groups.indexOf(group)]).coerceAtLeast(0)
+                    if (want <= 0) return 0
+                    // A left-flank group is looked at by moving the content RIGHT (the view goes
+                    // further left, which is the side that group's rows run off toward); a
+                    // right-flank group is the mirror image.
+                    return if (group in LeftColumnGroups) {
+                        want.coerceAtMost(span.padTrailing)
+                    } else {
+                        -want.coerceAtMost(span.padLeading)
+                    }
+                }
+                // **Captured with the travel's other endpoints, never recomputed from the live
+                // focus** (Dylan, 2026-09-28: "a strange jitter every time I open an input group or
+                // navigate between input groups - almost like the input groups are flashing inward
+                // towards the center column"). Asking [biasIn] for `reveal.focus` every pass looks
+                // right and is a one-frame flash: activating a group writes the new focus in the
+                // CLICK, a frame before the effect that plans the travel has reset the travel to 0
+                // — so that frame evaluated the NEW group's pan at the OLD travel's end, which for a
+                // hop across the columns is the far pad's width instead of the near one's (measured:
+                // the whole grid jumping 94px to its unbiased, controller-centred position and back).
+                // The plan therefore carries the pan the way it carries the scroll: the FROM end is
+                // simply where the pan visually is, so a frame that has not re-planned cannot move
+                // it at all.
+                editMorph.captureBias(
+                    settled = editSettled,
+                    target = biasIn(toSpan, reveal.focus, toWidths),
+                )
+                val bias = editMorph.biasAt(travel)
                 // The scroll that centres the controller in the RESTING grid, published for the
                 // one-time seeding below — which only ever runs with edit mode off, so mid-travel
                 // this grid is not the one it is asking about.
@@ -1184,7 +999,7 @@ internal fun RemapStage(
                     groupAt = { groups[it] },
                     targetFor = { group, at ->
                         editScrollTarget(
-                            grid, group, measuredWidths, groups, viewport, edgeX, at,
+                            grid, group, measuredWidths, groups, viewport, edgeX, at, minFramedSpan,
                         )
                     },
                 )
@@ -1192,9 +1007,9 @@ internal fun RemapStage(
                 val leftColumnW = grid.leftW
                 val gridW = grid.gridW
                 val restTotalW = grid.totalW
-                val startX = grid.startX - shift
-                val centreX = grid.centreX - shift
-                val rightX = grid.rightX - shift
+                val startX = grid.startX - shift + bias
+                val centreX = grid.centreX - shift + bias
+                val rightX = grid.rightX - shift + bias
 
                 // Anchored toward the centre cell: the top band sits on the FLOOR of its row, the
                 // bottom band on the CEILING of its own, and the middle band centres on the
@@ -1225,21 +1040,6 @@ internal fun RemapStage(
                     width = controllerRestW,
                     height = controllerRestH,
                 )
-                // ── ZOOM: the scene under the camera ─────────────────────────────────────────
-                fun sceneRect(rect: SceneRect) = StageRect(
-                    left = rect.x.roundToPx() - camOffset.x.roundToInt(),
-                    top = rect.y.roundToPx() - camOffset.y.roundToInt(),
-                    width = rect.width.roundToPx(),
-                    height = rect.height.roundToPx(),
-                )
-                val zoomRects = groups.associateWith { sceneRect(scene.cards.getValue(it)) }
-                val controllerZoom = sceneRect(scene.controller)
-
-                // ── The travel ───────────────────────────────────────────────────────────────
-                val current = groups.associateWith { lerpRect(restRects.getValue(it), zoomRects.getValue(it), p) }
-                val controllerNow = lerpRect(controllerRest, controllerZoom, p)
-                val fade = crossfadeAt(p)
-
                 // ── The group BACKINGS: a rectangle per box, running off its own side of
                 // the screen (Dylan, 2026-09-26) ──────────────────────────────────────────────
                 //
@@ -1268,7 +1068,7 @@ internal fun RemapStage(
                 val backingTrim = GroupOutlineEndInset.roundToPx()
                 val backingInnerInset = GroupOutlineInset.roundToPx()
                 val backingPlaceables = groups.map { group ->
-                    val rect = current.getValue(group)
+                    val rect = restRects.getValue(group)
                     backingM[groups.indexOf(group)].measure(
                         Constraints.fixed(
                             (rect.width + backingOverhang - backingInnerInset).coerceAtLeast(0),
@@ -1276,41 +1076,19 @@ internal fun RemapStage(
                         ),
                     )
                 }
-                // Measured at its ZOOM size and scaled down to wherever it is now: one bitmap,
-                // scaled uniformly, rather than a fresh fit on every frame.
                 val controllerPlaceable = controllerM.measure(
-                    Constraints.fixed(controllerZoom.width.coerceAtLeast(1), controllerZoom.height.coerceAtLeast(1)),
+                    Constraints.fixed(
+                        controllerRest.width.coerceAtLeast(1),
+                        controllerRest.height.coerceAtLeast(1),
+                    ),
                 )
-                val chromePlaceables = groups.map { group ->
-                    val rect = current.getValue(group)
-                    chromeM[groups.indexOf(group)].measure(
-                        Constraints.fixed(rect.width.coerceAtLeast(0), rect.height.coerceAtLeast(0)),
-                    )
-                }
-                val advancedPlaceables = groups.map { group ->
-                    val rect = zoomRects.getValue(group)
-                    advancedM[groups.indexOf(group)]?.measure(
-                        Constraints.fixed(rect.width.coerceAtLeast(1), rect.height.coerceAtLeast(1)),
-                    )
-                }
 
-                // NO card recedes (Dylan, 2026-09-21). Cards the camera was not on used to fade
-                // back to mark the one being edited; with the scene now a canvas the user roams
-                // freely — by finger as much as by d-pad — every card is somewhere they may be
-                // heading, and dimming what someone is reaching for reads as the view resisting
-                // them. The exceptions that had already accumulated (all lit while a command is
-                // being carried, all lit while the scene is dragged) were most of the time.
-
-                // The stage is as wide as the RESTING grid, which may overrun the window — that
-                // surplus is what the body scroller scrolls. Zoomed it is exactly the viewport:
-                // the scene is framed by the camera, so there is nothing left to scroll, and the
-                // scroller's own maximum collapses to zero as the travel lands.
-                val width = lerpInt(restTotalW, viewport, p)
-
-                layout(width, height) {
+                // The stage is as wide as the grid, which may overrun the window — that surplus is
+                // what the body scroller scrolls.
+                layout(restTotalW, height) {
                     // Backings first: everything else in the view sits ON them.
                     groups.forEach { group ->
-                        val rect = current.getValue(group)
+                        val rect = restRects.getValue(group)
                         val index = groups.indexOf(group)
                         backingPlaceables[index].place(
                             // Left column: the overhang runs off the left edge and the rectangle
@@ -1324,48 +1102,27 @@ internal fun RemapStage(
                             y = rect.top + backingTrim,
                         )
                     }
-                    val controllerScale =
-                        if (controllerZoom.width <= 0) 1f else controllerNow.width.toFloat() / controllerZoom.width
-                    controllerPlaceable.placeWithLayer(
-                        x = controllerNow.centerX - controllerPlaceable.width / 2,
-                        y = controllerNow.centerY - controllerPlaceable.height / 2,
-                    ) {
-                        scaleX = controllerScale
-                        scaleY = controllerScale
-                    }
+                    controllerPlaceable.place(
+                        x = controllerRest.centerX - controllerPlaceable.width / 2,
+                        y = controllerRest.centerY - controllerPlaceable.height / 2,
+                    )
 
-                    // The focused card last. Cards don't overlap once the zoom has landed, but
-                    // they pass through each other on the way — the rest grid and the scene put
-                    // them in different places — and the one being opened should travel over its
-                    // neighbours rather than under them.
-                    val order = groups.sortedBy { if (it == focus) 1 else 0 }
-                    order.forEach { group ->
-                        val index = groups.indexOf(group)
-                        val rect = current.getValue(group)
-                        chromePlaceables[index].place(rect.left, rect.top)
-
-                        val basic = restBasic[index]!!
-                        contentPlacement(basic, rect, containScale(basic.width, basic.height, rect), 1f - fade)
-
-                        val advanced = advancedPlaceables[index] ?: return@forEach
-                        val zoom = zoomRects.getValue(group)
-                        val advancedScale = containScale(zoom.width, zoom.height, rect)
-                        contentPlacement(advanced, rect, advancedScale, fade)
+                    groups.forEachIndexed { index, group ->
+                        val rect = restRects.getValue(group)
+                        restBasic[index]!!.place(rect.left, rect.top)
                     }
                 }
             }
             }
         }
 
-        // HOW MUCH more and WHERE, which a fade at the rim can't say. It belongs to the resting
-        // view only — zoomed, the camera is the navigation — so it fades out with the travel.
+        // HOW MUCH more and WHERE, which a fade at the rim can't say.
         MinputScrollbar(
             state = bodyScroll,
             orientation = Orientation.Horizontal,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = MinputBarEdgePadding)
-                .graphicsLayer { alpha = 1f - crossfadeAt(progress()) },
+                .padding(horizontal = MinputBarEdgePadding),
             contentShift = { contentShift.floatValue },
         )
 
@@ -1379,9 +1136,7 @@ internal fun RemapStage(
             viewingSet = viewingSet,
             viewingLayer = viewingLayer,
             config = config,
-            // Whichever tile the user actually picked up: a row's in edit mode, a table's
-            // otherwise. The two modes never run at once.
-            look = if (editing) rowTileLook() else TableTileLook,
+            look = rowTileLook(),
         )
 
         // Edit mode's tiles have no card to host the dialogs their menus summon, so the stage
@@ -1395,38 +1150,6 @@ internal fun RemapStage(
             onCloseType = { typeTarget = null },
         )
         }
-    }
-}
-
-/**
- * The scale that fits content of [contentW] x [contentH] inside [rect] — the SMALLER of the two
- * ratios.
- *
- * A card changes proportions across the zoom (a wide table, a squat box), so no single scale can
- * track both of its edges. Taking the smaller keeps the content inside its own card the whole
- * way; taking the width would have the summary rows bursting through the card's floor halfway
- * through the crossfade. Exact at both ends, where the content and its card are the same shape.
- */
-private fun containScale(contentW: Int, contentH: Int, rect: StageRect): Float {
-    if (contentW <= 0 || contentH <= 0) return 1f
-    return minOf(rect.width.toFloat() / contentW, rect.height.toFloat() / contentH)
-}
-
-/** Place one of a card's two contents, scaled about its own centre and faded by its share of
- *  the crossfade. Split out only so the placement block above stays readable. */
-private fun androidx.compose.ui.layout.Placeable.PlacementScope.contentPlacement(
-    placeable: androidx.compose.ui.layout.Placeable,
-    rect: StageRect,
-    scale: Float,
-    alpha: Float,
-) {
-    placeable.placeWithLayer(
-        x = rect.centerX - placeable.width / 2,
-        y = rect.centerY - placeable.height / 2,
-    ) {
-        scaleX = scale
-        scaleY = scale
-        this.alpha = alpha
     }
 }
 
@@ -1484,10 +1207,10 @@ private fun StageGroupBacking(
     /** 0 = resting plane, 1 = the cursor is in this group. Driven straight from the focus
      *  callback (see the stage), and read here in the DRAW phase. */
     light: Animatable<Float, AnimationVector1D>,
-    progress: () -> Float,
     interactive: Boolean,
     onOpenGroup: () -> Unit,
-    onOpenAdvanced: () -> Unit,
+    /** Held — the group's own action menu (see [GroupActionMenu]). */
+    onOpenMenu: () -> Unit,
 ) {
     val base = MaterialTheme.colorScheme.surfaceContainerLow
     val lit = MaterialTheme.colorScheme.surfaceContainer
@@ -1498,12 +1221,7 @@ private fun StageGroupBacking(
             .testTag(groupBackingTestTag(group))
             // Everything here is a DRAW-phase read — the plane, and the zoom's fade — so a
             // group lighting up repaints one rectangle and recomposes nothing.
-            .drawBehind {
-                drawRect(
-                    color = lerp(base, lit, light.value),
-                    alpha = 1f - crossfadeAt(progress()),
-                )
-            }
+            .drawBehind { drawRect(color = lerp(base, lit, light.value)) }
             .then(
                 if (interactive) {
                     Modifier
@@ -1515,7 +1233,7 @@ private fun StageGroupBacking(
                         .combinedClickable(
                             interactionSource = interaction,
                             indication = minputIndication(),
-                            onLongClick = onOpenAdvanced,
+                            onLongClick = onOpenMenu,
                             onClick = onOpenGroup,
                         )
                 } else Modifier,
@@ -1525,49 +1243,6 @@ private fun StageGroupBacking(
 
 /** The rectangle under one group's box — the handle a test measures its reach by. */
 internal fun groupBackingTestTag(group: RemapSimpleGroup): String = "group-backing:${group.name}"
-
-/**
- * A group's chrome, which is now two different things at the two ends of the travel (Dylan,
- * 2026-09-22).
- *
- * **Zoomed, it is a CARD** — fill, bevel and (once the travel has settled) its shadow. Drawn at
- * the card's live size rather than scaled with its contents, so the corner radius and the bevel
- * stay the width they were designed at the whole way.
- *
- * **At rest, the card is GONE** and a thin inner line takes its place. Dylan asked for the
- * backing cards off the basic view: seven filled, bevelled, shadowed plates around seven small
- * clusters of text was a lot of container for very little content, and with the body now one
- * scrolling canvas the cards were also the thing doing the clipping. The line still demarcates
- * a group — you can see where one ends and the next begins — and it is deliberately a VECTOR
- * stroke rather than a border modifier, because it is the genesis of the connector lines that
- * will eventually run from each group to the buttons it governs on the controller image.
- *
- * Both alphas are read in the DRAW phase, so the travel repaints them without recomposing.
- */
-@Composable
-private fun StageCardChrome(
-    settled: Boolean,
-    zoomed: Boolean,
-    progress: () -> Float,
-) {
-    val container = minputBoxContainer()
-    val shape = RoundedCornerShape(GroupCorner)
-    Box(
-        Modifier
-            .fillMaxSize()
-            .graphicsLayer { alpha = crossfadeAt(progress()) }
-            // The blurred shadow re-rasterizes whenever the rect changes, which during a zoom is
-            // every frame for every card — and at rest there is no card to cast it.
-            .then(
-                if (settled && zoomed) {
-                    Modifier.softDropShadow(cornerRadius = GroupCorner, offsetY = 0.dp)
-                } else Modifier,
-            )
-            .clip(shape)
-            .background(container)
-            .border(minputBevelBorder(container, GroupCorner), shape),
-    )
-}
 
 /**
  * The single vector line that marks a group at rest (Dylan, 2026-09-22, corrected 2026-09-23).
@@ -1625,24 +1300,15 @@ private enum class GroupEdge { START, END, TOP }
 private fun RemapSimpleGroup.controllerEdge(): GroupEdge =
     if (this in LeftColumnGroups) GroupEdge.END else GroupEdge.START
 
-/**
- * How far through the travel the two contents (and the two chromes) have traded places.
- *
- * Kept to the middle of the zoom: a table scaled down to box size is illegible and summary rows
- * blown up to card size are a blur, so neither wants to be the thing on screen at its own
- * extreme.
- */
-private fun crossfadeAt(progress: Float): Float =
-    ((progress.coerceIn(0f, 1f) - CrossfadeStart) / CrossfadeSpan).coerceIn(0f, 1f)
-
-/** One group's basic-view content: the glyph + assignment rows, and (while zoomed out) the tap
- *  target that opens it. The card's surface is [StageCardChrome], a sibling. */
+/** One group's content: its glyph + assignment rows (tiles in edit mode), the tap target that
+ *  opens the group, and the group's own action menu. */
 @Composable
 private fun StageBasicContent(
     group: RemapSimpleGroup,
     viewingSet: ActionSetGraph?,
     viewingLayer: ActionLayerGraph?,
     config: ControllerConfig?,
+    callbacks: RemapGroupEditorCallbacks,
     interaction: MutableInteractionSource,
     /** This box's focus handle — held by the stage, since its backing rectangle seats it too. */
     focusRequester: FocusRequester,
@@ -1652,11 +1318,15 @@ private fun StageBasicContent(
     seatFocus: Boolean,
     onFocusSeated: () -> Unit,
     onOpenGroup: (RemapSimpleGroup) -> Unit,
-    onOpenAdvanced: (RemapSimpleGroup) -> Unit,
+    /** The box was HELD — what used to open the advanced view now opens the group's own menu. */
+    onOpenMenu: (RemapSimpleGroup) -> Unit,
     /** Non-null once edit mode owns this box's rows, mid-morph included. */
     edit: RowEditHost?,
     editPhase: EditPhase,
     editProgress: () -> Float,
+    /** Is this group's own action menu up? One at a time, so the stage holds which. */
+    menuOpen: Boolean = false,
+    onDismissMenu: () -> Unit = {},
 ) {
     if (seatFocus && interactive) {
         LaunchedEffect(Unit) {
@@ -1706,7 +1376,7 @@ private fun StageBasicContent(
                             // Drawn by minputPressIndication above, so that there is one state
                             // layer and it is the one without a focus treatment.
                             indication = null,
-                            onLongClick = { onOpenAdvanced(group) },
+                            onLongClick = { onOpenMenu(group) },
                             onClick = {
                                 // Take the cursor before handing it on. A tap flips the window
                                 // into touch mode, which clears Compose focus outright, so
@@ -1722,7 +1392,7 @@ private fun StageBasicContent(
                         // tap. Sits AFTER the clickable in the chain, which makes it the inner
                         // node and so the first to see a key.
                         .holdToOpen(
-                            onHold = { onOpenAdvanced(group) },
+                            onHold = { onOpenMenu(group) },
                             onTap = { onOpenGroup(group) },
                         )
                 } else Modifier,
@@ -1735,13 +1405,82 @@ private fun StageBasicContent(
             // their neighbours inside had a clear gap. Carrying the trim in the padding is what
             // makes the VISIBLE air equal [rowTileGap] at any density, rather than at the one this
             // number was chosen on.
-            .padding(horizontal = 8.dp, vertical = rowTileGap() + GroupOutlineEndInset),
+            .padding(horizontal = GroupBoxPaddingX, vertical = rowTileGap() + GroupOutlineEndInset),
         // Every box wraps its own rows now, so centring costs nothing and covers the case where
         // one is ever given more room than it asked for.
         contentAlignment = Alignment.Center,
     ) {
         GroupRows(group, viewingSet, viewingLayer, config, edit = edit, phase = editPhase, progress = editProgress)
+        GroupActionMenu(
+            group = group,
+            viewingSet = viewingSet,
+            viewingLayer = viewingLayer,
+            callbacks = callbacks,
+            expanded = menuOpen,
+            onDismissRequest = onDismissMenu,
+        )
     }
+}
+
+/**
+ * **A group's own action menu** (Dylan, 2026-09-27) — summoned by HOLDING the group, which is the
+ * gesture that used to open the advanced view.
+ *
+ * With that view retired, this is where the two things it carried in its card header live: the
+ * group's mode settings, and resetting the group to the layout's own defaults. Deliberately the
+ * same [MinputActionMenu] a tile wears, in the same place beside its anchor and with the same
+ * caret — a group and a command are two things you hold to get options on, so they answer alike.
+ *
+ * It names the GROUP rather than the mode ("Button Pad settings", not "Configure Button Pad"),
+ * because the thing being held is the group.
+ *
+ * Settings resolve against the group's PRIMARY source (its first row's) — the same rule the card
+ * header used, which leaves a multi-source group's secondary modes (a shoulder's bumper beside its
+ * trigger) reachable only through a command's own editor for now.
+ */
+@Composable
+private fun BoxScope.GroupActionMenu(
+    group: RemapSimpleGroup,
+    viewingSet: ActionSetGraph?,
+    viewingLayer: ActionLayerGraph?,
+    callbacks: RemapGroupEditorCallbacks,
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+) {
+    val primarySource = group.rows.first().source
+    val primaryGroup = viewingLayer?.presetFor(primarySource)?.group?.group
+        ?: viewingSet?.presetFor(primarySource)?.group?.group
+    // A LAYER's bindings are read-only here; edits route through the command's own editor.
+    val editable = viewingLayer == null
+    val name = group.headerLabel()
+    MinputActionMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        actions = if (!expanded) {
+            emptyList()
+        } else {
+            listOf(
+                MinputAction(
+                    label = "$name settings",
+                    icon = Icons.Filled.Settings,
+                    enabled = primaryGroup != null &&
+                        SourceModeSettingsSchema.hasSettings(primarySource, primaryGroup.mode),
+                    onClick = {
+                        primaryGroup?.let { callbacks.onOpenModeSettings(it.id, primarySource) }
+                    },
+                ),
+                MinputAction(
+                    label = "Reset $name to default",
+                    icon = Icons.Filled.RestartAlt,
+                    enabled = editable && primaryGroup != null,
+                    destructive = true,
+                    onClick = { primaryGroup?.let { callbacks.onResetGroup(it.id) } },
+                ),
+            )
+        },
+        placement = MinputMenuPlacement.End,
+        caret = true,
+    )
 }
 
 /**
@@ -1789,79 +1528,6 @@ private fun Modifier.holdToOpen(onHold: () -> Unit, onTap: () -> Unit): Modifier
                 true
             }
             else -> false
-        }
-    }
-}
-
-/** One group's advanced table, sized to its card in the zoomed geometry. */
-@Composable
-private fun StageAdvancedContent(
-    group: RemapSimpleGroup,
-    focused: Boolean,
-    viewingSet: ActionSetGraph?,
-    viewingLayer: ActionLayerGraph?,
-    config: ControllerConfig?,
-    callbacks: RemapGroupEditorCallbacks,
-    onLookAt: () -> Unit,
-    onClose: () -> Unit,
-    moveState: com.mappo.ui.component.MoveModeState<CellKey>,
-    stepTarget: (CellKey, Int, Int) -> CellKey?,
-    onMoveCommitted: (CellKey, CellKey) -> Unit,
-    focusHandle: (CellKey) -> FocusRequester,
-    focusRequester: FocusRequester?,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // Focus LEADS the camera: stepping the d-pad into this card's table pans to it.
-            .onFocusChanged { if (it.hasFocus) onLookAt() }
-            // The touch equivalent, observed in the Initial pass and never consumed: a finger
-            // reaching into a half-visible card brings it over without taking the press away
-            // from whatever tile it landed on.
-            //
-            // Only a press that STAYS PUT counts (2026-09-21). A press that travels is a scroll
-            // or a pan of the scene, and pulling the camera onto this card the moment such a
-            // gesture began fought the finger for the rest of it.
-            .pointerInput(group) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false,
-                        pass = PointerEventPass.Initial,
-                    )
-                    var travelled = 0f
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        travelled = maxOf(travelled, (change.position - down.position).getDistance())
-                        if (!change.pressed) break
-                    }
-                    if (travelled <= viewConfiguration.touchSlop) onLookAt()
-                }
-            }
-            // The focused card carries the editor's identity, so anything asking for "the open
-            // editor" gets the one the camera is on.
-            .then(if (focused) Modifier.testTag("group-editor") else Modifier),
-    ) {
-        // Which card the right stick scrolls is no longer asked here either. The cursor's own
-        // card wins because its table is the deepest scroller holding focus — the rule this
-        // used to state by hand (Dylan, 2026-09-21: the stick is a reach of the same hand that
-        // moved the cursor, so the card holding the cursor is the one it means). Under a finger
-        // nothing holds focus, seven cards claim at once, and none of them move.
-        Box(Modifier.fillMaxSize().testTag(zoomCardTestTag(group))) {
-            RemapGroupEditor(
-                group = group,
-                viewingSet = viewingSet,
-                viewingLayer = viewingLayer,
-                config = config,
-                callbacks = callbacks,
-                onClose = onClose,
-                modifier = Modifier.fillMaxSize(),
-                moveState = moveState,
-                stepTarget = stepTarget,
-                onMoveCommitted = onMoveCommitted,
-                focusHandle = focusHandle,
-                focusRequester = focusRequester,
-            )
         }
     }
 }
@@ -1917,6 +1583,10 @@ private class GridSpan(
     val rightX: Int,
     /** The scroll value at which the controller sits dead centre in the window. */
     val centreScroll: Int,
+    /** The emptiness this span put on each side to centre the controller — the room a pan on a
+     *  grid with no scroll range has to spend (see the stage's `bias`). */
+    val padLeading: Int,
+    val padTrailing: Int,
 )
 
 private fun gridSpan(
@@ -1970,6 +1640,8 @@ private fun gridSpan(
         centreX = centreX,
         rightX = centreX + centreW + columnGap,
         centreScroll = (padLeading + toCentre - half).coerceIn(0, gridW - viewportGridW),
+        padLeading = padLeading,
+        padTrailing = padTrailing,
     )
 }
 
@@ -2014,10 +1686,24 @@ private fun editScrollTarget(
     /** The grid's own margin, inside which there is nothing left to see. */
     edgeX: Int,
     from: Int,
+    /**
+     * **The narrowest region this may settle for**, in pixels — the minimum-visible-tiles floor
+     * (Dylan, 2026-09-27). A group already fully on screen wants no scroll at all, so the ones
+     * two tiles wide answered being opened with no camera movement whatsoever: "those groups
+     * don't shift the camera at all when activated". Framing at LEAST this much, measured outward
+     * from the group's own glyph, is what buys them a pan; it is never a cap, so a group wider
+     * than this is still framed whole. 0 is the plain rule, unchanged.
+     */
+    minSpan: Int = 0,
 ): Int {
-    val width = widths[groups.indexOf(group)]
     val onLeft = group in LeftColumnGroups
-    val left = groupLeftIn(span, group, widths, groups)
+    val box = widths[groups.indexOf(group)]
+    val width = maxOf(box, minSpan)
+    val boxLeft = groupLeftIn(span, group, widths, groups)
+    // The floor is spent OUTWARD from the glyph, which is the box's inner edge — the side the
+    // rows read from, and the side that stays put as a group grows. Widening inward instead would
+    // pan toward the controller, which is the direction there is nothing to see in.
+    val left = if (onLeft) boxLeft + box - width else boxLeft
     val right = left + width
     val target = when {
         // Too wide to show at once: the glyph side, whichever side that is.
@@ -2065,6 +1751,18 @@ private class EditMorphPlan {
         private set
     private var scrollAtFrom = 0f
     private var scrollAtTo = 0f
+    /**
+     * **The pan the grid is being DRAWN with** — the minimum-visible-tiles bias (see the stage's
+     * `biasIn`), which is what panning becomes on a grid with no scroll range to pan.
+     *
+     * Carried ACROSS travels, because a group stays looked-at long after its travel lands: this is
+     * where the view is, and the next travel starts from here. Its two endpoints are captured once,
+     * exactly as the scrolls are, so no frame can move it by re-deciding what it should be.
+     */
+    private var bias = 0
+    private var biasFrom = 0
+    private var biasTo = 0
+    private var biasPlanned = false
     private var scrollsKnown = false
     private var pending: Int? = null
     private var target: Int? = null
@@ -2109,6 +1807,7 @@ private class EditMorphPlan {
         toWidths = null
         // Re-planned from here, since where the view is going has changed too.
         scrollsKnown = false
+        biasPlanned = false
         return true
     }
 
@@ -2175,6 +1874,25 @@ private class EditMorphPlan {
         scrollsKnown = true
     }
 
+    /** Where the pan travels from and to, settled once — [target] is only read on this frame. */
+    fun captureBias(settled: Boolean, target: Int) {
+        if (settled || biasPlanned) return
+        // Where it visually IS, which is the only honest start: a travel interrupting another one
+        // picks up the pan the last one had reached.
+        biasFrom = bias
+        biasTo = target
+        biasPlanned = true
+    }
+
+    /** The pan at this point in the travel. With nothing planned it HOLDS — which is what makes a
+     *  frame between a focus change and the travel that answers it a no-op. */
+    fun biasAt(travel: Float): Int {
+        if (!biasPlanned) return bias
+        val at = travel.coerceIn(0f, 1f)
+        bias = biasFrom + ((biasTo - biasFrom) * at).roundToInt()
+        return bias
+    }
+
     fun shiftAt(settled: Boolean, travel: Float, scroll: Int, maxScrollAt: (Float) -> Int): Int {
         if (settled) return pending ?: 0
         val max = maxScrollAt(travel)
@@ -2202,6 +1920,11 @@ private class EditMorphPlan {
      * (Dylan, 2026-09-24).
      */
     fun handOff(): Int? {
+        // **Before the early return**: the pan must stop following the travel the moment the travel
+        // is over, or the next frame that snaps the travel back to 0 — which happens a frame BEFORE
+        // this plan re-captures its endpoints — would drag the pan back to the last travel's start.
+        // That is the flash (see the stage's `captureBias`). With nothing planned the pan holds.
+        biasPlanned = false
         val landed = target ?: return null
         target = null
         pending = null
@@ -2359,18 +2082,6 @@ internal data class StageRect(val left: Int, val top: Int, val width: Int, val h
     val centerY: Int get() = top + height / 2
 }
 
-/** The rect [p] of the way from [a] to [b]. Exact at both ends, so a settled stage measures
- *  identically to one that never animated. */
-internal fun lerpRect(a: StageRect, b: StageRect, p: Float): StageRect = when {
-    p <= 0f -> a
-    p >= 1f -> b
-    else -> StageRect(
-        left = lerpInt(a.left, b.left, p),
-        top = lerpInt(a.top, b.top, p),
-        width = lerpInt(a.width, b.width, p),
-        height = lerpInt(a.height, b.height, p),
-    )
-}
 
 private fun lerpInt(a: Int, b: Int, p: Float): Int = a + ((b - a) * p).roundToInt()
 
@@ -2407,11 +2118,6 @@ internal val LeftColumnGroups: Set<RemapSimpleGroup> = GridBands.map { it.left }
 /** Which band the controller image occupies. Bands above it anchor to their floor and bands
  *  below it to their ceiling, so every box points at the controller (see `restTop`). */
 private const val ControllerBand = 1
-
-/** Where the contents of a card start and finish trading places, as a fraction of the travel.
- *  See [crossfadeAt]. */
-private const val CrossfadeStart = 0.18f
-private const val CrossfadeSpan = 0.46f
 
 /**
  * The group outline that replaced the basic view's cards (Dylan, 2026-09-22) — how far inside
@@ -2461,6 +2167,20 @@ private val BodyChevronOutset = 2.dp
 
 /** Fallback shape for the controller artwork, if its intrinsic size is ever unavailable. */
 private const val DefaultControllerAspect = 0.62f
+
+/** A group box's own inset around its rows. Named because the minimum-visible-tiles floor is a
+ *  BOX width and so has to add it (see the stage's `minFramedSpan`). */
+private val GroupBoxPaddingX = 8.dp
+
+/**
+ * Where "a 1:1 screen" ends and a wider one begins, as a width/height ratio of the WINDOW.
+ *
+ * Only the automatic minimum-visible-tiles figure asks (see
+ * [com.mappo.data.settings.MinVisibleTiles.countFor]), and it is a fraction off square rather than
+ * exactly 1 so that a window a few dp out of square — insets, a status bar, rounding — still counts
+ * as the square one Dylan measured on.
+ */
+private const val SquareWindowAspect = 1.1f
 
 /** Gutter between the rest grid's columns — wide enough to keep the flank boxes off the
  *  controller image between them. */

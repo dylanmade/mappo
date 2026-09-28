@@ -79,23 +79,21 @@ import kotlin.math.roundToInt
  * The simplified remap view: a controller diagram flanked by one tappable box per input group,
  * each row showing an input glyph + every command assigned to that input.
  *
- * **The view is one STAGE that zooms** (Dylan, 2026-09-17). This file owns the state — which
- * group is open, how far along the zoom is, where controller focus sits — and the resting
- * CONTENT of a group box; [RemapStage] owns the elements and the travel, and RemapZoomScene.kt
- * owns the zoomed geometry. Activating a box does not open anything: every element simply moves
- * and scales from its place in the basic grid to its place in the advanced layout, its contents
- * crossfading from summary rows to the full table on the way. Backing out runs it in reverse,
- * into whichever box the camera ended on.
+ * **One view, edited in place** (Dylan, 2026-09-22 as an experiment, settled 2026-09-27). This
+ * file owns the state — which group is open, which groups show tiles, where controller focus sits
+ * — and the resting CONTENT of a group box; [RemapStage] owns the grid those boxes sit in and the
+ * travels that keep the view still while they change shape.
  *
- * Two earlier attempts are worth not repeating. A near-fullscreen MODAL editor (before
- * 2026-09-17) hid the controller and every other group — isolating to read, and a lot of
- * closing and reopening to move a command between groups. Its replacement kept the basic plate
- * and a separate zoomed scene as two layers and crossfaded them while both scaled: Dylan
- * reviewed that one frame by frame and it was, exactly as it looked, two screens rather than a
- * zoom.
+ * Three earlier attempts are worth not repeating. A near-fullscreen MODAL editor (before
+ * 2026-09-17) hid the controller and every other group — isolating to read, and a lot of closing
+ * and reopening to move a command between groups. Its replacement kept the basic plate and a
+ * separate zoomed scene as two layers and crossfaded them while both scaled: Dylan reviewed that
+ * one frame by frame and it was, exactly as it looked, two screens rather than a zoom. The third
+ * was a real ZOOM — one set of elements travelling between the grid and a scene under a camera —
+ * which worked, and lost anyway: tiling the rows in place does the same job without going
+ * anywhere, so the zoom, the cards and their tables were deleted (2026-09-27).
  *
- * **Restructured 2026-09-11 to follow the advanced view's table** ([RemapGroupEditor]), in three
- * moves:
+ * **Restructured 2026-09-11 to follow the advanced view's table**, in three moves:
  *
  * 1. A row no longer shows only its standard press with a "+N" badge for the rest. Every press
  *    type the user has assigned now renders inline, in the table's column order, tinted with
@@ -144,21 +142,15 @@ internal fun RemapSimpleView(
     seatCommand: Long? = null,
     onSeatCommand: (Long?) -> Unit = {},
 ) {
-    // The group whose editor should be open (user intent — survives the command-picker
-    // round-trip) vs. the group currently on stage, which outlives it through the collapse.
-    var expandedGroup by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
-    var visibleGroup by remember { mutableStateOf(expandedGroup) }
     /**
      * **EDIT MODE** — the group whose selection turned the basic view's rows into tiles (Dylan,
-     * 2026-09-22, as an experiment against the zoom).
+     * 2026-09-22 as an experiment against the advanced view; the only editor there is since
+     * 2026-09-27, when Dylan went "all in on this experimental view/edit mode").
      *
      * The mode is view-WIDE: every group's rows reformat, not just this one's. Keeping the whole
      * controller legible while one part of it is edited is the point, and a command can be
      * carried between groups only if the group it is going to is made of tiles too. This names
      * the group only so the cursor knows where to land.
-     *
-     * Null while zoomed: the two are alternative ways of editing the same thing, and the zoom's
-     * tables register the same cell keys these tiles do.
      */
     var editGroup by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
     /**
@@ -203,9 +195,27 @@ internal fun RemapSimpleView(
     var editSettled by remember { mutableStateOf(true) }
     var editTick by remember { mutableIntStateOf(0) }
 
-    // The morph, whichever way each group is going.
-    LaunchedEffect(editTarget) {
-        if (editTarget == editShown) return@LaunchedEffect
+    /**
+     * **The group the camera last framed** (Dylan, 2026-09-27).
+     *
+     * With every group revealed, walking from one column to the other changes NOTHING about the
+     * shape of the grid — so there was no travel, and the view only moved as far as the focused
+     * tile's own bring-into-view dragged it: "we currently just reveal the focused tile versus its
+     * group". Tracking what was framed is what lets a hop run a travel of its own, whose only job
+     * is the camera.
+     *
+     * Initialised from [editGroup] (which is saveable) so returning from the command picker —
+     * where everything is remembered except the cursor — does not read as a hop.
+     */
+    var framedGroup by remember { mutableStateOf(editGroup) }
+
+    // The morph, whichever way each group is going — and, when nothing is going anywhere, the pan
+    // to whichever group the cursor has just walked into.
+    LaunchedEffect(editTarget, editSubject) {
+        val morphing = editTarget != editShown
+        val panning = editGroup != null && editSubject != null && editSubject != framedGroup
+        if (!morphing && !panning) return@LaunchedEffect
+        framedGroup = editSubject
         // Snapshot where every group IS, not where the last travel meant to leave it: a travel
         // interrupted by a second group being opened carries on from the shape it had reached.
         val here = AllSimpleGroups.associateWith { group ->
@@ -237,7 +247,10 @@ internal fun RemapSimpleView(
         // for itself (see `seatCommand`).
         val subject = editSubject
         if (!carrying && subject != null && here.getValue(subject) < 1f) editSeat = subject
-        if (!landed) {
+        // A hop with no morph to run still travels: the reveal's travel is also what carries the
+        // camera (see `EditMorphPlan`), so standing it down because no box changes shape is what
+        // left a cross-column hop with no pan at all.
+        if (!landed || panning) {
             editSettled = false
             editTravel.snapTo(0f)
             editTravel.animateTo(1f, tween(EditMorphMillis, easing = FastOutSlowInEasing))
@@ -257,35 +270,21 @@ internal fun RemapSimpleView(
             travel = { editTravel.value },
         )
     }
-    // Where the camera has travelled since the zoom began — the group being edited NOW, which
-    // is what the zoom collapses back into and hands focus to. Distinct from [expandedGroup],
-    // which stays the group it was opened from.
-    var cameraGroup by rememberSaveable { mutableStateOf(expandedGroup) }
-    // 0 = the basic grid, 1 = zoomed onto [cameraGroup]. The whole travel is one number: the
-    // stage interpolates every element's rect between its two geometries by it.
-    val progress = remember { Animatable(if (expandedGroup != null) 1f else 0f) }
-    // False for the duration of a travel, so the stage can skip per-frame-expensive chrome.
-    var settled by remember { mutableStateOf(true) }
-    // Focus target inside the opened group's table — without it, a tap that opens a group
-    // leaves the cursor on the box behind it.
-    val editorFocus = remember { FocusRequester() }
-    // Which group box should reclaim controller focus once the zoom collapses back into it.
-    // Starts non-null on a fresh entry: seating focus on the top-left group box makes the
-    // screen controller-ready immediately — the Select/Start panel summons are preview key
-    // handlers that only fire while focus sits in this subtree, and an unseated screen's first
-    // d-pad press used to default-hunt into the frame chrome.
-    var returnFocusGroup by remember {
-        mutableStateOf(if (expandedGroup == null) RemapSimpleGroup.LEFT_SHOULDER else null)
-    }
+    // Which group box should reclaim controller focus — on entry, and when edit mode is left.
+    // Non-null on a fresh entry: seating focus on the top-left group box makes the screen
+    // controller-ready immediately — the Select/Start panel summons are preview key handlers that
+    // only fire while focus sits in this subtree, and an unseated screen's first d-pad press used
+    // to default-hunt into the frame chrome.
+    var returnFocusGroup by remember { mutableStateOf<RemapSimpleGroup?>(RemapSimpleGroup.LEFT_SHOULDER) }
     val inputModeManager = LocalInputModeManager.current
 
     // Focus recovery. Any TAP flips the window into touch mode, which CLEARS Compose focus —
     // after that, d-pad navigation was dead until something was reopened. When this subtree
-    // loses all focus, re-seat the cursor: on the top-left box while zoomed out, on the open
-    // table while zoomed in. DEFERRED through state + LaunchedEffect, because focus-loss also
-    // fires while a composition is being disposed and a synchronous requestFocus mid-detach
-    // corrupts the node lifecycle ("Must run runDetachLifecycle()..."); an effect simply never
-    // runs on a disposing composition.
+    // loses all focus, re-seat the cursor: on the top-left box at rest, on a tile in edit mode.
+    // DEFERRED through state + LaunchedEffect, because focus-loss also fires while a composition
+    // is being disposed and a synchronous requestFocus mid-detach corrupts the node lifecycle
+    // ("Must run runDetachLifecycle()..."); an effect simply never runs on a disposing
+    // composition.
     var viewHadFocus by remember { mutableStateOf(false) }
     var refocusTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(refocusTick) {
@@ -299,75 +298,20 @@ internal fun RemapSimpleView(
             if (editSettled) editFocusTick++
             return@LaunchedEffect
         }
-        if (expandedGroup == null) {
-            if (visibleGroup == null) returnFocusGroup = RemapSimpleGroup.LEFT_SHOULDER
-        } else {
-            runCatching { editorFocus.requestFocus() }
-        }
+        returnFocusGroup = RemapSimpleGroup.LEFT_SHOULDER
     }
 
-    // Drives zoom in / zoom out / travel to another group. Switching groups collapses back to
-    // the grid first, then zooms into the next one.
-    LaunchedEffect(expandedGroup) {
-        val target = expandedGroup
-        if (target == visibleGroup) {
-            if (target != null && progress.value < 1f) {
-                settled = false
-                progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
-                settled = true
-            }
-            return@LaunchedEffect
-        }
-        if (visibleGroup != null) {
-            // Collapse into the box of wherever the CAMERA ended up, not the one it came in
-            // through: after travelling to another group, that group's box is the one the
-            // elements are actually over.
-            val closing = cameraGroup ?: visibleGroup
-            settled = false
-            progress.animateTo(0f, tween(CollapseMillis, easing = FastOutSlowInEasing))
-            settled = true
-            visibleGroup = null
-            cameraGroup = null
-            // Backing out (not switching groups): hand controller focus back to that box.
-            if (target == null) returnFocusGroup = closing
-        }
-        if (target != null) {
-            visibleGroup = target
-            cameraGroup = target
-            settled = false
-            progress.animateTo(1f, tween(ExpandMillis, easing = FastOutSlowInEasing))
-            settled = true
-        }
-    }
-
-    // Back leaves whichever editing mode is up: the tiles go away and the rows resume their
-    // ordinary flex, or the zoom collapses. Edit mode hands the cursor back to the box it was
-    // entered from — the tile it was on is about to stop existing.
-    BackHandler(enabled = expandedGroup != null || editGroup != null) {
-        if (editGroup != null) {
-            // Back to the box the cursor is ON, not the one edit mode was entered from: with one
-            // group revealed at a time the cursor has very likely moved since.
-            returnFocusGroup = editCursor ?: editGroup
-            editGroup = null
-            editCursor = null
-        } else {
-            expandedGroup = null
-        }
-    }
-
-    // Move controller focus into the table as the zoom starts — it lands on the first input's
-    // Press cell, and the d-pad walks the grid and the header from there.
-    // focusSeatEnabled is a key (not just a guard) so a seat deferred while a drawer held focus
-    // fires when the drawers close — expandedGroup is saveable state, so a drawer-scroll
-    // remount can land here with a group already open.
-    LaunchedEffect(visibleGroup, focusSeatEnabled) {
-        if (visibleGroup != null && focusSeatEnabled) runCatching { editorFocus.requestFocus() }
+    // Back leaves edit mode: the tiles go away and the rows resume their ordinary flex. The cursor
+    // goes back to the box the tile it was on belonged to — that tile is about to stop existing.
+    BackHandler(enabled = editGroup != null) {
+        // Back to the box the cursor is ON, not the one edit mode was entered from: with one
+        // group revealed at a time the cursor has very likely moved since.
+        returnFocusGroup = editCursor ?: editGroup
+        editGroup = null
+        editCursor = null
     }
 
     RemapStage(
-        focus = cameraGroup ?: visibleGroup,
-        progress = { progress.value },
-        settled = settled,
         viewingSet = viewingSet,
         viewingLayer = viewingLayer,
         config = config,
@@ -378,9 +322,10 @@ internal fun RemapSimpleView(
         editFocusTick = editFocusTick,
         seatCommand = seatCommand,
         onSeatCommand = onSeatCommand,
-        // Selecting a box EDITS IN PLACE; holding it opens the advanced view it used to open.
-        // In edit mode the boxes of the groups that are NOT revealed stay live, so this is also
-        // how a finger switches which group is open.
+        // Selecting a box EDITS IN PLACE; HOLDING it opens that group's own action menu (the
+        // gesture that used to open the advanced view — see the stage's `GroupActionMenu`). In
+        // edit mode the boxes of the groups that are NOT revealed stay live, so a tap is also how
+        // a finger switches which group is open.
         onOpenGroup = {
             editGroup = it
             editCursor = it
@@ -388,16 +333,8 @@ internal fun RemapSimpleView(
         // The cursor arriving in a group is what reveals it, tap or d-pad alike.
         onGroupFocused = { if (editGroup != null) editCursor = it },
         onCarrying = { carrying = it },
-        onOpenAdvanced = {
-            editGroup = null
-            editCursor = null
-            expandedGroup = it
-        },
-        onLookAt = { cameraGroup = it },
-        onClose = { expandedGroup = null },
         focusSeatGroup = returnFocusGroup.takeIf { focusSeatEnabled },
         onFocusSeated = { returnFocusGroup = null },
-        entryFocus = editorFocus,
         modifier = modifier.onFocusChanged { state ->
             if (state.hasFocus) viewHadFocus = true else if (viewHadFocus) refocusTick++
         },
@@ -489,19 +426,6 @@ internal enum class RemapSimpleGroup(val rows: List<SimpleRowSpec>) {
      * holds, so it always shows its RESTING label ([rowRestingLabel]): the stick's own name at
      * device default, otherwise the name of the mode it's in.
      */
-    /**
-     * Does this group's card header state a MODE, or just its own name?
-     *
-     * Every group but the utility pair picks a mode: Button Pad, Directional Pad, Joystick,
-     * Trigger. The utility buttons don't (Dylan, 2026-09-21) — Start and Select are single
-     * buttons whose
-     * intercept mode the repository manages from whether they are bound at all
-     * (`syncAuxButtonMode`), so there is nothing there for a user to choose and a caption
-     * reading "MODE: SINGLE BUTTON" named an internal state as though it were a decision. The
-     * header keeps its glyph, its treatment and its inset either way.
-     */
-    val headerShowsMode: Boolean get() = this != LEFT_UTILITY && this != RIGHT_UTILITY
-
     val summaryRows: List<SimpleRowSpec>
         get() = when (this) {
             LEFT_STICK, RIGHT_STICK -> {
@@ -1616,6 +1540,25 @@ private fun MeasureScope.measureTable(
                 }
             }
         }
+}
+
+/**
+ * **The width a group's TABLE has when its longest row holds exactly [tiles] tiles** — the unit
+ * the minimum-visible-tiles setting counts in (Dylan, 2026-09-27).
+ *
+ * Asked of the same [tableMetrics] the table itself lays out against, so "2 tiles" is exactly the
+ * width a two-tile group comes out at rather than an estimate of it — which is what makes a floor
+ * of 2 a no-op on a default layout's group, and a floor of 3 exactly one tile's worth of pan.
+ */
+@Composable
+internal fun tiledTableWidth(tiles: Int): Int {
+    if (tiles <= 0) return 0
+    val look = rowTileLook()
+    val gap = rowTileGap()
+    return with(LocalDensity.current) {
+        val metrics = tableMetrics(look.height, gap, look.width)
+        metrics.glyph + metrics.glyphGap + tiles * metrics.tileWidth + (tiles - 1) * metrics.tileGap
+    }
 }
 
 /** The fixed measurements a table lays out against, resolved once per pass. */

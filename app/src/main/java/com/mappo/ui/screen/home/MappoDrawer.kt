@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mappo.data.settings.MoveCommitGesture
+import com.mappo.data.settings.MinVisibleTiles
 import com.mappo.data.settings.TileReveal
 import com.mappo.data.settings.TextSize
 import com.mappo.ui.minput.MinputPanelDividerContentGap
@@ -34,6 +35,7 @@ import com.mappo.ui.screen.remap.PowerRow
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.MoveCommitRow
 import com.mappo.ui.screen.remap.TextSizeRow
+import com.mappo.ui.screen.remap.MinVisibleTilesRow
 import com.mappo.ui.screen.remap.TileRevealRow
 
 /**
@@ -59,6 +61,9 @@ fun MappoDrawerContent(
     // How many groups show their tiles in edit mode. Global, and an experiment — see TileReveal.
     tileReveal: TileReveal,
     onTileRevealChange: (TileReveal) -> Unit,
+    // How far opening an input group pans the view. Global, like its neighbours.
+    minVisibleTiles: MinVisibleTiles,
+    onMinVisibleTilesChange: (MinVisibleTiles) -> Unit,
     // Dev tooling: the floating Theme Studio font picker in the window corner.
     fontDebugEnabled: Boolean,
     onFontDebugChange: (Boolean) -> Unit,
@@ -110,6 +115,9 @@ fun MappoDrawerContent(
                 }
                 item(key = "tile_reveal") {
                     TileRevealRow(current = tileReveal, onPick = onTileRevealChange)
+                }
+                item(key = "min_visible_tiles") {
+                    MinVisibleTilesRow(current = minVisibleTiles, onPick = onMinVisibleTilesChange)
                 }
                 item(key = "text_size") {
                     TextSizeRow(current = textSize, onPick = onTextSizeChange)

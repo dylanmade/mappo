@@ -1,6 +1,5 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.ui.unit.dp
 import com.mappo.data.model.steam.Activator
 import com.mappo.data.model.steam.ActivatorGraph
 import com.mappo.data.model.steam.ActivatorType
@@ -10,11 +9,11 @@ import com.mappo.data.model.steam.BindingOutputType
 import com.mappo.data.model.steam.GroupInput
 import com.mappo.data.model.steam.GroupInputGraph
 import com.mappo.data.model.steam.InputSource
-import kotlin.math.abs
 import org.junit.Test
 
 /**
- * The zoomed scene's navigation map (2026-09-17).
+ * The grid's navigation map (2026-09-17; the zoomed scene's until that view was retired
+ * 2026-09-27).
  *
  * These pin the route a CARRIED command travels, which Dylan specified in hardware terms: up and
  * down walk one flank of the controller, left and right cross it to the group opposite. Spatial
@@ -25,7 +24,7 @@ import org.junit.Test
  * right out of the left stick and left out of the right one. They are a group per side now, at
  * the bottom of their own column, so nothing sits between the flanks any more.
  */
-class RemapZoomSceneTest {
+class RemapGridNavigationTest {
 
     private companion object {
         const val Slots = 6
@@ -193,14 +192,6 @@ class RemapZoomSceneTest {
         val bottom = RemapSimpleGroup.LEFT_UTILITY
         val bottomLeft = cell(bottom, row = bottom.rows.lastIndex, slot = 0)
         assert(stepCellAcrossGroups(bottomLeft, dRow = 1, dCol = 0, slots = slots) == null)
-    }
-
-    @Test
-    fun theStandaloneEditorsStepper_neverLeavesItsGroup() {
-        // Slot 0 is the d-pad's inboard edge, and right is off the group entirely.
-        val from = cell(RemapSimpleGroup.DPAD, row = 1, slot = 0)
-        val next = stepCellWithinGroup(from, dRow = 0, dCol = 1, slots = slots)
-        assert(next == from) { "an edge step should stay put, got $next" }
     }
 
     @Test
@@ -383,36 +374,5 @@ class RemapZoomSceneTest {
         val bare = commandDisplay(binding(icon = false, initials = false), outputs, null)
         assert(bare.glyph == null) { "icons off: ${bare.glyph}" }
         assert(bare.line == "ESCAPE") { bare.line }
-    }
-
-    /**
-     * The zoomed controller sits where the basic grid puts it: level with the middle band, above
-     * the sticks, below the shoulders.
-     *
-     * Dylan, 2026-09-18 — it used to be centred over the top TWO bands together, most of a band
-     * higher than the basic view has it, so zooming into the button pad carried the face buttons
-     * off the top of the screen. The camera parks on the card, so wherever the image is relative
-     * to that card is what the user sees.
-     */
-    @Test
-    fun theZoomedControllerStaysLevelWithTheGroupsItSitsBetween() {
-        val scene = sceneGeometry(viewportW = 800.dp, viewportH = 480.dp, controllerAspect = 0.62f)
-        fun centreY(rect: SceneRect) = (rect.y + rect.height / 2).value
-        val controller = centreY(scene.controller)
-        val dpad = centreY(scene.cards.getValue(RemapSimpleGroup.DPAD))
-        val face = centreY(scene.cards.getValue(RemapSimpleGroup.FACE))
-        assert(abs(dpad - controller) < 1f) { "d-pad at $dpad, controller at $controller" }
-        assert(abs(face - controller) < 1f) { "face at $face, controller at $controller" }
-
-        val shoulder = centreY(scene.cards.getValue(RemapSimpleGroup.RIGHT_SHOULDER))
-        val stick = centreY(scene.cards.getValue(RemapSimpleGroup.RIGHT_STICK))
-        assert(shoulder < controller) { "shoulders should sit above the controller, got $shoulder" }
-        assert(stick > controller) { "sticks should sit below the controller, got $stick" }
-
-        // And the whole scene still contains it — the camera can't travel past the scene's edge,
-        // so anything hanging off the bottom would simply be unreachable.
-        assert(scene.controller.y.value >= 0f) { "controller starts at ${scene.controller.y}" }
-        val bottom = (scene.controller.y + scene.controller.height).value
-        assert(bottom <= scene.height.value) { "controller ends at $bottom, scene is ${scene.height}" }
     }
 }

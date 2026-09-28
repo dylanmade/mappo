@@ -33,8 +33,10 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
+import com.mappo.data.settings.MinVisibleTiles
 import com.mappo.data.settings.TileReveal
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
+import com.mappo.ui.screen.remap.LocalMinVisibleTiles
 import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.GroupOutlineEndInset
 import com.mappo.ui.screen.remap.GroupOutlineInset
@@ -160,13 +162,23 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("R-Stick Left", useUnmergedTree = true).assertCountEquals(0)
     }
 
+    /**
+     * **HOLDING a group opens its own action menu** (Dylan, 2026-09-27) — the gesture that used to
+     * open the advanced view, now that there is no advanced view to open.
+     *
+     * It carries the two things that view's card header carried and edit mode had nowhere to put:
+     * the group's mode settings, and resetting the group to the layout's defaults. Same
+     * `MinputActionMenu` a tile wears, named after the GROUP.
+     */
     @Test
-    fun holdingDpadBox_morphsIntoGroupEditor() {
+    fun holdingAGroup_opensItsOwnMenu_withSettingsAndReset() {
+        var reset: Long? = null
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
-                        config = sampleConfig(),
+                        config = seedShapedConfig(),
+                        onResetBindingGroups = { reset = it.firstOrNull() },
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
@@ -175,12 +187,15 @@ class RemapControlsScreenTest {
             }
         }
 
-        openAdvanced("DPAD")
+        composeRule.onNodeWithTag("simple-group:DPAD").performTouchInput { longClick() }
         composeRule.waitForIdle()
+        // Named after the group, not after its mode: the thing being held is the group.
+        composeRule.onNodeWithText("Directional Pad settings", useUnmergedTree = true).assertExists()
+        // Holding a group does NOT enter edit mode — its rows are still rows.
+        composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0").assertCountEquals(0)
 
-        // The view zooms into the scene, with the camera on the group that was held.
-        composeRule.onNodeWithTag("group-editor").assertExists()
-        inOpenCard(hasContentDescription("Close")).assertCountEquals(1)
+        clickMenuItem("Reset Directional Pad to default")
+        assert(reset != null) { "Reset should have reached the callback, got $reset" }
     }
 
 
@@ -1374,168 +1389,46 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Override actions").assertCountEquals(0)
     }
 
-    /**
-     * The zoomed scene's framing (2026-09-17): opening a group puts ITS table on its own side of
-     * the screen with the centre column — the controller — beside it, and leaves the groups
-     * around it a pan away rather than gone. Bounds, not existence: the first cut of the camera
-     * placed the scene correctly and then drew it half a viewport off, which every
-     * existence-based assertion in this file happily passed.
-     */
-    @Test
-    fun zoomScene_framesTheOpenedGroup_withTheControllerBeside() {
-        setScreenLocal(seedShapedConfig())
-        val viewport = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
-
-        openAdvanced("FACE")
-        composeRule.waitForIdle()
-        val face = composeRule.onNodeWithTag("zoom-card:FACE", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        // A right-hand group clamps flush to the right edge, and leaves the left third of the
-        // screen to the centre column.
-        assert(face.right >= viewport.right - 20f) { "face card should reach the right edge: $face" }
-        assert(face.left > viewport.width * 0.2f) { "face card should leave room for the controller: $face" }
-
-        inOpenCard(hasContentDescription("Close")).onFirst().performClick()
-        composeRule.waitForIdle()
-        openAdvanced("DPAD")
-        composeRule.waitForIdle()
-        val dpad = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        // And a left-hand group frames the other way about.
-        assert(dpad.left <= viewport.left + 20f) { "dpad card should reach the left edge: $dpad" }
-        assert(dpad.right < viewport.width * 0.8f) { "dpad card should leave room for the controller: $dpad" }
-    }
 
     /**
-     * The left flank's tables are MIRRORED (Dylan, 2026-09-17): glyph column at the card's right
-     * edge, the row's commands running outward to the left, so a card and the basic-view box it
-     * grew out of have the same shape. Asserted on the CELLS rather than the glyphs — the slot
-     * order is the thing that flips, and it's what the move-preview arithmetic keys off.
+     * **The left flank's rows are MIRRORED** (Dylan, 2026-09-17): the input glyph sits at the
+     * group's INNER edge and the row's tiles run outward from it, so the two flanks read as each
+     * other's reflection around the controller between them.
+     *
+     * Asserted on the TILES rather than the glyph, because the slot order is the thing that flips
+     * and it is what the move-preview arithmetic keys off ([slotStepFor]). It was the zoomed
+     * card's rule first; edit mode inherited it, and the cards are gone (2026-09-27).
      */
     @Test
-    fun zoomScene_mirrorsTheLeftFlanksSlots() {
-        setScreenLocal(
+    fun editMode_theLeftFlanksSlotsRunOutward_theRightFlanksInward() {
+        setScreenRevealing(
+            TileReveal.ALL_GROUPS,
             seedShapedConfig()
                 .withTwoCommands(InputSource.DPAD, "dpad_up", idBase = 500L)
                 .withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
         )
-
-        openAdvanced("DPAD")
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         composeRule.waitForIdle()
-        val first = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val second = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:1", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
+
+        fun bounds(tag: String) = composeRule
+            .onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val first = bounds("cell:DPAD:DPAD:dpad_up:0")
+        val second = bounds("cell:DPAD:DPAD:dpad_up:1")
         assert(second.left < first.left) {
-            "slot 1 should sit LEFT of slot 0 on a mirrored table: $first / $second"
+            "slot 1 should sit LEFT of slot 0 on the left flank: $first / $second"
+        }
+        // And a utility group reads like every other group on its side (Dylan, 2026-09-26): it
+        // used to straddle the centre, Select running left and Start right.
+        val utilityFirst = bounds("cell:LEFT_UTILITY:SWITCH_SELECT:click:0")
+        val utilitySecond = bounds("cell:LEFT_UTILITY:SWITCH_SELECT:click:1")
+        assert(utilitySecond.right <= utilityFirst.left + 1f) {
+            "a left utility row should run outward too: $utilityFirst / $utilitySecond"
         }
 
-        inOpenCard(hasContentDescription("Close")).onFirst().performClick()
-        composeRule.waitForIdle()
-        openAdvanced("FACE")
-        composeRule.waitForIdle()
-        val faceFirst = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val faceSecond = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:1", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
+        val faceFirst = bounds("cell:FACE:BUTTON_DIAMOND:button_y:0")
+        val faceSecond = bounds("cell:FACE:BUTTON_DIAMOND:button_y:1")
         assert(faceSecond.left > faceFirst.left) {
             "the right flank keeps its normal order: $faceFirst / $faceSecond"
-        }
-    }
-
-    /**
-     * A LEFT-flank card's body sits at its RIGHT edge (Dylan, 2026-09-20).
-     *
-     * The card reads toward its glyph column, which mirroring pins to the right; left-aligning
-     * the body left the gap on the side the eye starts from and the content floating away from
-     * the controller it belongs to.
-     */
-    @Test
-    fun zoomScene_rightAlignsTheLeftFlanksBody() {
-        setScreenLocal(seedShapedConfig())
-
-        openAdvanced("DPAD")
-        composeRule.waitForIdle()
-        val card = composeRule.onNodeWithTag("zoom-card:DPAD", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val tile = composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        assert(tile.left > card.center.x) {
-            "a mirrored card's body should hug its right edge: card $card, tile $tile"
-        }
-    }
-
-    /**
-     * A tile's press-type glyph is POSITIONED, not packed (Dylan, 2026-09-21).
-     *
-     * It used to lead a Row, which made it part of the tile's flex: the command name centred in
-     * whatever the glyph left over, so the same command sat at a different x depending on which
-     * press type it fired on. Asserted as "the name is centred in its own tile" on both a
-     * glyphless Regular Press tile and the Long Press tile beside it.
-     */
-    @Test
-    fun groupEditor_pressGlyph_doesNotShiftTheCommandName() {
-        setScreenLocal(
-            seedShapedConfig().withTwoCommands(InputSource.BUTTON_DIAMOND, "button_y", idBase = 600L),
-        )
-
-        openAdvanced("FACE")
-        composeRule.waitForIdle()
-        // Slot 0 is the Regular Press (no glyph), slot 1 the Long Press — the auto-sort's order.
-        val plain = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val glyphed = composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:1", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        // By bounds, not by uniqueness: the basic-view box under the card still holds a node
-        // saying the same thing, faded out behind its own table.
-        fun textIn(name: String, tile: androidx.compose.ui.geometry.Rect) =
-            composeRule.onAllNodesWithText(name, substring = true, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .map { it.boundsInRoot }
-                .first { tile.contains(it.center) }
-        val plainText = textIn("ENTER", plain)
-        val glyphedText = textIn("SPACE", glyphed)
-
-        // Each name sits at the SAME offset from its own tile's centre, press glyph or not. (The
-        // offset itself isn't zero: the name is the second half of a centred glyph + name pair.)
-        val plainOffset = plainText.center.x - plain.center.x
-        val glyphedOffset = glyphedText.center.x - glyphed.center.x
-        assert(kotlin.math.abs(plainOffset - glyphedOffset) < 2f) {
-            "the press glyph shifted the name: plain $plainOffset vs glyphed $glyphedOffset " +
-                "(tiles $plain / $glyphed, text $plainText / $glyphedText)"
-        }
-        // And the glyph itself is pinned to that tile's start edge rather than riding the text.
-        val pressGlyph = composeRule.onNodeWithContentDescription("Long Press", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        assert(pressGlyph.center.x < glyphed.center.x) {
-            "the press glyph leads the tile: tile $glyphed, glyph $pressGlyph"
-        }
-    }
-
-    /**
-     * **A utility card mirrors the flank it joined** (Dylan, 2026-09-26).
-     *
-     * This replaced a centre-card test: the utility group used to straddle the scene's centre
-     * line, Select's commands running left out of it and Start's right. Now Select is a LEFT
-     * column group, so its card reads like every other one on that side — glyph at the card's
-     * right edge, commands running outward to the left.
-     */
-    @Test
-    fun zoomScene_utilityCard_mirrorsItsFlank() {
-        setScreenLocal(seedShapedConfig())
-
-        openAdvanced("LEFT_UTILITY")
-        composeRule.waitForIdle()
-        val card = composeRule.onNodeWithTag("zoom-card:LEFT_UTILITY", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        // Slot 0 is the command nearest the glyph, slot 1 the "+" beyond it — and on a mirrored
-        // card the indices climb LEFTWARD.
-        val first = composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        val second = composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:1", useUnmergedTree = true)
-            .fetchSemanticsNode().boundsInRoot
-        assert(second.right <= first.left + 1f) {
-            "the row should run outward to the LEFT: first $first, second $second (card $card)"
         }
     }
 
@@ -1784,12 +1677,10 @@ class RemapControlsScreenTest {
         // Override visible in the simple view; base hidden for that row.
         composeRule.onNodeWithText("MOUSE_LEFT", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("ENTER", useUnmergedTree = true).assertCountEquals(0)
-        // The override affordance now lives on the cell itself: the advanced view is a table,
-        // and button_a's Press cell carries the layer menu.
-        openAdvanced("FACE")
+        // The override affordance lives on the TILE: opening the group in edit mode turns
+        // button_a's row into tiles, and its first tile carries the layer menu.
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").assertIsDisplayed()
     }
 
@@ -1817,10 +1708,8 @@ class RemapControlsScreenTest {
             }
         }
 
-        openAdvanced("FACE")
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:0"))
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0").performClick()
         // Driven through semantics rather than performClick: menu rows live in a Popup, and
         // popup bounds come back NEGATED under Robolectric (a menu anchored at x=56 reports
@@ -1835,7 +1724,7 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun groupEditor_hasNoOverridesFilter() {
+    fun theEditor_hasNoOverridesFilter() {
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -1850,7 +1739,7 @@ class RemapControlsScreenTest {
                 }
             }
         }
-        openAdvanced("FACE")
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Only overrides").assertCountEquals(0)
         composeRule.onAllNodesWithText("Show all").assertCountEquals(0)
@@ -2002,85 +1891,34 @@ class RemapControlsScreenTest {
         )
     }
 
-    /** Builds a minimal ControllerConfig matching the seed shape, with optional override for BUTTON_A. */
-
 
     /**
-     * The advanced view's two write affordances — the mode pill and an empty cell's "New" —
-     * both depend on the SAME lookup: the viewed set's active preset entry for the group's
-     * source. When that resolves to null the header silently degrades to a dead "DEFAULT"
-     * label and every tile is disabled, which is a regression shape Dylan hit on device
-     * (2026-09-12) and one nothing in the suite covered. These three pin it.
+     * A row's trailing "+" tile creates a command on that row, in the edit mode that is now the
+     * only editor. A fresh layout seeds one command per row (its own self-mapping), so the "+" is
+     * SLOT 1 — slot 0 holds a real command and offers Edit, not New.
      */
     @Test
-    fun groupEditor_everyGroup_offersAnEnabledModePill() {
-        setScreenLocal(seedShapedConfig())
-        // The utility groups are exempt by design (Dylan, 2026-09-21): Start and Select have no
-        // mode to pick — theirs follows from whether they are bound — so their card states its
-        // name instead.
-        val utility = setOf(RemapSimpleGroup.LEFT_UTILITY, RemapSimpleGroup.RIGHT_UTILITY)
-        for (group in RemapSimpleGroup.entries - utility) {
-            openAdvanced(group.name)
-            composeRule.waitForIdle()
-            val pills = inOpenCard(modePillMatcher).fetchSemanticsNodes().size
-            assert(pills == 1) {
-                "${group.name}: expected one enabled mode pill, found $pills — the header fell " +
-                    "back to its dead \"DEFAULT\" label, so the group's preset didn't resolve."
-            }
-            inOpenCard(hasContentDescription("Close")).onFirst().performClick()
-            composeRule.waitForIdle()
-        }
-    }
-
-    @Test
-    fun groupEditor_modePill_picksMode() {
-        var picked: Pair<Long, BindingMode>? = null
-        composeRule.setContent {
-            MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onSetBindingGroupMode = { id, mode -> picked = id to mode },
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-        openAdvanced("FACE")
-        composeRule.waitForIdle()
-        inOpenCard(modePillMatcher).onFirst().performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
-        // Menu rows live in a Popup, whose bounds come back negated under Robolectric — drive
-        // the row through semantics rather than a coordinate click.
-        composeRule.onNodeWithText("None").performSemanticsAction(SemanticsActions.OnClick)
-        assert(picked != null) { "Picking a mode did not reach onSetBindingGroupMode" }
-    }
-
-    @Test
-    fun groupEditor_plusTile_newCommand_addsToTheRow() {
+    fun editMode_plusTile_newCommand_addsToTheRow() {
         var added: Triple<Long, String, ActivatorType>? = null
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
-                    RemapControlsScreen(
-                        config = seedShapedConfig(),
-                        onAddRowCommand = { g, k, t, _ -> added = Triple(g, k, t) },
-                        onOpenInputEditor = { _, _, _ -> },
-                        onBack = {},
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    )
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.ALL_GROUPS,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig(),
+                            onAddRowCommand = { g, k, t, _ -> added = Triple(g, k, t) },
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
-        openAdvanced("FACE")
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
         composeRule.waitForIdle()
-        // A fresh layout seeds one command per row (its own self-mapping), so the row's "+"
-        // is SLOT 1 — slot 0 holds a real command and offers Edit, not New. A new command
-        // starts as a Regular Press and is retyped from the same menu.
-        composeRule.onNodeWithTag("group-editor-table:FACE")
-            .performScrollToNode(hasTestTag("cell:FACE:BUTTON_DIAMOND:button_a:1"))
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New").performSemanticsAction(SemanticsActions.OnClick)
@@ -2114,8 +1952,7 @@ class RemapControlsScreenTest {
     /**
      * EDIT MODE is view-WIDE (Dylan, 2026-09-22): the mode itself belongs to the whole view, so a
      * command can be carried from any group to any other. On [TileReveal.ALL_GROUPS] that shows
-     * as every group's rows tiling at once. And it does not travel — the advanced card is not
-     * opened.
+     * as every group's rows tiling at once.
      */
     @Test
     fun simpleView_selectingAGroup_tilesEveryGroupsRows_withoutZooming() {
@@ -2128,15 +1965,13 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0").assertExists()
         // Every row ends in its "+", exactly as the table's rows do.
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_a:1").assertExists()
-        composeRule.onAllNodesWithTag("group-editor").assertCountEquals(0)
     }
 
     /**
      * **Revealing ONE group at a time** (Dylan, 2026-09-27, the default while the experiment
      * runs): "entering edit mode via an input group only reveals the tiles for that input group".
      *
-     * Everything else about the mode is unchanged — the group opened is fully tiled, "+" and all,
-     * and the view has not travelled anywhere.
+     * Everything else about the mode is unchanged — the group opened is fully tiled, "+" and all.
      */
     @Test
     fun editMode_revealingOneGroup_tilesThatGroupAlone() {
@@ -2149,7 +1984,6 @@ class RemapControlsScreenTest {
         // Every OTHER group is still the resting view.
         composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0").assertCountEquals(0)
         composeRule.onAllNodesWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0").assertCountEquals(0)
-        composeRule.onAllNodesWithTag("group-editor").assertCountEquals(0)
     }
 
     /**
@@ -2863,20 +2697,6 @@ class RemapControlsScreenTest {
      * worked on"). "The Close button" is therefore seven nodes, and a test that means the open
      * one has to say so — the open card is the one tagged `group-editor`.
      */
-    /**
-     * Open a group's ADVANCED card.
-     *
-     * A HOLD on its basic-view box since 2026-09-22: an ordinary tap now means "edit this
-     * group's rows in place" (see RemapSimpleView's edit mode), and holding is what still
-     * travels to the separate view.
-     */
-    private fun openAdvanced(group: String) {
-        composeRule.onNodeWithTag("simple-group:$group").performTouchInput { longClick() }
-        composeRule.waitForIdle()
-    }
-
-    private fun inOpenCard(matcher: androidx.compose.ui.test.SemanticsMatcher) =
-        composeRule.onAllNodes(matcher and hasAnyAncestor(hasTestTag("group-editor")), useUnmergedTree = true)
 
     /**
      * Put two bound commands — a Regular and a Long press — on one row of [source], for tests
@@ -3231,5 +3051,201 @@ class RemapControlsScreenTest {
             ),
             actionSets = listOf(actionSet),
         )
+    }
+
+    private fun setScreenWithMin(
+        min: MinVisibleTiles,
+        reveal: TileReveal = TileReveal.FOCUSED_GROUP,
+        width: Int = 1200,
+        height: Int = 1600,
+        config: ControllerConfig = seedShapedConfig(),
+    ) {
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides reveal,
+                    LocalMinVisibleTiles provides min,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
+                        RemapControlsScreen(
+                            config = config,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+    }
+
+    /**
+     * **Opening a group pans the view even when the group needs no framing at all** (Dylan,
+     * 2026-09-27: groups "whose inputs all only have one assigned tile (and subsequently one empty
+     * tile) ... don't shift the camera at all when activated").
+     *
+     * Two reasons it did nothing, and the minimum-visible-tiles floor answers both: framing is a
+     * SCROLL, so a grid that fits the window has no pan to give; and a flank box widening on a
+     * fitting grid eats its own leading pad, so the controller and everything past it stay exactly
+     * put. With a floor of three tiles, a two-tile group is one tile short — and that shortfall is
+     * what the view moves by, out of the pad on the far side.
+     *
+     * Measured on the CONTROLLER, which is the one element that says the picture moved rather than
+     * that a box grew, and against the row's own tile PITCH, so "an additional tile's width" is
+     * asserted as exactly that and not as a number.
+     */
+    @Test
+    fun openingAGroup_pansByTheMinimumVisibleTiles_evenWhenItNeedsNoFraming() {
+        setScreenWithMin(MinVisibleTiles.THREE)
+        fun controller() = composeRule
+            .onNodeWithTag("controller-image", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1200)
+            composeRule.waitForIdle()
+        }
+
+        val rest = controller()
+        // A LEFT-flank group: its rows run off the left edge, so looking at it moves the content
+        // RIGHT.
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
+        settle()
+        val onLeft = controller()
+        // One tile and its gap — the row's own pitch, taken from two adjacent tiles of the group
+        // that is now open (its slots run leftward, being an end-anchored row).
+        fun tileLeft(slot: Int) = composeRule
+            .onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val pitch = kotlin.math.abs(tileLeft(0) - tileLeft(1))
+        assert(kotlin.math.abs((onLeft - rest) - pitch) <= 1f) {
+            "a two-tile group should pan by one tile: ${onLeft - rest} vs $pitch"
+        }
+
+        // And the mirror image on the other flank, by the same amount the other way.
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        settle()
+        val onRight = controller()
+        assert(kotlin.math.abs((rest - onRight) - pitch) <= 1f) {
+            "the right flank should pan by the same tile, the other way: ${rest - onRight} vs $pitch"
+        }
+    }
+
+    /** With no floor asked for, nothing moves — which is the behaviour being reported, kept
+     *  reachable so the floor can be turned off. */
+    @Test
+    fun openingAGroup_withNoMinimumAsked_leavesTheViewExactlyWhereItWas() {
+        setScreenWithMin(MinVisibleTiles.NONE)
+        fun controller() = composeRule
+            .onNodeWithTag("controller-image", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val rest = controller()
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(1200)
+        composeRule.waitForIdle()
+        assert(controller() == rest) { "nothing should have moved: $rest -> ${controller()}" }
+    }
+
+    /**
+     * **Walking into a group in the other column pans to it even with every group revealed**
+     * (Dylan, 2026-09-27: "we don't induce an input group pan at all if 'Show tiles for Every
+     * Group' is configured and the user navigates from an input group in one column to an input
+     * group in the other column").
+     *
+     * On [TileReveal.ALL_GROUPS] a hop changes NO group's shape, so there was no travel to run and
+     * the view only moved as far as the focused tile's own bring-into-view dragged it. The reveal
+     * now travels for the camera alone, and the pan follows the cursor's group.
+     */
+    @Test
+    fun walkingIntoTheOtherColumn_pansToThatGroup_withEveryGroupRevealed() {
+        setScreenWithMin(MinVisibleTiles.THREE, reveal = TileReveal.ALL_GROUPS)
+        fun controller() = composeRule
+            .onNodeWithTag("controller-image", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1200)
+            composeRule.waitForIdle()
+        }
+
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        settle()
+        val onRight = controller()
+        // Every group is tiles, so there is no box left to tap: the cursor moves between groups by
+        // landing on a TILE, which is what a d-pad hop across the grid does.
+        composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
+            .requestFocus()
+        settle()
+        assert(controller() > onRight) {
+            "walking to the left flank should have panned back: $onRight -> ${controller()}"
+        }
+    }
+
+    /**
+     * **The pan never flashes** (Dylan, 2026-09-28: "a strange jitter every time I open an input
+     * group or navigate between input groups - almost like the input groups are flashing inward
+     * towards the center column").
+     *
+     * Activating a group writes the new focus in the CLICK; the travel that answers it is reset by
+     * an effect a frame later. Anything that recomputes a placement from the live focus therefore
+     * gets one frame of "new group, old travel" — and for the minimum-visible-tiles pan that was the
+     * whole grid jumping to its unbiased, controller-centred position and back (measured: 94px, one
+     * tile). The pan is captured with the travel's other endpoints now, so a frame that has not
+     * re-planned cannot move it at all.
+     *
+     * Asserted frame by frame on the CONTROLLER, which is the element that says the picture moved
+     * rather than that a box grew: across a whole hop it may only ever travel ONE way.
+     */
+    @Test
+    fun switchingGroups_neverFlashesTheViewBackToTheRestingPosition() {
+        composeRule.mainClock.autoAdvance = false
+        setScreenWithMin(
+            MinVisibleTiles.THREE,
+            // A fat group in the LEFT column: the grid overruns the window, so there is both a pan
+            // to make and a scroll plan making it.
+            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+            width = 900,
+        )
+        composeRule.mainClock.advanceTimeBy(800)
+        fun controller() = composeRule
+            .onNodeWithTag("controller-image", useUnmergedTree = true).fetchSemanticsNode().positionInRoot.x
+
+        fun frames(count: Int): List<Float> = buildList {
+            repeat(count) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.waitForIdle()
+                add(controller())
+            }
+        }
+        fun assertOneWay(label: String, series: List<Float>) {
+            val net = series.last() - series.first()
+            assert(net != 0f) { "$label should have panned at all: $series" }
+            // **The first frame after the gesture has not moved.** The travel is reset to 0 before
+            // it runs, so anything already at its destination on that frame is not travelling — it
+            // is flashing. This is the assertion the flash was caught by; the monotonicity below
+            // would miss a jump that then STAYS jumped.
+            assert(kotlin.math.abs(series[1] - series[0]) <= 2f) {
+                "$label jumped on its first frame: ${series[0]} -> ${series[1]}\n$series"
+            }
+            series.zipWithNext { a, b ->
+                val step = b - a
+                assert(step == 0f || (step > 0f) == (net > 0f)) {
+                    "$label reversed: $a -> $b against a net of $net\n$series"
+                }
+            }
+        }
+
+        val rest = controller()
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        assertOneWay("opening a group", listOf(rest) + frames(24))
+        composeRule.mainClock.advanceTimeBy(600)
+        composeRule.waitForIdle()
+
+        val opened = controller()
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        assertOneWay("hopping to the other column", listOf(opened) + frames(24))
+        composeRule.mainClock.autoAdvance = true
     }
 }
