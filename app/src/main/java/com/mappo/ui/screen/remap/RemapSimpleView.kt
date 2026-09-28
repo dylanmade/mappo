@@ -158,10 +158,16 @@ internal fun RemapSimpleView(
      * revealed (Dylan, 2026-09-27). It follows focus rather than intent: the d-pad walks from a
      * tile in one group straight into the next group's box, and arriving there is what opens it.
      *
-     * Distinct from [editGroup] on purpose. That one is the group edit mode was ENTERED from, and
-     * Back still returns the cursor to it; this one moves as the user moves.
+     * Distinct from [editGroup] on purpose. That one is the group edit mode was ENTERED from; this
+     * one moves as the user moves.
+     *
+     * **Saveable, like [editGroup]** (Dylan, 2026-09-28). Adding a command goes out to the
+     * full-screen picker and back, which rebuilds this screen; remembered plainly, the cursor's group
+     * was lost on the way and the view came back revealing the group edit mode was ENTERED from — so
+     * with one group revealed, the group the new command had just been added to had no tiles for the
+     * cursor to land on, and it went back to where the session started.
      */
-    var editCursor by remember { mutableStateOf<RemapSimpleGroup?>(null) }
+    var editCursor by rememberSaveable { mutableStateOf<RemapSimpleGroup?>(null) }
     /**
      * **A tile is in flight.** Every group reveals for as long as one is — asked for explicitly
      * (Dylan, 2026-09-27: "if a tile has been grabbed, all of the tiles should become visible"),
@@ -169,8 +175,14 @@ internal fun RemapSimpleView(
      * lands, the group it landed in is the one that stays open.
      */
     var carrying by remember { mutableStateOf(false) }
-    /** One-shot: seat the cursor on this group's first tile, once there IS one to seat it on. */
-    var editSeat by remember { mutableStateOf<RemapSimpleGroup?>(null) }
+    /**
+     * One-shot: seat the cursor on this group's first tile, once there IS one to seat it on.
+     *
+     * Primed on a screen that comes back ALREADY in edit mode (from the command picker): the cursor
+     * belongs in its own group's tiles, not on the top-left box a fresh screen otherwise seats — see
+     * [returnFocusGroup]. A command landing claims the cursor for itself and outranks this.
+     */
+    var editSeat by remember { mutableStateOf(editCursor ?: editGroup) }
     // Bumped to re-seat the cursor on a tile after a tap has wiped focus. See [refocusTick].
     var editFocusTick by remember { mutableIntStateOf(0) }
 
@@ -204,10 +216,10 @@ internal fun RemapSimpleView(
      * group". Tracking what was framed is what lets a hop run a travel of its own, whose only job
      * is the camera.
      *
-     * Initialised from [editGroup] (which is saveable) so returning from the command picker —
-     * where everything is remembered except the cursor — does not read as a hop.
+     * Initialised from the group the cursor is in (saveable, like [editGroup]) so returning from the
+     * command picker does not read as a hop.
      */
-    var framedGroup by remember { mutableStateOf(editGroup) }
+    var framedGroup by remember { mutableStateOf(editCursor ?: editGroup) }
 
     // The morph, whichever way each group is going — and, when nothing is going anywhere, the pan
     // to whichever group the cursor has just walked into.
@@ -275,7 +287,14 @@ internal fun RemapSimpleView(
     // controller-ready immediately — the Select/Start panel summons are preview key handlers that
     // only fire while focus sits in this subtree, and an unseated screen's first d-pad press used
     // to default-hunt into the frame chrome.
-    var returnFocusGroup by remember { mutableStateOf<RemapSimpleGroup?>(RemapSimpleGroup.LEFT_SHOULDER) }
+    //
+    // **Not when the screen comes back in edit mode** (Dylan, 2026-09-28). In edit mode a box taking
+    // focus is what REVEALS its group, so seating the top-left box on the way back from the command
+    // picker opened the left shoulder over whichever group the user was actually working in.
+    // [editSeat] puts the cursor back on its own tiles instead.
+    var returnFocusGroup by remember {
+        mutableStateOf(if (editGroup == null) RemapSimpleGroup.LEFT_SHOULDER else null)
+    }
     val inputModeManager = LocalInputModeManager.current
 
     // Focus recovery. Any TAP flips the window into touch mode, which CLEARS Compose focus —

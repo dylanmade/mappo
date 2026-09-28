@@ -3535,4 +3535,102 @@ class RemapControlsScreenTest {
         }
         composeRule.mainClock.autoAdvance = true
     }
+
+    /**
+     * **Walking down a column onto a wide group gives it the TARGET, on either side** (Dylan,
+     * 2026-09-28: with one group revealed, left-column groups "reveal their max width/all content
+     * when navigated to, instead of only revealing the target amount of tiles").
+     *
+     * A left-column box grows at the content's START, pushing everything after it along, and the
+     * camera judged "already in view" against the scroll it had in the OLD grid — which, in the new
+     * one, showed the whole box's growth further out. The right column grows at the END and never
+     * had the problem, so the two are asserted as mirror images of each other: entered from a
+     * narrow group (reach = the target), each wide group gets exactly three tiles of room.
+     */
+    @Test
+    fun walkingDownAColumnOntoAWideGroup_leftColumn_getsTheTarget() =
+        assertSameColumnHopGetsTheTarget(from = "LEFT_SHOULDER", to = "DPAD", onLeft = true)
+
+    @Test
+    fun walkingDownAColumnOntoAWideGroup_rightColumn_getsTheTarget() =
+        assertSameColumnHopGetsTheTarget(from = "RIGHT_SHOULDER", to = "FACE", onLeft = false)
+
+    private fun assertSameColumnHopGetsTheTarget(from: String, to: String, onLeft: Boolean) {
+        setPanScreen(
+            width = 900,
+            config = seedShapedConfig()
+                .withPressStack(InputSource.DPAD, 7000L)
+                .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
+        )
+        composeRule.onNodeWithTag("simple-group:$from").performClick()
+        settlePan()
+        composeRule.onNodeWithTag("simple-group:$to").performClick()
+        settlePan()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val box = composeRule.onNodeWithTag("simple-group:$to", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        val row = if (onLeft) "DPAD:dpad_up" else "BUTTON_DIAMOND:button_y"
+        fun tileLeft(slot: Int) = composeRule
+            .onNodeWithTag("cell:$to:$row:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
+        // From the glyph — the box's INNER edge — out to the window's edge on the group's side.
+        val room = if (onLeft) box.first + box.second - window.left else window.right - box.first
+        val target = box.second - pitch
+        assert(kotlin.math.abs(room - target) <= 2f) {
+            "$to: ${room}px from the glyph to the window edge; the three-tile target is $target"
+        }
+    }
+
+    /**
+     * **The group the cursor walked into survives the command picker** (Dylan, 2026-09-28: "when I
+     * open one input group, then navigate to a different input group and add a brand new tile,
+     * focus then returns to the initial input group that was used to enter edit mode").
+     *
+     * Adding a command goes out to the full-screen picker and back, which rebuilds the screen. The
+     * group edit mode was ENTERED from was saved and the cursor's group was not, so with one group
+     * revealed the view came back showing the entry group — and the group the command had just been
+     * added to had no tiles for the cursor to land on. Emulated here as the rebuild itself.
+     */
+    @Test
+    fun theCursorsGroup_survivesTheTripToTheCommandPicker() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(composeRule)
+        restoration.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.FOCUSED_GROUP,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig(),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+        // WALKED into, not tapped: a tap on a box re-enters edit mode on it, which was always
+        // saved. The d-pad only moves the cursor, and the cursor was what got lost.
+        composeRule.onNodeWithTag("simple-group:FACE").requestFocus()
+        settlePan()
+        composeRule.onAllNodesWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0", useUnmergedTree = true)
+            .assertCountEquals(1)
+
+        restoration.emulateSavedInstanceStateRestore()
+        settlePan()
+
+        composeRule.onAllNodesWithTag("cell:FACE:BUTTON_DIAMOND:button_a:0", useUnmergedTree = true)
+            .assertCountEquals(1)
+        // Neither the group edit mode was entered from, nor the top-left box a fresh screen seats.
+        composeRule.onAllNodesWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
+            .assertCountEquals(0)
+        composeRule.onAllNodesWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0", useUnmergedTree = true)
+            .assertCountEquals(0)
+    }
 }

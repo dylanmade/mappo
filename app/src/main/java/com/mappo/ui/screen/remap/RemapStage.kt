@@ -1009,9 +1009,16 @@ internal fun RemapStage(
                     fromCentreX = fromSpan.centreX,
                     toCentreX = toSpan.centreX,
                 ) { from ->
+                    // **Where the view already is, said in the DESTINATION grid's coordinates** —
+                    // the scroll that keeps the controller where it is drawn now. A left-column box
+                    // grows at the content's START, pushing everything after it along, so the same
+                    // scroll value in the new grid shows a whole box's growth further out: every
+                    // left-column group then looked "already framed" and was shown whole, where its
+                    // mirror on the right got the target (Dylan, 2026-09-28).
+                    val here = from + toSpan.centreX - fromSpan.centreX
                     reveal.focus?.let { group ->
-                        editScrollTarget(toSpan, group, viewport, edgeX, from, reach)
-                    } ?: (from + toSpan.centreX - fromSpan.centreX).coerceIn(0, maxScrollAt(1f))
+                        editScrollTarget(toSpan, group, viewport, edgeX, here, reach)
+                    } ?: here.coerceIn(0, maxScrollAt(1f))
                 }
                 // ── The grid ON SCREEN ───────────────────────────────────────────────────────
                 //
