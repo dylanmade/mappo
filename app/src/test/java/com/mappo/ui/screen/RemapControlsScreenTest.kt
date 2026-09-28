@@ -33,10 +33,8 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.requestFocus
 import com.mappo.ui.screen.remap.ControllerImageTestTag
-import com.mappo.data.settings.MinVisibleTiles
 import com.mappo.data.settings.TileReveal
 import com.mappo.ui.screen.remap.ControlsBodyTestTag
-import com.mappo.ui.screen.remap.LocalMinVisibleTiles
 import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.GroupOutlineEndInset
 import com.mappo.ui.screen.remap.GroupOutlineInset
@@ -3053,8 +3051,12 @@ class RemapControlsScreenTest {
         )
     }
 
-    private fun setScreenWithMin(
-        min: MinVisibleTiles,
+    /**
+     * The screen as the pan tests need it. The WINDOW's shape picks the pan target (3 tiles, 2 on a
+     * square window), and Robolectric's default configuration is portrait, so it is pinned to a wide
+     * one here — the target these tests are written against is three tiles.
+     */
+    private fun setPanScreen(
         reveal: TileReveal = TileReveal.FOCUSED_GROUP,
         width: Int = 1200,
         height: Int = 1600,
@@ -3062,9 +3064,15 @@ class RemapControlsScreenTest {
     ) {
         composeRule.setContent {
             MaterialTheme {
+                val wide = android.content.res.Configuration(
+                    androidx.compose.ui.platform.LocalConfiguration.current,
+                ).apply {
+                    screenWidthDp = 1600
+                    screenHeightDp = 900
+                }
                 androidx.compose.runtime.CompositionLocalProvider(
                     LocalTileReveal provides reveal,
-                    LocalMinVisibleTiles provides min,
+                    androidx.compose.ui.platform.LocalConfiguration provides wide,
                 ) {
                     Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
                         RemapControlsScreen(
@@ -3085,7 +3093,7 @@ class RemapControlsScreenTest {
      * 2026-09-27: groups "whose inputs all only have one assigned tile (and subsequently one empty
      * tile) ... don't shift the camera at all when activated").
      *
-     * Two reasons it did nothing, and the minimum-visible-tiles floor answers both: framing is a
+     * Two reasons it did nothing, and the pan-on-open designation answers both: framing is a
      * SCROLL, so a grid that fits the window has no pan to give; and a flank box widening on a
      * fitting grid eats its own leading pad, so the controller and everything past it stay exactly
      * put. With a floor of three tiles, a two-tile group is one tile short — and that shortfall is
@@ -3096,8 +3104,8 @@ class RemapControlsScreenTest {
      * asserted as exactly that and not as a number.
      */
     @Test
-    fun openingAGroup_pansByTheMinimumVisibleTiles_evenWhenItNeedsNoFraming() {
-        setScreenWithMin(MinVisibleTiles.THREE)
+    fun openingAGroup_pansByTheDesignatedRoom_evenWhenItNeedsNoFraming() {
+        setPanScreen()
         fun controller() = composeRule
             .onNodeWithTag("controller-image", useUnmergedTree = true)
             .fetchSemanticsNode().positionInRoot.x
@@ -3132,22 +3140,6 @@ class RemapControlsScreenTest {
         }
     }
 
-    /** With no floor asked for, nothing moves — which is the behaviour being reported, kept
-     *  reachable so the floor can be turned off. */
-    @Test
-    fun openingAGroup_withNoMinimumAsked_leavesTheViewExactlyWhereItWas() {
-        setScreenWithMin(MinVisibleTiles.NONE)
-        fun controller() = composeRule
-            .onNodeWithTag("controller-image", useUnmergedTree = true)
-            .fetchSemanticsNode().positionInRoot.x
-        val rest = controller()
-        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
-        composeRule.waitForIdle()
-        composeRule.mainClock.advanceTimeBy(1200)
-        composeRule.waitForIdle()
-        assert(controller() == rest) { "nothing should have moved: $rest -> ${controller()}" }
-    }
-
     /**
      * **Walking into a group in the other column pans to it even with every group revealed**
      * (Dylan, 2026-09-27: "we don't induce an input group pan at all if 'Show tiles for Every
@@ -3160,7 +3152,7 @@ class RemapControlsScreenTest {
      */
     @Test
     fun walkingIntoTheOtherColumn_pansToThatGroup_withEveryGroupRevealed() {
-        setScreenWithMin(MinVisibleTiles.THREE, reveal = TileReveal.ALL_GROUPS)
+        setPanScreen(reveal = TileReveal.ALL_GROUPS)
         fun controller() = composeRule
             .onNodeWithTag("controller-image", useUnmergedTree = true)
             .fetchSemanticsNode().positionInRoot.x
@@ -3184,13 +3176,113 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **The minimum is enforced even where the scroll range runs out** (Dylan, 2026-09-28: with
+     * every group revealed, walking from a left-column group to a right-column one "only pans to
+     * the right enough to show the assigned input and its empty tile, instead of the 3 tile slots
+     * the setting is supposed to enforce").
+     *
+     * With every group tiled the grid overruns the window, so the floor is asked of the SCROLL —
+     * and past the outermost group there is nothing but the grid's own margin, so the scroller
+     * clamps at its end with the request short by a tile. What the scroll cannot reach the placement
+     * now supplies, the same way it supplies the whole floor on a grid with no scroll range at all.
+     *
+     * Asserted as the invariant the setting states: from the group's glyph edge to the window's
+     * edge there is room for THREE tiles — measured as its own two-tile box plus one more tile's
+     * pitch, so no dp figure appears here.
+     */
+    @Test
+    fun walkingIntoAGroupAtTheScrollEnd_stillShowsTheDesignatedRoom() {
+        // The grid must genuinely OVERRUN the window, which is the case the floor was being ignored
+        // in. Symmetric flanks alone never manage it — `gridSpan` pads each side up to half the
+        // window, so two equal halves come out exactly one window wide, and the controller column's
+        // squeeze closes what is left. One fat column does it.
+        setPanScreen(
+            reveal = TileReveal.ALL_GROUPS,
+            width = 900,
+            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        // Enter on a LEFT-column group, then walk across to a RIGHT-column one — the hop Dylan
+        // described. With every group revealed there is no box left to tap, so the cursor moves by
+        // landing on a tile, exactly as the d-pad does.
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
+            .requestFocus()
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(1200)
+        composeRule.waitForIdle()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val box = composeRule.onNodeWithTag("simple-group:FACE", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        fun tileLeft(slot: Int) = composeRule
+            .onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
+        // A right-flank group's glyph is at its LEFT edge and its tiles run rightward, so the
+        // region the floor asks for starts at the box's left edge.
+        val room = window.right - box.first
+        assert(room >= box.second + pitch - 1f) {
+            "only ${room}px from the group's glyph to the window edge; three tiles need " +
+                "${box.second + pitch} (its two-tile box ${box.second} plus one pitch $pitch)"
+        }
+    }
+
+    /**
+     * **Walking ALONG a column does not move the view** (Dylan, 2026-09-28) — which is the point of
+     * the pan being a designation rather than a floor measured against each group's own box.
+     *
+     * Every group in a column has its glyph on the column's inner edge, so they all share the region
+     * the setting designates, and the room the grid already gives that region is the COLUMN's width.
+     * Measured against each box instead, a NARROW group in a wide column asked for a tile more than
+     * the wide group beside it: "navigating to another left column input group that contains fewer
+     * tiles actually extends that input group's camera pan even further than the original longest
+     * input group row, almost like it's additive". Its mirror on the other flank was the view sitting
+     * at the widest group's position and never coming back.
+     */
+    @Test
+    fun walkingAlongAColumn_leavesTheViewWhereItIs() {
+        // One FAT group in the left column and the narrow ones beside it — the shape the additive
+        // pan showed up on.
+        setPanScreen(
+            reveal = TileReveal.ALL_GROUPS,
+            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        fun controller() = composeRule
+            .onNodeWithTag("controller-image", useUnmergedTree = true).fetchSemanticsNode().positionInRoot.x
+        fun settle() {
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(1200)
+            composeRule.waitForIdle()
+        }
+        fun focusTile(tag: String) {
+            composeRule.onNodeWithTag(tag, useUnmergedTree = true).requestFocus()
+            settle()
+        }
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settle()
+        val onTheFatOne = controller()
+        // ...and along to the two-tile groups in the SAME column.
+        focusTile("cell:LEFT_UTILITY:SWITCH_SELECT:click:0")
+        assert(controller() == onTheFatOne) {
+            "walking to a narrower group in the same column moved the view: " +
+                "$onTheFatOne -> ${controller()}"
+        }
+        focusTile("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:0")
+        assert(controller() == onTheFatOne) {
+            "and again: $onTheFatOne -> ${controller()}"
+        }
+    }
+
+    /**
      * **The pan never flashes** (Dylan, 2026-09-28: "a strange jitter every time I open an input
      * group or navigate between input groups - almost like the input groups are flashing inward
      * towards the center column").
      *
      * Activating a group writes the new focus in the CLICK; the travel that answers it is reset by
      * an effect a frame later. Anything that recomputes a placement from the live focus therefore
-     * gets one frame of "new group, old travel" — and for the minimum-visible-tiles pan that was the
+     * gets one frame of "new group, old travel" — and for the pan-on-open designation that was the
      * whole grid jumping to its unbiased, controller-centred position and back (measured: 94px, one
      * tile). The pan is captured with the travel's other endpoints now, so a frame that has not
      * re-planned cannot move it at all.
@@ -3201,8 +3293,7 @@ class RemapControlsScreenTest {
     @Test
     fun switchingGroups_neverFlashesTheViewBackToTheRestingPosition() {
         composeRule.mainClock.autoAdvance = false
-        setScreenWithMin(
-            MinVisibleTiles.THREE,
+        setPanScreen(
             // A fat group in the LEFT column: the grid overruns the window, so there is both a pan
             // to make and a scroll plan making it.
             config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
@@ -3247,5 +3338,101 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         assertOneWay("hopping to the other column", listOf(opened) + frames(24))
         composeRule.mainClock.autoAdvance = true
+    }
+
+    /**
+     * **Opening a group shows the END of it** (Dylan, 2026-09-28) — its last tile and its "+", even
+     * where that is further than the pan target. The target is only a floor for a narrow group.
+     *
+     * DPAD here holds three commands a row — four tiles with the "+", one past the three-tile
+     * target — on a window narrow enough that the grid overruns it.
+     */
+    @Test
+    fun openingAWideGroup_bringsItsWholeRowIntoView() {
+        setPanScreen(
+            width = 900,
+            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val boxLeft = composeRule.onNodeWithTag("simple-group:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        // A left-flank group's tiles run outward to the LEFT, so its far end is the box's left edge.
+        assert(boxLeft >= window.left - 1f) {
+            "the group's outer end is off screen at $boxLeft (window starts at ${window.left})"
+        }
+    }
+
+    /**
+     * **Crossing to the other column lands on the TARGET, not on the whole of the group crossed
+     * into** (Dylan, 2026-09-28: opening a wide group on one side and walking to a wide group on the
+     * other made "the resultant camera pan ... massive and jarring").
+     *
+     * Asserted as the invariant: from the group's glyph to the window's edge there is room for
+     * exactly three tiles — its four-tile box less one pitch — and so its outer end is off screen.
+     */
+    @Test
+    fun crossingColumns_fromAWideGroupToAWideGroup_landsOnTheTarget() {
+        setPanScreen(
+            width = 900,
+            config = seedShapedConfig()
+                .withPressStack(InputSource.DPAD, 7000L)
+                .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
+        )
+        composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        settlePan()
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val box = composeRule.onNodeWithTag("simple-group:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        fun tileLeft(slot: Int) = composeRule
+            .onNodeWithTag("cell:DPAD:DPAD:dpad_up:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
+        val glyph = box.first + box.second
+        val room = glyph - window.left
+        val target = box.second - pitch
+        assert(kotlin.math.abs(room - target) <= 2f) {
+            "${room}px from the glyph to the window edge; the three-tile target is $target"
+        }
+    }
+
+    /**
+     * **Walking along a column never pulls the view back in**, with one group revealed at a time
+     * too (Dylan, 2026-09-28). Opening the wide group reaches to its end; walking to a narrow group
+     * in the same column keeps that reach, even though the wide group has closed behind the cursor.
+     *
+     * Measured at the column's INNER edge — the glyph edge every group in the column shares — which
+     * may only stay put or move further in.
+     */
+    @Test
+    fun walkingAlongAColumn_oneGroupRevealed_keepsTheWideGroupsReach() {
+        setPanScreen(
+            width = 900,
+            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        fun innerEdge(group: String) = composeRule
+            .onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+        val onTheWideOne = innerEdge("DPAD")
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
+        settlePan()
+        assert(innerEdge("LEFT_UTILITY") >= onTheWideOne - 1f) {
+            "walking to a narrow group pulled the view back in: $onTheWideOne -> " +
+                innerEdge("LEFT_UTILITY")
+        }
+    }
+
+    private fun settlePan() {
+        composeRule.waitForIdle()
+        composeRule.mainClock.advanceTimeBy(1200)
+        composeRule.waitForIdle()
     }
 }

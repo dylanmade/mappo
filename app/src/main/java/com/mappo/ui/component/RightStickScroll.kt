@@ -235,7 +235,9 @@ fun rightStickScroll(
     }
 }
 
-private const val RightStickDeadzone = 0.25f
+/** Below this deflection the stick is at rest — shared with anything that asks "is the stick
+ *  scrolling" (the remap stage's pan). */
+internal const val RightStickDeadzone = 0.25f
 
 /** Travel at full deflection, per second. */
 private val RightStickScrollSpeed = 900.dp

@@ -110,7 +110,6 @@ class MainViewModel @Inject constructor(
     private val textSizeSettings: TextSizeSettings,
     private val moveSettings: com.mappo.data.settings.MoveSettings,
     private val tileRevealSettings: com.mappo.data.settings.TileRevealSettings,
-    private val minVisibleTilesSettings: com.mappo.data.settings.MinVisibleTilesSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ApplicationAutoSwitcher,
@@ -227,10 +226,6 @@ class MainViewModel @Inject constructor(
     /** How many groups show their tiles in edit mode. See TileRevealSettings. */
     val tileReveal: StateFlow<com.mappo.data.settings.TileReveal> =
         tileRevealSettings.reveal
-
-    /** How far opening an input group must pan the view. See MinVisibleTilesSettings. */
-    val minVisibleTiles: StateFlow<com.mappo.data.settings.MinVisibleTiles> =
-        minVisibleTilesSettings.minVisibleTiles
 
     val textSize: StateFlow<TextSize> = textSizeSettings.size
 
@@ -633,9 +628,6 @@ class MainViewModel @Inject constructor(
 
     fun setTileReveal(reveal: com.mappo.data.settings.TileReveal) =
         tileRevealSettings.setReveal(reveal)
-
-    fun setMinVisibleTiles(value: com.mappo.data.settings.MinVisibleTiles) =
-        minVisibleTilesSettings.setMinVisibleTiles(value)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

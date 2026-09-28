@@ -1544,7 +1544,7 @@ private fun MeasureScope.measureTable(
 
 /**
  * **The width a group's TABLE has when its longest row holds exactly [tiles] tiles** — the unit
- * the minimum-visible-tiles setting counts in (Dylan, 2026-09-27).
+ * the pan target counts in (Dylan, 2026-09-27).
  *
  * Asked of the same [tableMetrics] the table itself lays out against, so "2 tiles" is exactly the
  * width a two-tile group comes out at rather than an estimate of it — which is what makes a floor

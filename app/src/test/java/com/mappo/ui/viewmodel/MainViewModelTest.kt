@@ -24,7 +24,6 @@ import com.mappo.data.settings.AutoSwitchSettings
 import com.mappo.data.settings.FrameSettings
 import com.mappo.data.settings.TextSize
 import com.mappo.data.settings.MoveSettings
-import com.mappo.data.settings.MinVisibleTilesSettings
 import com.mappo.data.settings.TileRevealSettings
 import com.mappo.data.settings.TextSizeSettings
 import com.mappo.data.settings.FrameStyle
@@ -169,9 +168,6 @@ class MainViewModelTest {
             },
             tileRevealSettings = mockk(relaxed = true) {
                 every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
-            },
-            minVisibleTilesSettings = mockk(relaxed = true) {
-                every { minVisibleTiles } returns MutableStateFlow(MinVisibleTilesSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
@@ -516,9 +512,6 @@ class MainViewModelTest {
             },
             tileRevealSettings = mockk(relaxed = true) {
                 every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
-            },
-            minVisibleTilesSettings = mockk(relaxed = true) {
-                every { minVisibleTiles } returns MutableStateFlow(MinVisibleTilesSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
@@ -938,9 +931,6 @@ class MainViewModelTest {
         },
         tileRevealSettings = mockk(relaxed = true) {
             every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
-        },
-        minVisibleTilesSettings = mockk(relaxed = true) {
-            every { minVisibleTiles } returns MutableStateFlow(MinVisibleTilesSettings.Default)
         },
         shizukuRequiredPreferences = shizukuRequiredPrefs,
         shizukuConnection = shizukuConnection,

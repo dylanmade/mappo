@@ -152,7 +152,6 @@ import com.mappo.ui.screen.home.ScreenFrame
 import com.mappo.ui.screen.home.ScreenFrameFadeMillis
 import androidx.compose.runtime.CompositionLocalProvider
 import com.mappo.ui.screen.remap.LocalMoveCommitGesture
-import com.mappo.ui.screen.remap.LocalMinVisibleTiles
 import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
@@ -254,7 +253,6 @@ fun MainScreen(
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
     val moveCommitGesture by viewModel.moveCommitGesture.collectAsStateWithLifecycle()
     val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
-    val minVisibleTiles by viewModel.minVisibleTiles.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -1071,7 +1069,6 @@ fun MainScreen(
         CompositionLocalProvider(
             LocalMoveCommitGesture provides moveCommitGesture,
             LocalTileReveal provides tileReveal,
-            LocalMinVisibleTiles provides minVisibleTiles,
         ) { routes() }
     }
 
@@ -1108,8 +1105,6 @@ fun MainScreen(
                     onMoveCommitChange = viewModel::setMoveCommitGesture,
                     tileReveal = tileReveal,
                     onTileRevealChange = viewModel::setTileReveal,
-                    minVisibleTiles = minVisibleTiles,
-                    onMinVisibleTilesChange = viewModel::setMinVisibleTiles,
                     textSize = textSize,
                     onTextSizeChange = { size ->
                         if (size != textSize) {

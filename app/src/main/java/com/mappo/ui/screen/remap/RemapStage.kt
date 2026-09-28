@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +83,8 @@ import com.mappo.R
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ControllerConfig
+import com.mappo.ui.component.LocalRightStick
+import com.mappo.ui.component.RightStickDeadzone
 import com.mappo.ui.component.rememberMoveModeState
 import androidx.compose.material3.MaterialTheme
 import com.mappo.ui.minput.MinputBarEdgePadding
@@ -199,6 +202,10 @@ internal fun RemapStage(
     // Frames a group when its tiles change — a tile added, cleared or carried in. Declared up
     // here because the cursor-seating effects below are what claim it. See [ReframePlan].
     val reframe = remember { ReframePlan() }
+    // How far the pan reaches outboard of the group being worked on — the one piece of camera
+    // state that outlives a travel. Up here because a committed move is one of the things that
+    // sets it. See [PanReach].
+    val panReach = remember { PanReach() }
     /** Which group's action menu is up, if any — one at a time, so it lives here rather than in
      *  each box. Summoned by HOLDING a group, which is what used to open the advanced view. */
     var menuGroup by remember { mutableStateOf<RemapSimpleGroup?>(null) }
@@ -247,6 +254,8 @@ internal fun RemapStage(
         if (lifted != null && toId != null) {
             // A null landing command means the row's "+": an ADD, not a swap.
             callbacks.onMoveCommand(lifted.id, toId, to.inputKey, landedOn?.id)
+            // The group the tile lands in is shown whole, as if it had just been opened.
+            panReach.committed = to.group
             landing = true
             claimedFrom = from
             // The cursor goes WITH the command. Two steps, because the move is a round trip
@@ -445,21 +454,21 @@ internal fun RemapStage(
         val viewportWPx = with(density) { viewportW.roundToPx() }
         val viewportHPx = with(density) { viewportH.roundToPx() }
         /**
-         * **The narrowest region opening a group may settle for** — the minimum-visible-tiles
-         * floor in pixels (see [com.mappo.data.settings.MinVisibleTiles]).
+         * **The TARGET pan, in pixels: [PanTargetTiles] tiles' worth of box** (Dylan's numbers off
+         * the device; not a setting since 2026-09-28). What a group is given beyond its own glyph
+         * when nothing wider has been asked for — see [PanReach] for when that is.
          *
-         * "Automatic" asks the WINDOW's shape, not this box's: the stage is always wider than it
-         * is tall once the bars have taken their share, so its own aspect says nothing about
-         * whether the app is running 1:1 or expanded. It is a plus-the-box-padding figure because
-         * the widths it is compared against are box widths.
+         * The WINDOW's shape decides it, not this box's: the stage is always wider than it is tall
+         * once the bars have taken their share, so its own aspect says nothing about whether the
+         * app is running 1:1 or expanded. It is a plus-the-box-padding figure because what it is
+         * compared against — a column's width, a group's own width — is made of box widths.
          */
         val windowAspect = LocalConfiguration.current.let { config ->
             if (config.screenHeightDp <= 0) 1f else config.screenWidthDp.toFloat() / config.screenHeightDp
         }
-        val minFramedSpan = with(density) {
-            val tiles = LocalMinVisibleTiles.current.countFor(squareScreen = windowAspect <= SquareWindowAspect)
-            val table = tiledTableWidth(tiles)
-            if (table <= 0) 0 else table + GroupBoxPaddingX.roundToPx() * 2
+        val panTarget = with(density) {
+            val tiles = if (windowAspect <= SquareWindowAspect) PanTargetTilesSquare else PanTargetTiles
+            tiledTableWidth(tiles) + GroupBoxPaddingX.roundToPx() * 2
         }
         // The BODY's one scroller. Whether the right stick belongs to it is not asked here any
         // more: every scroller that can scroll puts itself forward and the arbiter picks (see
@@ -468,6 +477,18 @@ internal fun RemapStage(
         // hand; at rest with nothing focused it is the only candidate, which is the case the
         // old focus-only gate got wrong.
         val bodyScroll = rememberScrollState()
+        // **A scroll the USER made gives the pan back to the target** (see [PanReach]). Counted
+        // only while a finger is on the stage or the right stick is pushed — never from focus
+        // alone, so the d-pad walking a long row (whose bring-into-view scrolls the body) is not
+        // mistaken for the user taking the view over.
+        val rightStick = LocalRightStick.current
+        LaunchedEffect(bodyScroll) {
+            snapshotFlow { bodyScroll.value }.collect {
+                if (panReach.pointerDown || abs(rightStick.value.x) > RightStickDeadzone) {
+                    panReach.userScrolled = true
+                }
+            }
+        }
         // Keeps the view still while the rows change shape underneath it — see [EditCameraAnchor].
         val editMorph = remember { EditMorphPlan() }
         val reframeTravel = remember { Animatable(1f) }
@@ -651,6 +672,21 @@ internal fun RemapStage(
         Box(
             Modifier
                 .fillMaxSize()
+                // Whether a finger is down anywhere on the stage — observed, never consumed, so
+                // every gesture underneath works exactly as before. See [PanReach.pointerDown].
+                .pointerInput(panReach) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        panReach.pointerDown = true
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            panReach.pointerDown = false
+                        }
+                    }
+                }
                 // While a CONTROLLER move is in flight in EDIT MODE, the stage owns the whole
                 // keyboard: arrows walk the drop target, B/Escape calls it off, the activate
                 // keys confirm. It sits at the stage rather than on a group because a carried
@@ -770,13 +806,13 @@ internal fun RemapStage(
                 // the width being reported — chased its own tail into a visible shake.
                 val gridTravel = reveal.gridTravel()
                 val measuredWidths = IntArray(count) { restBasic[it]!!.width }
-                if (editMorph.begin(
-                        settled = editSettled,
-                        token = reveal.tick,
-                        travel = gridTravel,
-                        measured = measuredWidths,
-                    )
-                ) {
+                val replanned = editMorph.begin(
+                    settled = editSettled,
+                    token = reveal.tick,
+                    travel = gridTravel,
+                    measured = measuredWidths,
+                )
+                if (replanned) {
                     // The OTHER end, asked of the rows themselves: their two widths are
                     // intrinsics (see AssignmentTable), so the end being travelled to is known
                     // before a single frame of it has been drawn.
@@ -816,13 +852,14 @@ internal fun RemapStage(
                 // — which is the normal shape once one group at a time reveals its tiles — pays
                 // for its wide side twice and can want scroll range while its total still fits.
                 val centreFloor = (centreMax * ControllerColumnSqueezeFloor).roundToInt()
-                fun spanFor(leftW: Int, rightW: Int, centreW: Int) = gridSpan(
+                fun spanFor(leftW: Int, rightW: Int, centreW: Int, slack: Int = 0) = gridSpan(
                     leftW = leftW,
                     rightW = rightW,
                     centreW = centreW,
                     columnGap = columnGap,
                     edgeX = edgeX,
                     viewportGridW = viewportGridW,
+                    slack = slack,
                 )
                 /** The controller column's width beside these flanks — squeezed if that is what
                  *  lands the grid inside the window, otherwise its natural size. */
@@ -861,12 +898,85 @@ internal fun RemapStage(
                 // four fifths of its width back to full in the middle of the animation.
                 val fromCentre = centreBeside(fromLeft, fromRight)
                 val toCentre = centreBeside(toLeft, toRight)
-                val fromSpan = spanFor(fromLeft, fromRight, fromCentre)
-                val toSpan = spanFor(toLeft, toRight, toCentre)
-                // **The plan's own parameter, not the travel's.** They differ only after a travel
-                // has been re-planned in flight — a command landing mid-collapse — where what is
-                // left to interpolate is the remainder of the journey (see [EditMorphPlan.at]).
+                // ── The PAN, paid for in one of two ways ─────────────────────────────────────
+                //
+                // The view puts [PanReach.reach] of room between the focused group's glyph and the
+                // window's edge on its side ([editScrollTarget]) — how much is [PanReach]'s call,
+                // made once per travel, here. Reaching it needs somewhere to go, and a grid rarely
+                // has one:
+                //
+                //  - **The grid OVERFLOWS.** The reach becomes scroll RANGE where the content
+                //    runs out before it does: `gridSpan` takes a signed `slack` reserving that much
+                //    room outboard of the focused group, and the framing pans into it. The scroller
+                //    already reaches past the window and the fade, chevron and bar are already lit,
+                //    so extending the range promises nothing new — and it keeps every pixel
+                //    reachable, which merely DRAWING the grid offset would not: the far end would end
+                //    up beyond where the scroller can go, and a tile arriving over there could never
+                //    be brought fully into view again.
+                //  - **The grid FITS.** There is no range and none may be invented: a pad the user can
+                //    scroll out into, with the bar promising content that is not there, is what Dylan
+                //    called "not at all acceptable or tenable" (2026-09-25). So the grid is DRAWN at
+                //    the panned position instead, out of the pad `gridSpan` already put on the
+                //    other side and never out of more than that pad, so nothing is pushed off the
+                //    window and the scroll range stays zero.
+                //
+                // **Both are captured with the travel's other endpoints, never recomputed from the
+                // live focus** (Dylan, 2026-09-28: "a strange jitter every time I open an input group
+                // or navigate between input groups - almost like the input groups are flashing inward
+                // towards the center column"). Activating a group writes the new focus in the CLICK,
+                // a frame before the effect that plans the travel resets the travel to 0 — so any
+                // placement recomputed per pass spends that frame evaluating the NEW group against
+                // the OLD travel's end. Carried by the plan, a frame that has not re-planned cannot
+                // move the view at all.
+                val toSpanPlain = spanFor(toLeft, toRight, toCentre)
+                val focused = reveal.focus
+                if (replanned) {
+                    panReach.plan(
+                        group = focused,
+                        width = focused?.let { toWidths[groups.indexOf(it)] } ?: 0,
+                        target = panTarget,
+                    )
+                }
+                val reach = panReach.reach
+                val onLeftFlank = focused != null && focused in LeftColumnGroups
+                val overflows = toSpanPlain.gridW > viewportGridW
+                val glyphEdge = focused?.let { groupGlyphEdge(toSpanPlain, it) }
+                editMorph.captureSlack(
+                    settled = editSettled,
+                    // The part of the region that falls outside the content altogether: before the
+                    // grid's start on the leading side, past its end on the trailing one.
+                    target = when {
+                        glyphEdge == null || !overflows -> 0
+                        onLeftFlank -> (reach - glyphEdge).coerceAtLeast(0)
+                        else -> -(glyphEdge + reach - toSpanPlain.totalW).coerceAtLeast(0)
+                    },
+                )
+                // **What the grid already gives the region is its COLUMN's width** — not the focused
+                // group's own box, and that distinction is the whole of Dylan's first report. A
+                // narrow group in a wide column already has the column's whole width outboard of its
+                // glyph, empty or not, so it needs nothing; measured against its own box it asked for
+                // a tile more than the wide group beside it did and "actually extends that input
+                // group's camera pan even further ... almost like it's additive".
+                //
+                // Only ever a SHORTAGE: the view is nudged toward the group, never away from it.
+                val columnRoom = if (onLeftFlank) toLeft else toRight
+                editMorph.captureBias(
+                    settled = editSettled,
+                    target = when {
+                        focused == null || overflows -> 0
+                        onLeftFlank ->
+                            (reach - columnRoom).coerceAtLeast(0)
+                                .coerceAtMost(toSpanPlain.padTrailing)
+                        else ->
+                            -(reach - columnRoom).coerceAtLeast(0)
+                                .coerceAtMost(toSpanPlain.padLeading)
+                    },
+                )
                 val travel = editMorph.at(gridTravel)
+                val slack = editMorph.slackAt(travel)
+                val bias = editMorph.biasAt(travel)
+                val fromSpan = spanFor(fromLeft, fromRight, fromCentre, editMorph.slackFrom)
+                val toSpan = spanFor(toLeft, toRight, toCentre, editMorph.slackTo)
                 // Everything between is the SAME function of the interpolated columns, rather than
                 // an interpolation of the two finished spans (2026-09-27). The two agree at both
                 // ends; in between, only this one agrees with the boxes it is placing — the grid
@@ -877,6 +987,7 @@ internal fun RemapStage(
                     leftW = lerpInt(fromLeft, toLeft, at),
                     rightW = lerpInt(fromRight, toRight, at),
                     centreW = lerpInt(fromCentre, toCentre, at),
+                    slack = lerpInt(editMorph.slackFrom, editMorph.slackTo, at),
                 )
                 fun maxScrollAt(at: Float) = (spanAt(at).totalW - viewport).coerceAtLeast(0)
                 // Where the view should sit at each end of the travel, settled once.
@@ -897,9 +1008,7 @@ internal fun RemapStage(
                     shift = contentShift.floatValue.roundToInt(),
                 ) { from ->
                     reveal.focus?.let { group ->
-                        editScrollTarget(
-                            toSpan, group, toWidths, groups, viewport, edgeX, from, minFramedSpan,
-                        )
+                        editScrollTarget(toSpan, group, viewport, edgeX, from, reach)
                     } ?: (from + toSpan.centreX - fromSpan.centreX).coerceIn(0, maxScrollAt(1f))
                 }
                 // ── The grid ON SCREEN ───────────────────────────────────────────────────────
@@ -925,57 +1034,8 @@ internal fun RemapStage(
                         lerpInt(fromRight, toRight, travel),
                     ),
                     centreW = lerpInt(fromCentre, toCentre, travel),
+                    slack = slack,
                 )
-                // ── The PAN a grid with no scroll range can still give (Dylan, 2026-09-27) ───
-                //
-                // Opening a group frames it, and framing is a SCROLL — so a grid that fits the
-                // window has no pan to give at all. Worse, a group's growth on a fitting grid is
-                // invisible: `gridSpan` pads whichever side falls short of half a viewport, so a
-                // left-flank box widening eats its own leading pad and every other element,
-                // controller included, stays exactly put. Dylan saw precisely that: the groups
-                // "whose inputs all only have one assigned tile ... don't shift the camera at all
-                // when activated (again on a 4:3 screen or larger)".
-                //
-                // So when there is no scroll range, the grid is DRAWN shifted toward the group
-                // being worked on, by however much of [minFramedSpan] that group's own box falls
-                // short of — the minimum-visible-tiles floor. The room comes out of the pad on the
-                // OTHER side, and never out of more than that pad, so nothing is ever pushed off
-                // the window: what the shift reveals on the group's own side is the group's own
-                // backing rectangle, which runs off that edge anyway.
-                //
-                // With scroll range there is no need for it — `editScrollTarget`'s own floor pans
-                // the view properly — so exactly one of the two mechanisms is ever in play.
-                fun biasIn(span: GridSpan, group: RemapSimpleGroup?, widths: IntArray): Int {
-                    if (group == null || minFramedSpan <= 0) return 0
-                    if (span.gridW > viewportGridW) return 0
-                    val want = (minFramedSpan - widths[groups.indexOf(group)]).coerceAtLeast(0)
-                    if (want <= 0) return 0
-                    // A left-flank group is looked at by moving the content RIGHT (the view goes
-                    // further left, which is the side that group's rows run off toward); a
-                    // right-flank group is the mirror image.
-                    return if (group in LeftColumnGroups) {
-                        want.coerceAtMost(span.padTrailing)
-                    } else {
-                        -want.coerceAtMost(span.padLeading)
-                    }
-                }
-                // **Captured with the travel's other endpoints, never recomputed from the live
-                // focus** (Dylan, 2026-09-28: "a strange jitter every time I open an input group or
-                // navigate between input groups - almost like the input groups are flashing inward
-                // towards the center column"). Asking [biasIn] for `reveal.focus` every pass looks
-                // right and is a one-frame flash: activating a group writes the new focus in the
-                // CLICK, a frame before the effect that plans the travel has reset the travel to 0
-                // — so that frame evaluated the NEW group's pan at the OLD travel's end, which for a
-                // hop across the columns is the far pad's width instead of the near one's (measured:
-                // the whole grid jumping 94px to its unbiased, controller-centred position and back).
-                // The plan therefore carries the pan the way it carries the scroll: the FROM end is
-                // simply where the pan visually is, so a frame that has not re-planned cannot move
-                // it at all.
-                editMorph.captureBias(
-                    settled = editSettled,
-                    target = biasIn(toSpan, reveal.focus, toWidths),
-                )
-                val bias = editMorph.biasAt(travel)
                 // The scroll that centres the controller in the RESTING grid, published for the
                 // one-time seeding below — which only ever runs with edit mode off, so mid-travel
                 // this grid is not the one it is asking about.
@@ -997,10 +1057,11 @@ internal fun RemapStage(
                     virtual = bodyScroll.value + morphShift,
                     progress = reframeTravel.value,
                     groupAt = { groups[it] },
+                    // A tile landing in a group, or leaving one, shows that group whole again.
                     targetFor = { group, at ->
-                        editScrollTarget(
-                            grid, group, measuredWidths, groups, viewport, edgeX, at, minFramedSpan,
-                        )
+                        val width = measuredWidths[groups.indexOf(group)]
+                        panReach.reframe(group, width, panTarget)
+                        editScrollTarget(grid, group, viewport, edgeX, at, panReach.reach)
                     },
                 )
                 contentShift.floatValue = shift.toFloat()
@@ -1583,8 +1644,8 @@ private class GridSpan(
     val rightX: Int,
     /** The scroll value at which the controller sits dead centre in the window. */
     val centreScroll: Int,
-    /** The emptiness this span put on each side to centre the controller — the room a pan on a
-     *  grid with no scroll range has to spend (see the stage's `bias`). */
+    /** The emptiness this span put on each side to centre the controller. NOT scrollable — it is
+     *  what the pan on a fitting grid is allowed to spend (see the stage's `biasIn`). */
     val padLeading: Int,
     val padTrailing: Int,
 )
@@ -1596,6 +1657,19 @@ private fun gridSpan(
     columnGap: Int,
     edgeX: Int,
     viewportGridW: Int,
+    /**
+     * **Room the grid reserves BEYOND its content on one side** — positive leading, negative
+     * trailing (Dylan, 2026-09-27/28). This is the pan's reach ([PanReach]): the group being looked
+     * at gets that much room outboard of its own glyph, whether or not it has tiles to fill it, and
+     * that room is what the view pans into.
+     *
+     * Unlike the pads below it is deliberately SCROLLABLE, and it is the one thing here that is:
+     * without it the floor is unreachable at both extremes — on a grid that fits there is no scroll
+     * range at all, and on one that overflows the scroller clamps at the outermost group's own edge.
+     * What it uncovers is that group's backing rectangle, which runs off that edge anyway, and it
+     * exists only while that group is the one being worked on.
+     */
+    slack: Int = 0,
 ): GridSpan {
     // **Centre the CONTROLLER, not the content** (Dylan, 2026-09-25). Centring the whole matrix
     // only puts the controller in the middle when the two flanks happen to be the same width,
@@ -1624,8 +1698,8 @@ private fun gridSpan(
     // The controller's middle, as a distance from the content's leading edge.
     val toCentre = leftW + columnGap + centreW / 2
     val half = viewportGridW / 2
-    val padLeading = (half - toCentre).coerceAtLeast(0)
-    val padTrailing = (half - (contentW - toCentre)).coerceAtLeast(0)
+    val padLeading = (half - toCentre).coerceAtLeast(0) + slack.coerceAtLeast(0)
+    val padTrailing = (half - (contentW - toCentre)).coerceAtLeast(0) + (-slack).coerceAtLeast(0)
     // The floor covers the rounding when both pads apply: two halves of an odd viewport are a
     // pixel short of it, and a grid narrower than the window it fills has no valid scroll range.
     val gridW = maxOf(contentW + padLeading + padTrailing, viewportGridW)
@@ -1661,63 +1735,58 @@ private fun gridSpan(
  * A group too wide for the window shows its INNER edge, the side its glyph column sits on: that
  * is where its rows read from, and it is the side nearest the controller the group belongs to.
  */
-/** Where a group's box starts, in the grid's own coordinates — the anchor a re-frame measures
- *  a shape change against, and the left edge [editScrollTarget] works from. */
-private fun groupLeftIn(
-    span: GridSpan,
-    group: RemapSimpleGroup,
-    widths: IntArray,
-    groups: List<RemapSimpleGroup>,
-): Int {
-    val width = widths[groups.indexOf(group)]
-    return when {
-        // A left-flank box is right-aligned to its column, so its inner edge is its right one.
-        group in LeftColumnGroups -> span.startX + span.leftW - width
-        else -> span.rightX
-    }
-}
+/**
+ * **Where a group's own input GLYPH sits, in the grid's own coordinates** — the edge every pan is
+ * measured from, and the one edge of a group that does not move as it gains or loses tiles.
+ *
+ * It is the group's INNER edge either way: a left-flank box is right-aligned in its column, so its
+ * glyph is at its right edge and its tiles run outward to the left; a right-flank box is the mirror.
+ * Being the column's inner edge, it is also the SAME x for every group in that column — which is
+ * what makes the pan depend on the column a group is in and not on how many tiles it happens to
+ * hold.
+ */
+private fun groupGlyphEdge(span: GridSpan, group: RemapSimpleGroup): Int =
+    if (group in LeftColumnGroups) span.startX + span.leftW else span.rightX
 
+/**
+ * **Where the view sits while [group] is the one being worked on** (Dylan, 2026-09-28).
+ *
+ * The region brought into view is [reach] wide and starts at the group's own glyph, running
+ * outward. How wide is [PanReach]'s call — the target, or the whole group when it has just been
+ * opened or handed a tile. The glyph is the column's inner edge, so the region is THE SAME for every
+ * group in a column: with the reach held, walking a column does not move the view.
+ *
+ * Brought into view by the SHORTEST distance, and no further: a region already on screen is left
+ * alone. Deliberately not an absolute position — with room to spare that would drag the group being
+ * worked on OUTWARD to meet it, which is the one direction the view must never go. What covers a
+ * screen with room to spare is the drawn pan (see the stage's `captureBias`).
+ */
 private fun editScrollTarget(
     span: GridSpan,
     group: RemapSimpleGroup,
-    widths: IntArray,
-    groups: List<RemapSimpleGroup>,
     viewport: Int,
     /** The grid's own margin, inside which there is nothing left to see. */
     edgeX: Int,
     from: Int,
-    /**
-     * **The narrowest region this may settle for**, in pixels — the minimum-visible-tiles floor
-     * (Dylan, 2026-09-27). A group already fully on screen wants no scroll at all, so the ones
-     * two tiles wide answered being opened with no camera movement whatsoever: "those groups
-     * don't shift the camera at all when activated". Framing at LEAST this much, measured outward
-     * from the group's own glyph, is what buys them a pan; it is never a cap, so a group wider
-     * than this is still framed whole. 0 is the plain rule, unchanged.
-     */
-    minSpan: Int = 0,
+    reach: Int,
 ): Int {
     val onLeft = group in LeftColumnGroups
-    val box = widths[groups.indexOf(group)]
-    val width = maxOf(box, minSpan)
-    val boxLeft = groupLeftIn(span, group, widths, groups)
-    // The floor is spent OUTWARD from the glyph, which is the box's inner edge — the side the
-    // rows read from, and the side that stays put as a group grows. Widening inward instead would
-    // pan toward the controller, which is the direction there is nothing to see in.
-    val left = if (onLeft) boxLeft + box - width else boxLeft
-    val right = left + width
+    val glyph = groupGlyphEdge(span, group)
+    val left = if (onLeft) glyph - reach else glyph
+    val right = left + reach
     val target = when {
-        // Too wide to show at once: the glyph side, whichever side that is.
-        width > viewport && onLeft -> right - viewport
-        width > viewport -> left
+        // Wider than the window: the glyph side, whichever side that is.
+        reach > viewport && onLeft -> right - viewport
+        reach > viewport -> left
         right > from + viewport -> right - viewport
         left < from -> left
         else -> from
     }
     val max = (span.totalW - viewport).coerceAtLeast(0)
-    // **Go the whole way when what is left is only the margin** (Dylan, 2026-09-25). A group's
-    // box stops short of the grid's edge by [edgeX], so framing the outermost one lands that far
-    // from the end of the scroll — close enough to look landed, far enough that the scroller
-    // still says there is more and the edge fade and chevron stay lit over blank margin.
+    // **Go the whole way when what is left is only the margin** (Dylan, 2026-09-25). A group's box
+    // stops short of the grid's edge by [edgeX], so framing the outermost one lands that far from the
+    // end of the scroll — close enough to look landed, far enough that the scroller still says there
+    // is more and the edge fade and chevron stay lit over blank margin.
     return when {
         target <= edgeX -> 0
         target >= max - edgeX -> max
@@ -1752,12 +1821,25 @@ private class EditMorphPlan {
     private var scrollAtFrom = 0f
     private var scrollAtTo = 0f
     /**
-     * **The pan the grid is being DRAWN with** — the minimum-visible-tiles bias (see the stage's
-     * `biasIn`), which is what panning becomes on a grid with no scroll range to pan.
+     * **The room the grid reserves outboard of the group being looked at** — the
+     * part of the pan's reach the content runs out before, signed (leading positive), as [gridSpan]
+     * takes it.
      *
      * Carried ACROSS travels, because a group stays looked-at long after its travel lands: this is
-     * where the view is, and the next travel starts from here. Its two endpoints are captured once,
-     * exactly as the scrolls are, so no frame can move it by re-deciding what it should be.
+     * the shape the grid has, and the next travel starts from it. Its two endpoints are captured
+     * once, exactly as the scrolls are, so no frame can change it by re-deciding what it should be.
+     */
+    private var slack = 0
+    var slackFrom = 0
+        private set
+    var slackTo = 0
+        private set
+    private var slackPlanned = false
+
+    /**
+     * **The same floor, on a grid that fits** — where it cannot be scroll range, so the grid is
+     * DRAWN this far off its own centring instead. Carried exactly as [slack] is, and for the same
+     * reason: a frame that has not re-planned must not be able to move it.
      */
     private var bias = 0
     private var biasFrom = 0
@@ -1807,6 +1889,7 @@ private class EditMorphPlan {
         toWidths = null
         // Re-planned from here, since where the view is going has changed too.
         scrollsKnown = false
+        slackPlanned = false
         biasPlanned = false
         return true
     }
@@ -1874,23 +1957,44 @@ private class EditMorphPlan {
         scrollsKnown = true
     }
 
-    /** Where the pan travels from and to, settled once — [target] is only read on this frame. */
+    /** Where the reserved room travels from and to, settled once — [target] is only read on the
+     *  capture frame. With nothing to plan both ends are where it already is, so nothing moves. */
+    fun captureSlack(settled: Boolean, target: Int) {
+        if (settled || slackPlanned) {
+            if (!slackPlanned) {
+                slackFrom = slack
+                slackTo = slack
+            }
+            return
+        }
+        // Where it IS, which is the only honest start: a travel interrupting another one picks up
+        // the room the last one had reached.
+        slackFrom = slack
+        slackTo = target
+        slackPlanned = true
+    }
+
+    /** Where the drawn offset travels from and to, settled once. */
     fun captureBias(settled: Boolean, target: Int) {
         if (settled || biasPlanned) return
-        // Where it visually IS, which is the only honest start: a travel interrupting another one
-        // picks up the pan the last one had reached.
         biasFrom = bias
         biasTo = target
         biasPlanned = true
     }
 
-    /** The pan at this point in the travel. With nothing planned it HOLDS — which is what makes a
-     *  frame between a focus change and the travel that answers it a no-op. */
+    /** The drawn offset at this point in the travel. With nothing planned it HOLDS. */
     fun biasAt(travel: Float): Int {
         if (!biasPlanned) return bias
         val at = travel.coerceIn(0f, 1f)
         bias = biasFrom + ((biasTo - biasFrom) * at).roundToInt()
         return bias
+    }
+
+    /** The reserved room at this point in the travel. */
+    fun slackAt(travel: Float): Int {
+        val at = travel.coerceIn(0f, 1f)
+        slack = slackFrom + ((slackTo - slackFrom) * at).roundToInt()
+        return slack
     }
 
     fun shiftAt(settled: Boolean, travel: Float, scroll: Int, maxScrollAt: (Float) -> Int): Int {
@@ -1920,10 +2024,11 @@ private class EditMorphPlan {
      * (Dylan, 2026-09-24).
      */
     fun handOff(): Int? {
-        // **Before the early return**: the pan must stop following the travel the moment the travel
-        // is over, or the next frame that snaps the travel back to 0 — which happens a frame BEFORE
-        // this plan re-captures its endpoints — would drag the pan back to the last travel's start.
-        // That is the flash (see the stage's `captureBias`). With nothing planned the pan holds.
+        // **Before the early return**: the reserved room must stop following the travel the moment
+        // the travel is over, or the next frame that snaps the travel back to 0 — which happens a
+        // frame BEFORE this plan re-captures its endpoints — would drag it back to the last travel's
+        // start. That is the flash (see [captureSlack]). With nothing planned, both ends hold.
+        slackPlanned = false
         biasPlanned = false
         val landed = target ?: return null
         target = null
@@ -2076,6 +2181,70 @@ private class ReframePlan {
     }
 }
 
+/**
+ * **How far the pan reaches outboard of the group being worked on** (Dylan, 2026-09-28) — the one
+ * piece of camera state that outlives a travel, and the whole of the pan's rules:
+ *
+ *  1. **Opening a group** (entering edit mode) reaches to the END of it, "+" tile included — or to
+ *     the target, [PanTargetTiles], if the group is narrower than that. Opening a group always shows
+ *     its last tile.
+ *  2. **Walking up or down the same column KEEPS the reach**, however narrow the group walked into.
+ *     A wide group opened and then left for a narrow neighbour does not pull the view back in.
+ *  3. **Crossing to the other column resets it to the target**, however wide the group crossed
+ *     into. The far column is mostly off screen, so a pan sized to its widest row — worse, from a
+ *     view already stretched to the widest row of THIS one — was one huge swing (Dylan: "the
+ *     resultant camera pan is massive and jarring").
+ *  4. **A tile committed to a group** — carried in, or added through the picker — reaches to the end
+ *     of that group again, exactly as opening it would; from there rule 2 holds it. The same goes for
+ *     any other change in a group's shape (a tile cleared or pasted), which is framed the same way.
+ *  5. **A scroll the user makes themselves** gives the reach back to the target at the next travel:
+ *     the view is theirs now, and the reach it was holding describes a view that is gone.
+ *
+ * Decided once per travel — on the frame its endpoints are captured ([plan]) or a re-frame is
+ * claimed ([reframe]) — and never in between, so no frame can change it by re-deciding.
+ */
+private class PanReach {
+    /** The room beyond the focused group's glyph, in pixels. */
+    var reach = 0
+        private set
+    /** Which column [reach] was set for; null outside edit mode, which is what makes the next
+     *  travel an OPEN. */
+    private var leftColumn: Boolean? = null
+    /** The group a tile has just been committed to — framed whole by the next travel into it. */
+    var committed: RemapSimpleGroup? = null
+    /** Whether the user has scrolled the body themselves since the reach was last decided. */
+    var userScrolled = false
+    /** Whether a finger is on the stage right now — what tells a user's scroll from the camera's. */
+    var pointerDown = false
+
+    /** A travel toward [group] (null: leaving edit mode) whose box will be [width] wide at its end. */
+    fun plan(group: RemapSimpleGroup?, width: Int, target: Int) {
+        if (group == null) {
+            leftColumn = null
+            committed = null
+            userScrolled = false
+            reach = target
+            return
+        }
+        val left = group in LeftColumnGroups
+        reach = when {
+            leftColumn == null || group == committed -> maxOf(target, width)
+            left != leftColumn || userScrolled -> target
+            else -> maxOf(reach, target)
+        }
+        if (group != committed) committed = null
+        leftColumn = left
+        userScrolled = false
+    }
+
+    /** [group] changed shape and is being framed afresh — whole, as if it had just been opened. */
+    fun reframe(group: RemapSimpleGroup, width: Int, target: Int) {
+        reach = maxOf(target, width)
+        leftColumn = group in LeftColumnGroups
+        userScrolled = false
+    }
+}
+
 /** A placed rectangle in stage (viewport) space, in pixels. */
 internal data class StageRect(val left: Int, val top: Int, val width: Int, val height: Int) {
     val centerX: Int get() = left + width / 2
@@ -2168,17 +2337,27 @@ private val BodyChevronOutset = 2.dp
 /** Fallback shape for the controller artwork, if its intrinsic size is ever unavailable. */
 private const val DefaultControllerAspect = 0.62f
 
-/** A group box's own inset around its rows. Named because the minimum-visible-tiles floor is a
- *  BOX width and so has to add it (see the stage's `minFramedSpan`). */
+/** A group box's own inset around its rows. Named because the pan target is counted in BOX widths
+ *  and so has to add it (see the stage's `panTarget`). */
 private val GroupBoxPaddingX = 8.dp
+
+/**
+ * **The pan's TARGET, in tiles: 3, and 2 on a square screen** — Dylan's own numbers off the device.
+ * See [PanReach] for where it applies.
+ *
+ * A default layout's group is two tiles wide (one command, one "+"), so 3 leaves a tile's worth of
+ * room beyond it and 2 sits it flush. A 1:1 window has that much less width to spend. It was a
+ * user setting briefly (2026-09-27/28); the rules in [PanReach] replaced the need for one.
+ */
+private const val PanTargetTiles = 3
+private const val PanTargetTilesSquare = 2
 
 /**
  * Where "a 1:1 screen" ends and a wider one begins, as a width/height ratio of the WINDOW.
  *
- * Only the automatic minimum-visible-tiles figure asks (see
- * [com.mappo.data.settings.MinVisibleTiles.countFor]), and it is a fraction off square rather than
- * exactly 1 so that a window a few dp out of square — insets, a status bar, rounding — still counts
- * as the square one Dylan measured on.
+ * Only the pan target asks, and it is a fraction off square rather than exactly 1 so that a window
+ * a few dp out of square — insets, a status bar, rounding — still counts as the square one Dylan
+ * measured on.
  */
 private const val SquareWindowAspect = 1.1f
 
