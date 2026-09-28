@@ -1006,6 +1006,8 @@ internal fun RemapStage(
                     settled = editSettled,
                     scroll = bodyScroll.value.coerceIn(0, maxScrollAt(travel)),
                     shift = contentShift.floatValue.roundToInt(),
+                    fromCentreX = fromSpan.centreX,
+                    toCentreX = toSpan.centreX,
                 ) { from ->
                     reveal.focus?.let { group ->
                         editScrollTarget(toSpan, group, viewport, edgeX, from, reach)
@@ -1045,6 +1047,7 @@ internal fun RemapStage(
                     travel = travel,
                     scroll = bodyScroll.value,
                     maxScrollAt = ::maxScrollAt,
+                    anchorX = grid.centreX + bias,
                 )
                 val shift = morphShift + reframe.shiftAt(
                     // Only while edit mode is SETTLED: mid-morph the grid is meant to be
@@ -1820,6 +1823,9 @@ private class EditMorphPlan {
         private set
     private var scrollAtFrom = 0f
     private var scrollAtTo = 0f
+    /** Where the controller's column is DRAWN, in window space, at each end of the travel. */
+    private var screenFrom = 0f
+    private var screenTo = 0f
     /**
      * **The room the grid reserves outboard of the group being looked at** — the
      * part of the pan's reach the content runs out before, signed (leading positive), as [gridSpan]
@@ -1943,6 +1949,9 @@ private class EditMorphPlan {
         /** Everything displacing the content right now, this plan's own share included — the
          *  stage's total shift from the previous pass. */
         shift: Int,
+        /** The controller column's x in the grid, drift included, at each end of the travel. */
+        fromCentreX: Int,
+        toCentreX: Int,
         targetFor: (from: Int) -> Int,
     ) {
         if (settled || scrollsKnown) return
@@ -1954,6 +1963,9 @@ private class EditMorphPlan {
         val here = (scroll + shift).toFloat()
         scrollAtFrom = here
         scrollAtTo = targetFor(here.roundToInt()).toFloat()
+        // The drawn pan is planned before this, so both its ends are already known here.
+        screenFrom = fromCentreX + biasFrom - scrollAtFrom
+        screenTo = toCentreX + biasTo - scrollAtTo
         scrollsKnown = true
     }
 
@@ -1997,10 +2009,33 @@ private class EditMorphPlan {
         return slack
     }
 
-    fun shiftAt(settled: Boolean, travel: Float, scroll: Int, maxScrollAt: (Float) -> Int): Int {
+    /**
+     * **The camera is a straight line ON SCREEN, not in scroll space** (Dylan, 2026-09-28: "a
+     * strange consistent starting lag", and a cross-column hop whose "ease out has been cut short").
+     *
+     * It used to interpolate the SCROLL between its two ends and clamp it into the range the grid
+     * had on that frame. But the grid's centring pads are a kink ([gridSpan] pads a side only while
+     * it is short of half the window), so the range is ZERO for as long as the grid still fits:
+     * opening a group pinned the controller at its resting place for the first third of the travel
+     * and then rushed it; a hop or an exit ran into the range collapsing before the travel was over
+     * and stopped dead, while the labels carried on to the end of the same curve.
+     *
+     * So what travels is where the controller's column is DRAWN — [screenFrom] to [screenTo] along
+     * the travel's own eased curve — and the scroll is whatever puts it there, [anchorX] being where
+     * the grid itself would put it this frame. Nothing is clamped mid-travel: the displacement is
+     * drawn, not scrolled, and at the end it is [scrollAtTo] exactly, which is in range.
+     */
+    fun shiftAt(
+        settled: Boolean,
+        travel: Float,
+        scroll: Int,
+        maxScrollAt: (Float) -> Int,
+        /** The controller column's x in the grid this frame, drawn pan included. */
+        anchorX: Int,
+    ): Int {
         if (settled) return pending ?: 0
         val max = maxScrollAt(travel)
-        val wanted = (scrollAtFrom + (scrollAtTo - scrollAtFrom) * travel).coerceIn(0f, max.toFloat())
+        val wanted = anchorX - (screenFrom + (screenTo - screenFrom) * travel)
         target = wanted.roundToInt()
         // Take off what the scroller will contribute THIS frame — its value as IT will clamp it,
         // against the very width being reported here. Reading its raw value instead left a

@@ -3053,8 +3053,8 @@ class RemapControlsScreenTest {
 
     /**
      * The screen as the pan tests need it. The WINDOW's shape picks the pan target (3 tiles, 2 on a
-     * square window), and Robolectric's default configuration is portrait, so it is pinned to a wide
-     * one here — the target these tests are written against is three tiles.
+     * square window); the class's `w1280dp-h800dp` qualifier makes it three, which is what these
+     * tests are written against.
      */
     private fun setPanScreen(
         reveal: TileReveal = TileReveal.FOCUSED_GROUP,
@@ -3064,16 +3064,7 @@ class RemapControlsScreenTest {
     ) {
         composeRule.setContent {
             MaterialTheme {
-                val wide = android.content.res.Configuration(
-                    androidx.compose.ui.platform.LocalConfiguration.current,
-                ).apply {
-                    screenWidthDp = 1600
-                    screenHeightDp = 900
-                }
-                androidx.compose.runtime.CompositionLocalProvider(
-                    LocalTileReveal provides reveal,
-                    androidx.compose.ui.platform.LocalConfiguration provides wide,
-                ) {
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
                     Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
                         RemapControlsScreen(
                             config = config,
@@ -3434,5 +3425,114 @@ class RemapControlsScreenTest {
         composeRule.waitForIdle()
         composeRule.mainClock.advanceTimeBy(1200)
         composeRule.waitForIdle()
+    }
+
+    /**
+     * **The camera runs the SAME travel as the tiles — starting, easing and landing with them**
+     * (Dylan, 2026-09-28: "a strange consistent starting lag" on opening a group, a cross-column hop
+     * whose "ease out has been cut short", and leaving edit mode where the camera "completes more
+     * quickly and more abruptly" than the labels).
+     *
+     * All three were one bug: the camera interpolated a SCROLL and clamped it into the grid's live
+     * scroll range, which is zero for as long as the grid still fits the window. Opening a group sat
+     * the camera still for a third of the travel; a hop or an exit hit the range collapsing early and
+     * stopped dead. Measured frame by frame, on the controller (the camera) against the opening or
+     * closing box's width (the morph), in both reveal modes.
+     */
+    @Test
+    fun theCamera_runsTheWholeMorph_oneGroupRevealed() = assertCameraFollowsTheMorph(TileReveal.FOCUSED_GROUP)
+
+    @Test
+    fun theCamera_runsTheWholeMorph_everyGroupRevealed() = assertCameraFollowsTheMorph(TileReveal.ALL_GROUPS)
+
+    private fun assertCameraFollowsTheMorph(reveal: TileReveal) {
+        var back: androidx.activity.OnBackPressedDispatcher? = null
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            back = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+                ?.onBackPressedDispatcher
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(900.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            // Both flanks fat, so the grid overruns the window mid-travel — the
+                            // shape the clamp bit on.
+                            config = seedShapedConfig()
+                                .withPressStack(InputSource.DPAD, 7000L)
+                                .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(1000)
+        composeRule.waitForIdle()
+        fun camera() = composeRule.onNodeWithTag("controller-image", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        fun width(group: String) = composeRule
+            .onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().size.width.toFloat()
+        /** The frames on which [series] moved at all, first to last. */
+        fun moving(series: List<Float>): IntRange? {
+            val moves = series.zipWithNext().mapIndexedNotNull { index, (a, b) ->
+                if (kotlin.math.abs(b - a) > 0.5f) index + 1 else null
+            }
+            return if (moves.isEmpty()) null else moves.first()..moves.last()
+        }
+        fun travel(label: String, morphing: String?, act: () -> Unit) {
+            val cameras = mutableListOf(camera())
+            val widths = mutableListOf(morphing?.let(::width) ?: 0f)
+            act()
+            repeat(30) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.waitForIdle()
+                cameras += camera()
+                widths += morphing?.let(::width) ?: 0f
+            }
+            val cam = moving(cameras)
+            assert(cam != null) { "$label: the camera never moved\n$cameras" }
+            // One way only: a camera that stalls and resumes is fine, one that turns back is not.
+            val net = cameras.last() - cameras.first()
+            cameras.zipWithNext { a, b ->
+                assert(b == a || (b > a) == (net > 0f)) { "$label: the camera reversed\n$cameras" }
+            }
+            // No stall mid-flight either: once it starts, it moves on every frame until it lands,
+            // bar the last pixel or two the ease-out rounds away.
+            val flight = cameras.subList(cam!!.first, cam.last + 1)
+            val still = flight.zipWithNext().count { (a, b) -> kotlin.math.abs(b - a) <= 0.5f }
+            assert(still <= 2) { "$label: the camera stalled for $still frames mid-flight\n$cameras" }
+            val morph = morphing?.let { moving(widths) }
+            if (morph != null) {
+                assert(cam.first <= morph.first + 1) {
+                    "$label: the camera started on frame ${cam.first}, the morph on ${morph.first}" +
+                        "\n$cameras\n$widths"
+                }
+                assert(cam.last >= morph.last - 2) {
+                    "$label: the camera landed on frame ${cam.last}, the morph on ${morph.last}" +
+                        "\n$cameras\n$widths"
+                }
+            }
+            composeRule.mainClock.advanceTimeBy(800)
+            composeRule.waitForIdle()
+        }
+
+        travel("opening a group", "FACE") {
+            composeRule.onNodeWithTag("simple-group:FACE").performClick()
+        }
+        travel("hopping to the other column", "DPAD".takeIf { reveal == TileReveal.FOCUSED_GROUP }) {
+            if (reveal == TileReveal.FOCUSED_GROUP) {
+                composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+            } else {
+                composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true)
+                    .requestFocus()
+            }
+        }
+        travel("leaving edit mode", "DPAD") {
+            composeRule.runOnUiThread { back!!.onBackPressed() }
+        }
+        composeRule.mainClock.autoAdvance = true
     }
 }
