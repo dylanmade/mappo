@@ -3096,54 +3096,53 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **Opening a group pans the view even when the group needs no framing at all** (Dylan,
-     * 2026-09-27: groups "whose inputs all only have one assigned tile (and subsequently one empty
-     * tile) ... don't shift the camera at all when activated").
+     * **Opening a group frames EXACTLY the target, even when it needs no framing at all** (Dylan,
+     * 2026-09-27: groups with one command per input "don't shift the camera at all when activated";
+     * and 2026-09-28: on a roomy screen the open left room PAST the target, which showed up as a gap
+     * beyond a three-tile group the moment the cursor walked down to one).
      *
-     * Two reasons it did nothing, and the pan-on-open designation answers both: framing is a
-     * SCROLL, so a grid that fits the window has no pan to give; and a flank box widening on a
-     * fitting grid eats its own leading pad, so the controller and everything past it stay exactly
-     * put. With a floor of three tiles, a two-tile group is one tile short — and that shortfall is
-     * what the view moves by, out of the pad on the far side.
-     *
-     * Measured on the CONTROLLER, which is the one element that says the picture moved rather than
-     * that a box grew, and against the row's own tile PITCH, so "an additional tile's width" is
-     * asserted as exactly that and not as a number.
+     * The region from the group's glyph outward lands with its outer end at the window's edge (give
+     * or take the grid's own margin): three tiles' room — its own two-tile box plus one pitch — on
+     * either flank, however much room the screen has.
      */
     @Test
-    fun openingAGroup_pansByTheDesignatedRoom_evenWhenItNeedsNoFraming() {
+    fun openingAGroup_framesExactlyTheTarget_evenWhenItNeedsNoFraming() {
         setPanScreen()
-        fun controller() = composeRule
-            .onNodeWithTag("controller-image", useUnmergedTree = true)
-            .fetchSemanticsNode().positionInRoot.x
-        fun settle() {
-            composeRule.waitForIdle()
-            composeRule.mainClock.advanceTimeBy(1200)
-            composeRule.waitForIdle()
-        }
-
-        val rest = controller()
-        // A LEFT-flank group: its rows run off the left edge, so looking at it moves the content
-        // RIGHT.
         composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
-        settle()
-        val onLeft = controller()
-        // One tile and its gap — the row's own pitch, taken from two adjacent tiles of the group
-        // that is now open (its slots run leftward, being an end-anchored row).
-        fun tileLeft(slot: Int) = composeRule
-            .onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:$slot", useUnmergedTree = true)
-            .fetchSemanticsNode().positionInRoot.x
-        val pitch = kotlin.math.abs(tileLeft(0) - tileLeft(1))
-        assert(kotlin.math.abs((onLeft - rest) - pitch) <= 1f) {
-            "a two-tile group should pan by one tile: ${onLeft - rest} vs $pitch"
-        }
+        settlePan()
+        val target = utilityBox().second + utilityPitch()
+        assertRoomIsTarget("LEFT_UTILITY", onLeft = true, target = target)
 
-        // And the mirror image on the other flank, by the same amount the other way.
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
-        settle()
-        val onRight = controller()
-        assert(kotlin.math.abs((rest - onRight) - pitch) <= 1f) {
-            "the right flank should pan by the same tile, the other way: ${rest - onRight} vs $pitch"
+        settlePan()
+        assertRoomIsTarget("FACE", onLeft = false, target = target)
+    }
+
+    /**
+     * Assert [group] is the one showing tiles — the guard every same-column hop needs, because a
+     * hop that silently fails leaves the column's inner edge exactly where it was and so passes
+     * any "the view did not move" check for the wrong reason.
+     */
+    private fun assertRevealed(group: String, cell: String) {
+        composeRule.onAllNodesWithTag(cell, useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    /** The utility box's window x and width. */
+    private fun utilityBox() = composeRule
+        .onNodeWithTag("simple-group:LEFT_UTILITY", useUnmergedTree = true)
+        .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+
+    /**
+     * From [group]'s glyph — its inner edge — out to the window's edge on its side is [target],
+     * give or take the grid's own margin, which the region is framed against.
+     */
+    private fun assertRoomIsTarget(group: String, onLeft: Boolean, target: Float, label: String = group) {
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val (x, w) = composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        val room = if (onLeft) x + w - window.left else window.right - x
+        assert(room >= target - 2f && room <= target + GridEdgeSlack) {
+            "$label: ${room}px from the glyph to the window edge; the target is $target"
         }
     }
 
@@ -3160,26 +3159,19 @@ class RemapControlsScreenTest {
     @Test
     fun walkingIntoTheOtherColumn_pansToThatGroup_withEveryGroupRevealed() {
         setPanScreen(reveal = TileReveal.ALL_GROUPS)
-        fun controller() = composeRule
-            .onNodeWithTag("controller-image", useUnmergedTree = true)
-            .fetchSemanticsNode().positionInRoot.x
-        fun settle() {
-            composeRule.waitForIdle()
-            composeRule.mainClock.advanceTimeBy(1200)
-            composeRule.waitForIdle()
-        }
-
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
-        settle()
-        val onRight = controller()
+        settlePan()
         // Every group is tiles, so there is no box left to tap: the cursor moves between groups by
         // landing on a TILE, which is what a d-pad hop across the grid does.
         composeRule.onNodeWithTag("cell:LEFT_UTILITY:SWITCH_SELECT:click:0", useUnmergedTree = true)
             .requestFocus()
-        settle()
-        assert(controller() > onRight) {
-            "walking to the left flank should have panned back: $onRight -> ${controller()}"
-        }
+        settlePan()
+        assertRoomIsTarget(
+            "LEFT_UTILITY",
+            onLeft = true,
+            target = utilityBox().second + utilityPitch(),
+            label = "walking to the left flank",
+        )
     }
 
     /**
@@ -3605,10 +3597,13 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithTag("simple-group:$from").performClick()
         settlePan()
         val before = glyph(from)
-        // Walked into, as the d-pad does — the box may be off screen, out of a tap's reach.
-        composeRule.onNodeWithTag("simple-group:$to").requestFocus()
+        // A tap on the box: the same HOLD a d-pad hop is (see [PanReach]), and — unlike a focus
+        // request from the test, which the one-group reveal does not always honour here — certain
+        // to actually hop.
+        composeRule.onNodeWithTag("simple-group:$to").performClick()
         settlePan()
         relayout()
+        assertRevealed(to, if (onLeft) "cell:DPAD:DPAD:dpad_up:0" else "cell:FACE:BUTTON_DIAMOND:button_y:0")
 
         assert(kotlin.math.abs(glyph(to) - before) <= 1f) {
             "$to: the column's inner edge moved from $before to ${glyph(to)} on a same-column hop"
@@ -3730,10 +3725,8 @@ class RemapControlsScreenTest {
      * a group whose rows each hold one command "pans a whole tile beyond the newly resultant empty
      * tile" — on a screen larger than 1:1 only).
      *
-     * On a grid that fits, the pan is DRAWN, and it was only ever planned by a reveal or a collapse.
-     * Opening the two-tile group drew it one tile out (three-tile target); the paste made the group
-     * three tiles wide, which needs no drawn pan at all — but the one-tile pan stayed. Now the
-     * re-frame re-plans it, so the controller comes back to where the resting grid centres it.
+     * A paste re-frames the group for its new width: two tiles framed to the three-tile target, then
+     * three tiles filling it exactly — never the old pan left standing a tile past its end.
      */
     @Test
     fun pastingATile_rePlansThePan_forTheGroupsNewWidth_oneGroupRevealed() =
@@ -3747,19 +3740,19 @@ class RemapControlsScreenTest {
         val live = androidx.compose.runtime.mutableStateOf(seedShapedConfig())
         setLiveScreen(live, reveal)
         assertNothingToScroll("the fixture should fit the window, so the pan is DRAWN")
-        val rest = controllerX()
         composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
         settlePan()
-        val pitch = utilityPitch()
-        assert(kotlin.math.abs(controllerX() - rest - pitch) <= 1f) {
-            "opening the two-tile group should draw the view one tile out: ${controllerX() - rest} vs $pitch"
-        }
+        val target = utilityBox().second + utilityPitch()
+        assertRoomIsTarget("LEFT_UTILITY", onLeft = true, target = target, label = "opened")
 
         live.value = seedShapedConfig().withTwoCommands(InputSource.SWITCH_SELECT, "click", 800L)
         settlePan()
         relayout()
-        assert(kotlin.math.abs(controllerX() - rest) <= 1f) {
-            "a three-tile group needs no drawn pan, but the view sits ${controllerX() - rest}px out"
+        // Three tiles now: the group fills the target exactly, with nothing past it.
+        assertRoomIsTarget("LEFT_UTILITY", onLeft = true, target = target, label = "pasted")
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        assert(utilityBox().first - window.left <= GridEdgeSlack) {
+            "a tile past the pasted group's end: ${utilityBox().first - window.left}px of empty room"
         }
     }
 
@@ -3768,8 +3761,8 @@ class RemapControlsScreenTest {
      * removing a tile "truncates the view so it's now narrower than it ever was upon first
      * opening").
      *
-     * The mirror of the paste: a three-tile group opened with no drawn pan, then cleared back to two
-     * tiles, has to be drawn one tile out — exactly as if the two-tile group had been opened fresh.
+     * The mirror of the paste: a three-tile group opened, then cleared back to two tiles, still gets
+     * the three-tile target — exactly as if the two-tile group had been opened fresh.
      */
     @Test
     fun clearingATile_neverLeavesTheViewShortOfTheTarget_oneGroupRevealed() =
@@ -3785,18 +3778,15 @@ class RemapControlsScreenTest {
         )
         setLiveScreen(live, reveal)
         assertNothingToScroll("the fixture should fit the window, so the pan is DRAWN")
-        val rest = controllerX()
         composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
         settlePan()
+        // Three tiles: the group IS the target.
+        val target = utilityBox().second.toFloat()
 
         live.value = seedShapedConfig()
         settlePan()
         relayout()
-        val pitch = utilityPitch()
-        assert(kotlin.math.abs(controllerX() - rest - pitch) <= 1f) {
-            "the two-tile group should be drawn one tile out, as when opened: " +
-                "${controllerX() - rest} vs $pitch"
-        }
+        assertRoomIsTarget("LEFT_UTILITY", onLeft = true, target = target, label = "cleared")
     }
 
     /**
@@ -3968,11 +3958,8 @@ class RemapControlsScreenTest {
      * in 1:1 alike — "your solution needs to be viable at any screen width up to at least 16:9 ...
      * empty scroll space ... serves no purpose anyway, and should be eliminated entirely").
      *
-     * Asserted structurally rather than case by case: with each group focused in turn, whenever the
-     * body can scroll at all, scrolling to the FAR end — the one away from the focused group — must
-     * bring that side's outermost group to the window's edge. The near end may hold room past the
-     * content: that is the pan's own reach, which rule 1 asks for past a narrow group and rule 2
-     * keeps across a column (see [StageCamera]). At rest, both ends must be content.
+     * Asserted structurally rather than case by case: with each group focused in turn, as the view
+     * settles, every direction it can still scroll must have real content past the window's edge.
      */
     @Test fun scrollRangeIsTheContent_16x9_oneGroup_default() =
         assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 1200, 675, null, seedShapedConfig())
@@ -4097,25 +4084,32 @@ class RemapControlsScreenTest {
             .let { if (outer) it.positionInRoot.x + it.size.width else it.positionInRoot.x }
         val left = listOf("LEFT_SHOULDER", "DPAD", "LEFT_STICK", "LEFT_UTILITY")
         val right = listOf("RIGHT_SHOULDER", "FACE", "RIGHT_STICK", "RIGHT_UTILITY")
+        /**
+         * **Every direction the view can still scroll has real content past the window's edge** —
+         * the phantom, stated directly: scroll range the user can move into that holds nothing. Asked
+         * of the view as it SETTLED, without scrolling it: empty room the settled view shows is room
+         * the layout holds only while it is on screen (see [StageCamera]), and that is fine; room it
+         * could scroll ON into is not.
+         */
         fun assertEndsAreContent(label: String, focusOnLeft: Boolean? = null) {
-            if (range().maxValue() <= 0f) return
+            val r = range()
+            if (r.maxValue() <= 0f) return
             val window = body.fetchSemanticsNode().let {
                 it.positionInRoot.x to it.positionInRoot.x + it.size.width
             }
-            if (focusOnLeft != true) {
-                scrollBy(-100_000f)
-                val leading = left.minOf { edge(it, outer = false) }
-                assert(leading >= window.first - 1f && leading - window.first <= GridEdgeSlack) {
-                    "$label: scrolled to the start, the leftmost group sits " +
-                        "${leading - window.first}px from the window's edge"
+            if (r.value() > 0.5f) {
+                val leading = (left + right).minOf { edge(it, outer = false) }
+                assert(leading < window.first - 1f) {
+                    "$label: the view can still scroll left ${r.value()}px, but everything on that " +
+                        "side is already on screen (leftmost at ${leading - window.first}px)"
                 }
             }
-            if (focusOnLeft != false) {
-                scrollBy(100_000f)
-                val trailing = right.maxOf { edge(it, outer = true) }
-                assert(trailing <= window.second + 1f && window.second - trailing <= GridEdgeSlack) {
-                    "$label: scrolled to the end, the rightmost group sits " +
-                        "${window.second - trailing}px from the window's edge"
+            if (r.value() < r.maxValue() - 0.5f) {
+                val trailing = (left + right).maxOf { edge(it, outer = true) }
+                assert(trailing > window.second + 1f) {
+                    "$label: the view can still scroll right ${r.maxValue() - r.value()}px, but " +
+                        "everything on that side is already on screen (rightmost at " +
+                        "${window.second - trailing}px from the edge)"
                 }
             }
         }
@@ -4180,9 +4174,10 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().positionInRoot.x
         assert(dpadLeft >= window.left - 1f) { "opening DPAD should show all of it: at $dpadLeft" }
 
-        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").requestFocus()
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").performClick()
         settlePan()
         relayout()
+        assertRevealed("LEFT_UTILITY", "cell:LEFT_UTILITY:SWITCH_SELECT:click:0")
         assert(kotlin.math.abs(innerEdge("LEFT_UTILITY") - wide) <= 1f) {
             "walking to a narrow group in the same column moved the view: the column's inner edge " +
                 "went from $wide to ${innerEdge("LEFT_UTILITY")}"
@@ -4249,5 +4244,115 @@ class RemapControlsScreenTest {
             "only ${room}px from the group's glyph to the window edge; the three-tile target needs " +
                 "${box.second + pitch} (its two-tile box ${box.second} plus one pitch $pitch)"
         }
+    }
+
+    /**
+     * **A three-tile group walked into from a narrow one fills the target exactly** (Dylan,
+     * 2026-09-28: walking down from a group of fewer than three tiles to one of three "increases the
+     * 3-or-more group's 'left width' slightly, as though a fraction of space is being added to its
+     * intended 3 tile width target").
+     *
+     * The walk is a HOLD and never moved the view; the gap was the OPEN's — framing settled for "in
+     * view", which on a roomy screen left more than the target past the narrow group, invisible
+     * until a three-tile group was there to end short of it. Framed exactly, the three-tile group
+     * meets the window's edge, at every screen shape (real text: the other column's rows are text).
+     */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun aThreeTileGroup_walkedIntoFromANarrowOne_fillsTheTarget_4x3() = assertThreeTileGroupFills(800, 600)
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun aThreeTileGroup_walkedIntoFromANarrowOne_fillsTheTarget_wide() = assertThreeTileGroupFills(1200, 700)
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun aThreeTileGroup_walkedIntoFromANarrowOne_fillsTheTarget_small() = assertThreeTileGroupFills(640, 480)
+
+    private fun assertThreeTileGroupFills(width: Int, height: Int) {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withTwoCommands(InputSource.DPAD, "dpad_up", 7000L),
+        )
+        setLiveScreen(live, width = width, height = height)
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        fun box(group: String) = composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        // The top row: on a short screen the bottom one can sit below the window, out of a tap.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settlePan()
+        val glyph = box("LEFT_SHOULDER").let { (x, w) -> x + w }
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+        relayout()
+        assertRevealed("DPAD", "cell:DPAD:DPAD:dpad_up:2")
+        val (dx, dw) = box("DPAD")
+        assert(kotlin.math.abs(dx + dw - glyph) <= 1f) { "the walk moved the view: $glyph -> ${dx + dw}" }
+        assert(dx - window.left in -1f..GridEdgeSlack) {
+            "${dx - window.left}px of empty room past the three-tile group's end"
+        }
+    }
+
+    /**
+     * **Walking onto a group wider than the reach shows the reach — not a sliver more** (Dylan,
+     * 2026-09-28: opening a single-assignment left group, then walking to one with three or more,
+     * "we're seeing slightly more of that fourth tile ... than we're supposed to"; fixed whenever the
+     * other column's labels overflowed).
+     *
+     * The walk HOLDS the view, so the wide group's extra tiles sit just past the near edge. The last
+     * rule the camera kept — never empty past the far column while the near side is cut — then slid
+     * the view over to fill the free room past the far column wherever the grid otherwise fit, which
+     * is why an overflowing far column hid the bug. Checked where there IS free room past the far
+     * column, on both flanks, with real text.
+     */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun walkingOntoAWiderGroup_showsTheReach_notASliverMore_left_4x3() =
+        assertWiderGroupShowsTheReach(onLeft = true, width = 800, height = 600)
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun walkingOntoAWiderGroup_showsTheReach_notASliverMore_left_wide() =
+        assertWiderGroupShowsTheReach(onLeft = true, width = 1200, height = 700)
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun walkingOntoAWiderGroup_showsTheReach_notASliverMore_right_4x3() =
+        assertWiderGroupShowsTheReach(onLeft = false, width = 800, height = 600)
+
+    private fun assertWiderGroupShowsTheReach(onLeft: Boolean, width: Int, height: Int) {
+        val (narrow, wide, wideSource, wideCell) = if (onLeft) {
+            listOf("LEFT_SHOULDER", "DPAD", "DPAD", "cell:DPAD:DPAD:dpad_up:3")
+        } else {
+            listOf("RIGHT_SHOULDER", "FACE", "FACE", "cell:FACE:BUTTON_DIAMOND:button_y:3")
+        }
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withPressStack(
+                if (wideSource == "DPAD") InputSource.DPAD else InputSource.BUTTON_DIAMOND,
+                7000L,
+            ),
+        )
+        setLiveScreen(live, width = width, height = height)
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        fun box(group: String) = composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        fun glyph(group: String) = box(group).let { (x, w) -> if (onLeft) x + w else x }
+        fun room(group: String) = if (onLeft) glyph(group) - window.left else window.right - glyph(group)
+
+        // The top row: on a short screen the bottom one can sit below the window, out of a tap.
+        composeRule.onNodeWithTag("simple-group:$narrow").performClick()
+        settlePan()
+        val reach = room(narrow)
+        composeRule.onNodeWithTag("simple-group:$wide").performClick()
+        settlePan()
+        relayout()
+        assertRevealed(wide, wideCell)
+
+        assert(kotlin.math.abs(room(wide) - reach) <= 1f) {
+            "$wide: the walk moved the view — ${room(wide)}px of room where the open framed $reach"
+        }
+        // The wide group really is wider than the reach, so its outer end is off screen.
+        val (x, w) = box(wide)
+        val hidden = if (onLeft) window.left - x else x + w - window.right
+        assert(hidden > 1f) { "$wide should run past the window's edge, but shows whole" }
     }
 }

@@ -884,13 +884,6 @@ internal fun RemapStage(
                 // closed), or a group changing shape with the view settled — the camera plans where
                 // the content will be drawn at its end, ONCE, and interpolates the controller's
                 // on-screen position there along the travel's curve.
-                /** The widest box showing TILES in [group]'s column — the room its tiles already
-                 *  have beyond its glyph. A text row is not room tiles are shown in. */
-                fun tiledRoom(group: RemapSimpleGroup, widths: IntArray): Int {
-                    val column = if (group in LeftColumnGroups) LeftColumnGroups else RightColumnGroups
-                    return column.filter { it in reveal.expanded }
-                        .maxOfOrNull { widths[groups.indexOf(it)] } ?: 0
-                }
                 /** Where, in the window, the view is right now — the controller's column — and
                  *  where it is headed, which is what a new travel plans from. */
                 val drawnCtrl = camera.lastDrawnCtrl
@@ -908,7 +901,6 @@ internal fun RemapStage(
                             focus = focus,
                             reach = panReach.reach,
                             framing = framing,
-                            tiledRoom = focus?.let { tiledRoom(it, toWidths) } ?: 0,
                             leftW = toLeft,
                             rightW = toRight,
                             centreW = toCentre,
@@ -935,7 +927,6 @@ internal fun RemapStage(
                                 focus = group,
                                 reach = panReach.reach,
                                 framing = true,
-                                tiledRoom = tiledRoom(group, measuredWidths),
                                 leftW = leftColumnW,
                                 rightW = rightColumnW,
                                 centreW = centreColumnW,
@@ -1613,21 +1604,17 @@ private fun restSpan(
  *    controller stays exactly where it is drawn, whatever the column does around it: that is "the
  *    pan location will also be maintained if the user navigates up and down" (Dylan, 2026-09-28).
  *  - **FRAMING** (an open, a cross-column hop, a committed tile, or any move after the user has
- *    scrolled — see [PanReach]): the region [reach] wide from the group's glyph outward is brought
- *    into view by the shortest distance. Where the whole grid FITS the window there is nothing to
- *    scroll, so the view is NUDGED toward the group from its centred placement by however much of
- *    the reach its tiles do not already cover ([tiledRoom]) — the pan Dylan called "solid" for a
- *    default layout that fits (2026-09-28).
+ *    scrolled — see [PanReach]): the region [reach] wide from the group's glyph outward is placed
+ *    with its outer end at the window's edge — exactly the reach, never more.
  *
- * One rule over all three: **never empty on the far side while the content is cut off on the near
- * one.** Room past the content only ever appears on the FOCUSED group's side, where the reach asked
- * for it; reaching the target may push the far column off screen, where it scrolls like any content.
+ * Nothing else constrains it. Reaching the target may push the far column off screen, where it scrolls
+ * like any content; and whatever empty room the view shows past the content is room the layout holds
+ * only because it is on screen (see [StageCamera]) — never scroll range reaching past what was shown.
  */
 private fun cameraDestination(
     focus: RemapSimpleGroup?,
     reach: Int,
     framing: Boolean,
-    tiledRoom: Int,
     leftW: Int,
     rightW: Int,
     centreW: Int,
@@ -1657,38 +1644,34 @@ private fun cameraDestination(
     val onLeft = focus in LeftColumnGroups
     var x = here
     if (framing) {
-        if (contentW <= vg) {
-            // Centred as the window allows, then toward the group by the reach its tiles lack.
-            val centred = (vg / 2 - (leftW + columnGap + centreW / 2)).coerceIn(0, vg - contentW)
-            val nudge = (reach - tiledRoom).coerceAtLeast(0)
-            x = (centred + if (onLeft) nudge else -nudge).coerceIn(0, vg - contentW)
-        }
-        // The glyph is the group's inner edge — the column's — and the region runs outward from it.
-        if (onLeft) {
-            when {
-                reach >= vg -> x = vg - leftW
-                x + leftW - reach < 0 -> x = reach - leftW
-                x + leftW > vg -> x = vg - leftW
-            }
+        // **Exactly the reach, out to the window's edge** (Dylan, 2026-09-28): the region from the
+        // group's glyph outward lands with its outer end AT the edge, so the view shows the target —
+        // or the whole group, where that is wider — and never more. Framing used to settle for
+        // "already in view", which on a roomy screen left the view showing well past the target; that
+        // extra was invisible beside a narrow group and turned into a gap past the end of a
+        // three-tile one the moment the cursor walked down to it. The glyph is the group's inner
+        // edge — the column's — and the region runs outward from it. Wider than the window, the
+        // glyph side shows.
+        val glyph = if (onLeft) leftW else contentW - rightW
+        x = if (onLeft) {
+            if (reach >= vg) vg - glyph else reach - glyph
         } else {
-            val glyph = contentW - rightW
-            when {
-                reach >= vg -> x = -glyph
-                x + glyph + reach > vg -> x = vg - reach - glyph
-                x + glyph < 0 -> x = -glyph
-            }
+            if (reach >= vg) -glyph else vg - reach - glyph
         }
     }
-    // **Never empty past the far column while the content is cut off on the near side** — the one
-    // constraint. Reaching the target is allowed to push the FAR column off screen, where it simply
-    // scrolls: that is real content, and the target is the rule (Dylan, 2026-09-28: with one group
-    // revealed, each assignment added to the other column's rows made the pan "successively shorter"
-    // while framing was forbidden from pushing content that fitted off the window).
-    x = if (onLeft) {
-        if (x + contentW < vg) maxOf(x, minOf(0, vg - contentW)) else x
-    } else {
-        if (x > 0) minOf(x, maxOf(0, vg - contentW)) else x
-    }
+    // **No further constraint** (Dylan, 2026-09-28). There used to be one — "never empty past the
+    // far column while the content is cut off on the near side" — and it was the last thing still
+    // moving a HOLD: walking down onto a group wider than the reach leaves its extra tiles just past
+    // the near edge, and wherever the rest of the grid fit, the rule slid the whole view over to fill
+    // the empty room past the far column, showing "slightly more of that fourth tile". It only ever
+    // guarded against scroll range with nothing in it, which the layout built around the camera
+    // cannot have: any room past the far column exists only because it is on screen right now.
+    // **Go the whole way when all that is left is the margin** (Dylan, 2026-09-25). A box stops short
+    // of the window by the grid's own margin, so a view landing within that margin of the content's
+    // end has nothing left to show past it — but would still have a few pixels of range, and the edge
+    // fade and chevron would light over them.
+    if (x < 0 && -x <= edgeX) x = 0
+    if (x + contentW > vg && x + contentW - vg <= edgeX) x = vg - contentW
     // The layout is built around the camera: room before the content where the view shows some
     // there, room after it where the view shows some THERE (the reach past a right-column group),
     // and otherwise exactly the content.
@@ -1985,6 +1968,7 @@ private class ReframePlan {
         val changed = if (was != null && !was.contentEquals(widths)) {
             widths.indices.first { widths[it] != was[it] }
         } else null
+        if (claimed == null && changed != null) println("DBGRF unclaimed change idx=$changed was=${was?.toList()} now=${widths.toList()} busy=$busy")
         val group = claimed ?: changed?.takeIf { !busy }?.let(groupAt) ?: return null
         servedTick = frameTick
         request.intValue++
