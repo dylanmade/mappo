@@ -1346,7 +1346,7 @@ private fun AssignmentTable(
     /**
      * The table's width at each end of the morph, offered as INTRINSICS.
      *
-     * The stage plans the travel from these (RemapStage's `EditCameraAnchor`): it has to know
+     * The stage plans the travel from these (RemapStage's `EditMorphPlan`): it has to know
      * where the grid will END UP before the first frame of it, so it can work out once — rather
      * than chase frame by frame — how far to hold the view against the change. `min` is the
      * resting width, `max` the edit-mode one; a Box's padding and [CentreSplit] pass both

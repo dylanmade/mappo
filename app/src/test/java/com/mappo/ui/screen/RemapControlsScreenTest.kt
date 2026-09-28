@@ -297,13 +297,23 @@ class RemapControlsScreenTest {
             .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
             .maxValue()
 
-        val before = maxScroll()
         live.value = live.value.withTwoCommands(InputSource.BUTTON_DIAMOND, "button_a", 900L)
         composeRule.waitForIdle()
 
-        val after = maxScroll()
-        assert(after > before) {
-            "The face row grew by two commands and the body still scrolls $after (was $before)"
+        // Every tile of the wider row can be reached: scrolled to the end, its outer end is on
+        // screen. (The range need not GROW — the reach may already have held room past the group
+        // that the new tiles simply fill; see [StageCamera].)
+        assert(maxScroll() > 0f) { "the fixture should overflow the window" }
+        val body = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+        val scrollBy = body.fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(100_000f, 0f) }
+        composeRule.waitForIdle()
+        val window = body.fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+        val faceEnd = composeRule.onNodeWithTag("simple-group:FACE", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+        assert(faceEnd <= window + 1f) {
+            "The face row grew by two commands and its end is ${faceEnd - window}px past the " +
+                "furthest the body scrolls"
         }
     }
 
@@ -322,9 +332,10 @@ class RemapControlsScreenTest {
      *    2026-09-25: "not at all acceptable or tenable").
      *
      * The grid is padded by the SHORTFALL against the window instead, which puts the
-     * controller-centred position at that end of the range: with a short right flank the resting
-     * view is already as far right as the scroller goes, so there is nothing to scroll into.
-     * That is what the last two assertions say.
+     * controller-centred position at that end of the range. **The view mode's rule only** (Dylan,
+     * 2026-09-28: "In the physical controls' view mode, the controller genuinely should be centered
+     * by default even if the labels of input rows begin to exit the screen width"); edit mode builds
+     * its layout around its camera instead.
      */
     @Test
     fun restingView_centresTheController_withoutInventingScrollSpace() {
@@ -3172,34 +3183,24 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **The minimum is enforced even where the scroll range runs out** (Dylan, 2026-09-28: with
-     * every group revealed, walking from a left-column group to a right-column one "only pans to
-     * the right enough to show the assigned input and its empty tile, instead of the 3 tile slots
-     * the setting is supposed to enforce").
+     * **The target is shown even where the content runs out** (Dylan, 2026-09-28: with every group
+     * revealed, walking into a right-column group "only pans to the right enough to show the assigned
+     * input and its empty tile, instead of the 3 tile slots"; and rule 1 of the rebuild: "If the
+     * group has fewer tiles than our target ... pan to the target number of tiles instead").
      *
-     * With every group tiled the grid overruns the window, so the floor is asked of the SCROLL —
-     * and past the outermost group there is nothing but the grid's own margin, so the scroller
-     * clamps at its end with the request short by a tile. What the scroll cannot reach the placement
-     * now supplies, the same way it supplies the whole floor on a grid with no scroll range at all.
-     *
-     * Asserted as the invariant the setting states: from the group's glyph edge to the window's
-     * edge there is room for THREE tiles — measured as its own two-tile box plus one more tile's
-     * pitch, so no dp figure appears here.
+     * On a grid that overruns the window, the room past the outermost group is part of the layout
+     * built around the camera — on the focused group's own side, never the far one (see
+     * [StageCamera]). From the group's glyph edge to the window's edge there is room for THREE tiles:
+     * its own two-tile box plus one more tile's pitch.
      */
     @Test
-    fun walkingIntoAGroupAtTheScrollEnd_stillShowsTheDesignatedRoom() {
-        // The grid must genuinely OVERRUN the window, which is the case the floor was being ignored
-        // in. Symmetric flanks alone never manage it — `gridSpan` pads each side up to half the
-        // window, so two equal halves come out exactly one window wide, and the controller column's
-        // squeeze closes what is left. One fat column does it.
+    fun walkingIntoAGroupAtTheScrollEnd_stillShowsTheTargetRoom() {
+        // The grid must genuinely OVERRUN the window: one fat column does it.
         setPanScreen(
             reveal = TileReveal.ALL_GROUPS,
             width = 900,
             config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
         )
-        // Enter on a LEFT-column group, then walk across to a RIGHT-column one — the hop Dylan
-        // described. With every group revealed there is no box left to tap, so the cursor moves by
-        // landing on a tile, exactly as the d-pad does.
         composeRule.onNodeWithTag("simple-group:DPAD").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:0", useUnmergedTree = true)
@@ -3215,8 +3216,7 @@ class RemapControlsScreenTest {
             .onNodeWithTag("cell:FACE:BUTTON_DIAMOND:button_y:$slot", useUnmergedTree = true)
             .fetchSemanticsNode().positionInRoot.x
         val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
-        // A right-flank group's glyph is at its LEFT edge and its tiles run rightward, so the
-        // region the floor asks for starts at the box's left edge.
+        // A right-flank group's glyph is at its LEFT edge and its tiles run rightward.
         val room = window.right - box.first
         assert(room >= box.second + pitch - 1f) {
             "only ${room}px from the group's glyph to the window edge; three tiles need " +
@@ -3420,7 +3420,8 @@ class RemapControlsScreenTest {
         val room = glyph - window.left
         // The box holds four tiles; the target is that less the tiles it leaves off screen.
         val target = box.second - pitch * (4 - targetTiles)
-        assert(kotlin.math.abs(room - target) <= 2f) {
+        // The region is framed to the grid's own margin, so up to that margin more is fine.
+        assert(room >= target - 2f && room <= target + GridEdgeSlack) {
             "${room}px from the glyph to the window edge; the $targetTiles-tile target is $target"
         }
     }
@@ -3570,52 +3571,51 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **Walking down a column onto a wide group gives it the TARGET, on either side** (Dylan,
-     * 2026-09-28: with one group revealed, left-column groups "reveal their max width/all content
-     * when navigated to, instead of only revealing the target amount of tiles").
+     * **Walking down a column HOLDS the view, on either side** (Dylan, 2026-09-28: the pan "will
+     * also be maintained if the user navigates up and down to input groups still within the original
+     * group's same column; this is important").
      *
-     * A left-column box grows at the content's START, pushing everything after it along, and the
-     * camera judged "already in view" against the scroll it had in the OLD grid — which, in the new
-     * one, showed the whole box's growth further out. The right column grows at the END and never
-     * had the problem, so the two are asserted as mirror images of each other: entered from a
-     * narrow group (reach = the target), each wide group gets exactly three tiles of room.
+     * Entered from a narrow group and walked onto a wide one, the camera does not move: the column's
+     * inner edge — every group's glyph in it — stays exactly where it was on screen, so the wide
+     * group shows the room the narrow one was framed with and is NOT dragged out to its full width.
+     * Asserted as mirror images: a left-column group grows at the content's START, which is what
+     * once made the left side alone reveal every wide group whole.
      */
     @Test
-    fun walkingDownAColumnOntoAWideGroup_leftColumn_getsTheTarget() =
-        assertSameColumnHopGetsTheTarget(from = "LEFT_SHOULDER", to = "DPAD", onLeft = true)
+    fun walkingDownAColumnOntoAWideGroup_leftColumn_holdsTheView() =
+        assertSameColumnHopHoldsTheView(from = "LEFT_SHOULDER", to = "DPAD", onLeft = true)
 
     @Test
-    fun walkingDownAColumnOntoAWideGroup_rightColumn_getsTheTarget() =
-        assertSameColumnHopGetsTheTarget(from = "RIGHT_SHOULDER", to = "FACE", onLeft = false)
+    fun walkingDownAColumnOntoAWideGroup_rightColumn_holdsTheView() =
+        assertSameColumnHopHoldsTheView(from = "RIGHT_SHOULDER", to = "FACE", onLeft = false)
 
-    private fun assertSameColumnHopGetsTheTarget(from: String, to: String, onLeft: Boolean) {
+    private fun assertSameColumnHopHoldsTheView(from: String, to: String, onLeft: Boolean) {
         setPanScreen(
-            // Narrow enough that the content genuinely overruns it: where everything fits, every
-            // group is simply on screen and there is no target to land on.
+            // Narrow enough that the content genuinely overruns it once the wide group is open.
             width = 700,
             config = seedShapedConfig()
                 .withPressStack(InputSource.DPAD, 7000L)
                 .withPressStack(InputSource.BUTTON_DIAMOND, 8000L),
         )
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        fun box(group: String) = composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        /** The group's glyph — its INNER edge, the column's — in the window. */
+        fun glyph(group: String) = box(group).let { (x, w) -> if (onLeft) x + w else x }
         composeRule.onNodeWithTag("simple-group:$from").performClick()
         settlePan()
-        composeRule.onNodeWithTag("simple-group:$to").performClick()
+        val before = glyph(from)
+        // Walked into, as the d-pad does — the box may be off screen, out of a tap's reach.
+        composeRule.onNodeWithTag("simple-group:$to").requestFocus()
         settlePan()
+        relayout()
 
-        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
-        val box = composeRule.onNodeWithTag("simple-group:$to", useUnmergedTree = true)
-            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
-        val row = if (onLeft) "DPAD:dpad_up" else "BUTTON_DIAMOND:button_y"
-        fun tileLeft(slot: Int) = composeRule
-            .onNodeWithTag("cell:$to:$row:$slot", useUnmergedTree = true)
-            .fetchSemanticsNode().positionInRoot.x
-        val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
-        // From the glyph — the box's INNER edge — out to the window's edge on the group's side.
-        val room = if (onLeft) box.first + box.second - window.left else window.right - box.first
-        val target = box.second - pitch
-        assert(kotlin.math.abs(room - target) <= 2f) {
-            "$to: ${room}px from the glyph to the window edge; the three-tile target is $target"
+        assert(kotlin.math.abs(glyph(to) - before) <= 1f) {
+            "$to: the column's inner edge moved from $before to ${glyph(to)} on a same-column hop"
         }
+        val (x, w) = box(to)
+        val wholeOnScreen = if (onLeft) x >= window.left - 1f else x + w <= window.right + 1f
+        assert(!wholeOnScreen) { "$to was pulled out to its full width on a same-column hop" }
     }
 
     /**
@@ -3838,5 +3838,375 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode()
             .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
         assert(range.maxValue() == 0f) { "$message: range ${range.maxValue()}px" }
+    }
+
+    /**
+     * **The scroll cues are never lit on a grid with nothing to scroll** (Dylan, 2026-09-28:
+     * opening a group "causes the phantom scroll to appear on the opposite screen edge").
+     *
+     * The camera draws its travel as a shift even where the grid fits the window, and the fade,
+     * chevron and bar read whatever shift they are handed as scroll — so a travel lit them on the
+     * side it pointed, and a pixel of rounding left over at its end kept them lit. Every value the
+     * cues are handed is recorded, frame by frame, through an open, a hop across the grid and a hop
+     * back; with no scroll range, every one of them must be nothing.
+     */
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_640x360() =
+        assertCuesStayDark(TileReveal.FOCUSED_GROUP, 640, 360)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_640x360() =
+        assertCuesStayDark(TileReveal.ALL_GROUPS, 640, 360)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_700x380() =
+        assertCuesStayDark(TileReveal.FOCUSED_GROUP, 700, 380)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_700x380() =
+        assertCuesStayDark(TileReveal.ALL_GROUPS, 700, 380)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_800x420() =
+        assertCuesStayDark(TileReveal.FOCUSED_GROUP, 800, 420)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_800x420() =
+        assertCuesStayDark(TileReveal.ALL_GROUPS, 800, 420)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_1200x700() =
+        assertCuesStayDark(TileReveal.FOCUSED_GROUP, 1200, 700)
+
+    @Test
+    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_1200x700() =
+        assertCuesStayDark(TileReveal.ALL_GROUPS, 1200, 700)
+
+    private fun assertCuesStayDark(reveal: TileReveal, width: Int, height: Int) {
+        val published = mutableListOf<Float>()
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides reveal,
+                    com.mappo.ui.screen.remap.LocalBodyShiftProbe provides { published += it },
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig(),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+        assertNothingToScroll("the fixture should fit the window")
+        fun walkInto(group: String, cell: String) {
+            if (reveal == TileReveal.FOCUSED_GROUP) {
+                composeRule.onNodeWithTag("simple-group:$group").requestFocus()
+            } else {
+                composeRule.onNodeWithTag(cell, useUnmergedTree = true).requestFocus()
+            }
+            settlePan()
+        }
+        // The top row: on a short screen the bottom one can sit below the window, out of a tap.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settlePan()
+        walkInto("FACE", "cell:FACE:BUTTON_DIAMOND:button_a:0")
+        walkInto("LEFT_UTILITY", "cell:LEFT_UTILITY:SWITCH_SELECT:click:0")
+        relayout()
+
+        assertNothingToScroll("the travels should not have made any scroll range")
+        val lit = published.filter { it != 0f }
+        assert(lit.isEmpty()) {
+            "the cues were handed ${lit.size} non-zero shifts with nothing to scroll: ${lit.take(12)}"
+        }
+    }
+
+    /**
+     * **In edit mode the far end of the scroll is the far column, never padding beyond it** (Dylan,
+     * 2026-09-28: "What is this business about keeping the controller exactly centered anyway?
+     * Aren't we panning to one side no matter what when editing an input group?").
+     *
+     * Centring the controller is the resting view's rule, and it pads an overflowing grid's short
+     * side out to half a window. With one group revealed the grid is lopsided by design, so that
+     * padding was scroll range past the far column with nothing in it — the phantom scroll, fade and
+     * chevron "on the opposite screen edge". Scrolled all the way over, the far column has to reach
+     * the window's edge.
+     */
+    @Test
+    fun editMode_theFarEndOfTheScroll_isTheFarColumn() {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        setLiveScreen(live, width = 520, height = 300)
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+        val range = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        assert(range.maxValue() > 0f) { "the fixture should overflow the window" }
+
+        val scrollBy = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(10_000f, 0f) }
+        settlePan()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val farEdge = listOf("RIGHT_SHOULDER", "FACE", "RIGHT_STICK", "RIGHT_UTILITY").maxOf { group ->
+            composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+        }
+        assert(farEdge >= window.right - GridEdgeSlack) {
+            "scrolled to the end, the far column stops ${window.right - farEdge}px short of the " +
+                "window's edge — scroll range with nothing in it"
+        }
+    }
+
+    /**
+     * **The scroll range is the content, at every screen shape and every group** (Dylan,
+     * 2026-09-28: phantom scroll whenever a group of single commands was focused, on a 4:3 screen and
+     * in 1:1 alike — "your solution needs to be viable at any screen width up to at least 16:9 ...
+     * empty scroll space ... serves no purpose anyway, and should be eliminated entirely").
+     *
+     * Asserted structurally rather than case by case: with each group focused in turn, whenever the
+     * body can scroll at all, scrolling to the FAR end — the one away from the focused group — must
+     * bring that side's outermost group to the window's edge. The near end may hold room past the
+     * content: that is the pan's own reach, which rule 1 asks for past a narrow group and rule 2
+     * keeps across a column (see [StageCamera]). At rest, both ends must be content.
+     */
+    @Test fun scrollRangeIsTheContent_16x9_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 1200, 675, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_16x9_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 1200, 675, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_16x9_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 1200, 675, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_16x9_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 1200, 675, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_16x10_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 1120, 700, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_16x10_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 1120, 700, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_16x10_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 1120, 700, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_16x10_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 1120, 700, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_4x3_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 800, 600, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_4x3_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 800, 600, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_4x3_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 800, 600, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_4x3_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 800, 600, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_4x3small_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 640, 480, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_4x3small_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 640, 480, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_4x3small_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 640, 480, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_4x3small_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 640, 480, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_1x1_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 600, 600, 1f, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_1x1_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 600, 600, 1f, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_1x1_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 600, 600, 1f, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_1x1_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 600, 600, 1f, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_1x1small_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 480, 480, 1f, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_1x1small_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 480, 480, 1f, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_1x1small_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 480, 480, 1f, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_1x1small_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 480, 480, 1f, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_narrow_oneGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 540, 300, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_narrow_oneGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.FOCUSED_GROUP, 540, 300, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    @Test fun scrollRangeIsTheContent_narrow_everyGroup_default() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 540, 300, null, seedShapedConfig())
+
+    @Test fun scrollRangeIsTheContent_narrow_everyGroup_lopsided() =
+        assertScrollRangeIsTheContent(TileReveal.ALL_GROUPS, 540, 300, null, seedShapedConfig().withPressStack(InputSource.DPAD, 7000L))
+
+    private fun assertScrollRangeIsTheContent(
+        reveal: TileReveal,
+        width: Int,
+        height: Int,
+        aspect: Float?,
+        config: ControllerConfig,
+    ) {
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides reveal,
+                    com.mappo.ui.screen.home.LocalScreenAspect provides aspect,
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
+                        RemapControlsScreen(
+                            config = config,
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+        val body = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+        fun range() = body.fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        fun scrollBy(dx: Float) {
+            val action = body.fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+            composeRule.runOnUiThread { action?.invoke(dx, 0f) }
+            settlePan()
+        }
+        fun edge(group: String, outer: Boolean) = composeRule
+            .onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .let { if (outer) it.positionInRoot.x + it.size.width else it.positionInRoot.x }
+        val left = listOf("LEFT_SHOULDER", "DPAD", "LEFT_STICK", "LEFT_UTILITY")
+        val right = listOf("RIGHT_SHOULDER", "FACE", "RIGHT_STICK", "RIGHT_UTILITY")
+        fun assertEndsAreContent(label: String, focusOnLeft: Boolean? = null) {
+            if (range().maxValue() <= 0f) return
+            val window = body.fetchSemanticsNode().let {
+                it.positionInRoot.x to it.positionInRoot.x + it.size.width
+            }
+            if (focusOnLeft != true) {
+                scrollBy(-100_000f)
+                val leading = left.minOf { edge(it, outer = false) }
+                assert(leading >= window.first - 1f && leading - window.first <= GridEdgeSlack) {
+                    "$label: scrolled to the start, the leftmost group sits " +
+                        "${leading - window.first}px from the window's edge"
+                }
+            }
+            if (focusOnLeft != false) {
+                scrollBy(100_000f)
+                val trailing = right.maxOf { edge(it, outer = true) }
+                assert(trailing <= window.second + 1f && window.second - trailing <= GridEdgeSlack) {
+                    "$label: scrolled to the end, the rightmost group sits " +
+                        "${window.second - trailing}px from the window's edge"
+                }
+            }
+        }
+        assertEndsAreContent("at rest")
+        // The top row first: on a short screen the bottom one can sit below the window, out of a tap.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settlePan()
+        relayout()
+        assertEndsAreContent("LEFT_SHOULDER open", focusOnLeft = true)
+        val cells = mapOf(
+            "DPAD" to "cell:DPAD:DPAD:dpad_up:0",
+            "LEFT_STICK" to "cell:LEFT_STICK:LEFT_JOYSTICK:click:0",
+            "LEFT_UTILITY" to "cell:LEFT_UTILITY:SWITCH_SELECT:click:0",
+            "RIGHT_SHOULDER" to "cell:RIGHT_SHOULDER:RIGHT_TRIGGER:full_pull:0",
+            "FACE" to "cell:FACE:BUTTON_DIAMOND:button_a:0",
+            "RIGHT_STICK" to "cell:RIGHT_STICK:RIGHT_JOYSTICK:click:0",
+            "RIGHT_UTILITY" to "cell:RIGHT_UTILITY:SWITCH_START:click:0",
+        )
+        for ((group, cell) in cells) {
+            if (reveal == TileReveal.FOCUSED_GROUP) {
+                composeRule.onNodeWithTag("simple-group:$group").requestFocus()
+            } else {
+                composeRule.onNodeWithTag(cell, useUnmergedTree = true).requestFocus()
+            }
+            settlePan()
+            relayout()
+            assertEndsAreContent("$group focused", focusOnLeft = group in left)
+        }
+    }
+
+    /**
+     * **A wide group's reach is HELD down its column** (Dylan, 2026-09-28: "you've lost the feature
+     * whereby the initial input group sets the screen width for groups in its same column until the
+     * user navigates to the other column. Now, all of the input groups in selected group mode just
+     * flex the screen width to the minimum content size").
+     *
+     * With one group revealed, walking from a wide group to a narrow one collapses the wide one's
+     * tiles, and the column shrinks under the view. The view must not follow it: the column's inner
+     * edge — every group's glyph — stays exactly where it was on screen, keeping the room the wide
+     * group was opened with. Checked where the grid overruns the window and where it fits.
+     */
+    @Test
+    fun aWideGroupsReach_isHeldDownItsColumn_whenTheGridOverflows() = assertReachHeldDownColumn(700)
+
+    @Test
+    fun aWideGroupsReach_isHeldDownItsColumn_whenTheGridFits() = assertReachHeldDownColumn(1200)
+
+    private fun assertReachHeldDownColumn(width: Int) {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+        )
+        setLiveScreen(live, width = width, height = 700)
+        fun innerEdge(group: String) = composeRule
+            .onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        settlePan()
+        val wide = innerEdge("DPAD")
+        // Opening the wide group shows the whole of it.
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val dpadLeft = composeRule.onNodeWithTag("simple-group:DPAD", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        assert(dpadLeft >= window.left - 1f) { "opening DPAD should show all of it: at $dpadLeft" }
+
+        composeRule.onNodeWithTag("simple-group:LEFT_UTILITY").requestFocus()
+        settlePan()
+        relayout()
+        assert(kotlin.math.abs(innerEdge("LEFT_UTILITY") - wide) <= 1f) {
+            "walking to a narrow group in the same column moved the view: the column's inner edge " +
+                "went from $wide to ${innerEdge("LEFT_UTILITY")}"
+        }
+        // And the far column has nothing past it to scroll to.
+        val body = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+        val scrollBy = body.fetchSemanticsNode().config[SemanticsActions.ScrollBy].action
+        composeRule.runOnUiThread { scrollBy?.invoke(100_000f, 0f) }
+        settlePan()
+        val far = listOf("RIGHT_SHOULDER", "FACE", "RIGHT_STICK", "RIGHT_UTILITY").maxOf { group ->
+            composeRule.onNodeWithTag("simple-group:$group", useUnmergedTree = true)
+                .fetchSemanticsNode().let { it.positionInRoot.x + it.size.width }
+        }
+        assert(far <= window.right + 1f) { "the far column runs ${far - window.right}px off screen" }
+        val range = body.fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+        if (range.maxValue() > 0f) {
+            assert(window.right - far <= GridEdgeSlack) {
+                "scrolled to the far end, the far column stops ${window.right - far}px short — " +
+                    "scroll range with nothing in it"
+            }
+        }
     }
 }
