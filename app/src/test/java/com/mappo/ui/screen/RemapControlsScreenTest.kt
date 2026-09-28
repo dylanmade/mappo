@@ -3849,22 +3849,19 @@ class RemapControlsScreenTest {
      * side it pointed, and a pixel of rounding left over at its end kept them lit. Every value the
      * cues are handed is recorded, frame by frame, through an open, a hop across the grid and a hop
      * back; with no scroll range, every one of them must be nothing.
+     *
+     * (Not with every group revealed on the smallest screens: there, reaching the pan target pushes
+     * the far column off the window, which is real content to scroll — see
+     * `openingASingleCommandGroup_reachesTheTarget_howeverWideTheOtherColumn` and the
+     * `scrollRangeIsTheContent_*` sweep, which holds every range to real content.)
      */
     @Test
     fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_640x360() =
         assertCuesStayDark(TileReveal.FOCUSED_GROUP, 640, 360)
 
     @Test
-    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_640x360() =
-        assertCuesStayDark(TileReveal.ALL_GROUPS, 640, 360)
-
-    @Test
     fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_700x380() =
         assertCuesStayDark(TileReveal.FOCUSED_GROUP, 700, 380)
-
-    @Test
-    fun theScrollCues_stayDark_onAGridThatFits_everyGroupRevealed_700x380() =
-        assertCuesStayDark(TileReveal.ALL_GROUPS, 700, 380)
 
     @Test
     fun theScrollCues_stayDark_onAGridThatFits_oneGroupRevealed_800x420() =
@@ -4207,6 +4204,50 @@ class RemapControlsScreenTest {
                 "scrolled to the far end, the far column stops ${window.right - far}px short — " +
                     "scroll range with nothing in it"
             }
+        }
+    }
+
+    /**
+     * **Opening a group reaches the target however wide the OTHER column is** (Dylan, 2026-09-28:
+     * with one group revealed, on a 4:3 screen, "opening a one-assignment input group in the other
+     * column will result in successively shorter pans" as assignments are added across the grid).
+     *
+     * The other column's rows are TEXT with one group revealed, and each assignment widens them.
+     * Framing used to be forbidden from pushing content that fitted the window off it, so the wider
+     * that column grew the less room the pan was allowed; now the target is reached and the far
+     * column simply scrolls — real content, never empty range (see [StageCamera]). Asserted as the
+     * target itself: from the opened group's glyph to the window edge, its own two-tile box plus one
+     * pitch, with the far column widened by stacked assignments on every input.
+     */
+    // Real text measurement: the far column's rows are TEXT, and it is their width that squeezes.
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun openingASingleCommandGroup_reachesTheTarget_howeverWideTheOtherColumn() {
+        val live = androidx.compose.runtime.mutableStateOf(
+            seedShapedConfig()
+                .withPressStack(InputSource.BUTTON_DIAMOND, 7000L)
+                .withPressStack(InputSource.RIGHT_TRIGGER, 8000L)
+                .withPressStack(InputSource.RIGHT_JOYSTICK, 9000L)
+                .withPressStack(InputSource.RIGHT_BUMPER, 9500L),
+        )
+        // 4:3, as on Dylan's device.
+        setLiveScreen(live, width = 640, height = 480)
+        // The top row: on a short screen the bottom one can sit below the window, out of a tap.
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").performClick()
+        settlePan()
+        relayout()
+
+        val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val box = composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        fun tileLeft(slot: Int) = composeRule
+            .onNodeWithTag("cell:LEFT_SHOULDER:LEFT_TRIGGER:full_pull:$slot", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
+        val room = box.first + box.second - window.left
+        assert(room >= box.second + pitch - 1f) {
+            "only ${room}px from the group's glyph to the window edge; the three-tile target needs " +
+                "${box.second + pitch} (its two-tile box ${box.second} plus one pitch $pitch)"
         }
     }
 }

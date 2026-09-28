@@ -1619,10 +1619,9 @@ private fun restSpan(
  *    the reach its tiles do not already cover ([tiledRoom]) — the pan Dylan called "solid" for a
  *    default layout that fits (2026-09-28).
  *
- * Two rules over all three. **Content that fits the window stays inside it** — nothing is ever
- * pushed off screen to make room, so a grid with nothing to scroll never gains any. And where the
- * content overflows, **never empty on the far side while the content is cut off on the near one**:
- * room past the content only ever appears on the FOCUSED group's side, where the reach asked for it.
+ * One rule over all three: **never empty on the far side while the content is cut off on the near
+ * one.** Room past the content only ever appears on the FOCUSED group's side, where the reach asked
+ * for it; reaching the target may push the far column off screen, where it scrolls like any content.
  */
 private fun cameraDestination(
     focus: RemapSimpleGroup?,
@@ -1680,21 +1679,15 @@ private fun cameraDestination(
             }
         }
     }
-    x = if (contentW <= vg && framing) {
-        // **Framing never pushes content that fits off the window** (Dylan, 2026-09-28: focusing a
-        // group of single commands was "somehow adding additional content to the other side of the
-        // screen"). Reaching the target past a narrow group would push the far column off screen and
-        // give it scroll it never had; the reach gives way to the window instead. A HOLD is exempt:
-        // it moves nothing, so whatever was off screen before stays exactly as it was.
-        x.coerceIn(0, vg - contentW)
-    } else if (contentW <= vg) {
-        // Holding, content that fits is never left cut off on the focused group's own side.
-        if (onLeft) x.coerceAtLeast(0) else x.coerceAtMost(vg - contentW)
-    } else if (onLeft) {
-        // Never empty past the far column while the content is cut off on the near side.
-        if (x + contentW < vg) maxOf(x, vg - contentW) else x
+    // **Never empty past the far column while the content is cut off on the near side** — the one
+    // constraint. Reaching the target is allowed to push the FAR column off screen, where it simply
+    // scrolls: that is real content, and the target is the rule (Dylan, 2026-09-28: with one group
+    // revealed, each assignment added to the other column's rows made the pan "successively shorter"
+    // while framing was forbidden from pushing content that fitted off the window).
+    x = if (onLeft) {
+        if (x + contentW < vg) maxOf(x, minOf(0, vg - contentW)) else x
     } else {
-        if (x > 0) minOf(x, 0) else x
+        if (x > 0) minOf(x, maxOf(0, vg - contentW)) else x
     }
     // The layout is built around the camera: room before the content where the view shows some
     // there, room after it where the view shows some THERE (the reach past a right-column group),
