@@ -3054,17 +3054,22 @@ class RemapControlsScreenTest {
     /**
      * The screen as the pan tests need it. The WINDOW's shape picks the pan target (3 tiles, 2 on a
      * square window); the class's `w1280dp-h800dp` qualifier makes it three, which is what these
-     * tests are written against.
+     * tests are written against. [aspect] stands in for the screen frame's canvas (see
+     * `LocalScreenAspect`), which is what the compact 1:1 screen changes.
      */
     private fun setPanScreen(
         reveal: TileReveal = TileReveal.FOCUSED_GROUP,
+        aspect: Float? = null,
         width: Int = 1200,
         height: Int = 1600,
         config: ControllerConfig = seedShapedConfig(),
     ) {
         composeRule.setContent {
             MaterialTheme {
-                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides reveal) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides reveal,
+                    com.mappo.ui.screen.home.LocalScreenAspect provides aspect,
+                ) {
                     Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
                         RemapControlsScreen(
                             config = config,
@@ -3365,8 +3370,27 @@ class RemapControlsScreenTest {
      * exactly three tiles — its four-tile box less one pitch — and so its outer end is off screen.
      */
     @Test
-    fun crossingColumns_fromAWideGroupToAWideGroup_landsOnTheTarget() {
+    fun crossingColumns_fromAWideGroupToAWideGroup_landsOnTheTarget() =
+        assertCrossingLandsOnTarget(aspect = null, targetTiles = 3, reveal = TileReveal.FOCUSED_GROUP)
+
+    /**
+     * **The compact 1:1 screen targets TWO tiles** (Dylan, 2026-09-28: "when the screen size is
+     * reduced to 1:1, we're still panning to a 3 tile distance"). The compact screen is a square
+     * drawn inside the full display, so the window never changes shape; the target has to come from
+     * the frame's canvas.
+     *
+     * With every group revealed, so the far column is wide too: with it at rest the scroll range
+     * runs out before a two-tile view is reachable, and the view stops at the end of the content
+     * rather than scroll out into nothing — which is right, and not what this is about.
+     */
+    @Test
+    fun crossingColumns_onTheSquareScreen_landsOnTheTwoTileTarget() =
+        assertCrossingLandsOnTarget(aspect = 1f, targetTiles = 2, reveal = TileReveal.ALL_GROUPS)
+
+    private fun assertCrossingLandsOnTarget(aspect: Float?, targetTiles: Int, reveal: TileReveal) {
         setPanScreen(
+            aspect = aspect,
+            reveal = reveal,
             width = 900,
             config = seedShapedConfig()
                 .withPressStack(InputSource.DPAD, 7000L)
@@ -3374,7 +3398,12 @@ class RemapControlsScreenTest {
         )
         composeRule.onNodeWithTag("simple-group:FACE").performClick()
         settlePan()
-        composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        if (reveal == TileReveal.ALL_GROUPS) {
+            // Every group is tiles: the cursor crosses by landing on one, as the d-pad does.
+            composeRule.onNodeWithTag("cell:DPAD:DPAD:dpad_up:0", useUnmergedTree = true).requestFocus()
+        } else {
+            composeRule.onNodeWithTag("simple-group:DPAD").performClick()
+        }
         settlePan()
 
         val window = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
@@ -3386,9 +3415,10 @@ class RemapControlsScreenTest {
         val pitch = kotlin.math.abs(tileLeft(1) - tileLeft(0))
         val glyph = box.first + box.second
         val room = glyph - window.left
-        val target = box.second - pitch
+        // The box holds four tiles; the target is that less the tiles it leaves off screen.
+        val target = box.second - pitch * (4 - targetTiles)
         assert(kotlin.math.abs(room - target) <= 2f) {
-            "${room}px from the glyph to the window edge; the three-tile target is $target"
+            "${room}px from the glyph to the window edge; the $targetTiles-tile target is $target"
         }
     }
 

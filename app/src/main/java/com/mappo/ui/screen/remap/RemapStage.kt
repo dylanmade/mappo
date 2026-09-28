@@ -95,6 +95,7 @@ import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputPressIndication
+import com.mappo.ui.screen.home.LocalScreenAspect
 import com.mappo.ui.screen.softDropShadow
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -458,12 +459,15 @@ internal fun RemapStage(
          * the device; not a setting since 2026-09-28). What a group is given beyond its own glyph
          * when nothing wider has been asked for — see [PanReach] for when that is.
          *
-         * The WINDOW's shape decides it, not this box's: the stage is always wider than it is tall
-         * once the bars have taken their share, so its own aspect says nothing about whether the
-         * app is running 1:1 or expanded. It is a plus-the-box-padding figure because what it is
-         * compared against — a column's width, a group's own width — is made of box widths.
+         * The SCREEN CANVAS's shape decides it ([LocalScreenAspect]), not this box's: the stage is
+         * always wider than it is tall once the bars have taken their share, so its own aspect says
+         * nothing about whether the app is running 1:1 or expanded. Nor the window's — the compact
+         * 1:1 screen is a square drawn inside the full display, so the window never changes shape;
+         * the configuration is only the fallback outside a frame. It is a plus-the-box-padding
+         * figure because what it is compared against — a column's width, a group's own width — is
+         * made of box widths.
          */
-        val windowAspect = LocalConfiguration.current.let { config ->
+        val windowAspect = LocalScreenAspect.current ?: LocalConfiguration.current.let { config ->
             if (config.screenHeightDp <= 0) 1f else config.screenWidthDp.toFloat() / config.screenHeightDp
         }
         val panTarget = with(density) {
@@ -951,15 +955,25 @@ internal fun RemapStage(
                         else -> -(glyphEdge + reach - toSpanPlain.totalW).coerceAtLeast(0)
                     },
                 )
-                // **What the grid already gives the region is its COLUMN's width** — not the focused
-                // group's own box, and that distinction is the whole of Dylan's first report. A
-                // narrow group in a wide column already has the column's whole width outboard of its
-                // glyph, empty or not, so it needs nothing; measured against its own box it asked for
-                // a tile more than the wide group beside it did and "actually extends that input
-                // group's camera pan even further ... almost like it's additive".
+                // **What the grid already gives the region is the widest TILED box in its column**
+                // — not the focused group's own box, and not the column as a whole.
+                //
+                //  - Not its own box: a narrow group in a column of wider TILES already has that width
+                //    outboard of its glyph, so measured against itself it asked for a tile more than
+                //    the wide group beside it did and "actually extends that input group's camera pan
+                //    even further ... almost like it's additive" (Dylan, 2026-09-28).
+                //  - Not the whole column: with one group revealed the rest of the column is still
+                //    TEXT rows, and a row of labels on the device can easily be wider than the target.
+                //    Counted as room, it zeroed the pan — "the camera stays locked in the center of
+                //    the screen" on a default layout that fits the window (Dylan, 2026-09-28). A text
+                //    row is not room the group's tiles are shown in.
                 //
                 // Only ever a SHORTAGE: the view is nudged toward the group, never away from it.
-                val columnRoom = if (onLeftFlank) toLeft else toRight
+                val focusColumn = if (onLeftFlank) LeftColumnGroups else groups.toSet() - LeftColumnGroups
+                val columnRoom = focusColumn
+                    .filter { it in reveal.expanded }
+                    .maxOfOrNull { toWidths[groups.indexOf(it)] }
+                    ?: if (onLeftFlank) toLeft else toRight
                 editMorph.captureBias(
                     settled = editSettled,
                     target = when {
@@ -2395,7 +2409,7 @@ private const val PanTargetTiles = 3
 private const val PanTargetTilesSquare = 2
 
 /**
- * Where "a 1:1 screen" ends and a wider one begins, as a width/height ratio of the WINDOW.
+ * Where "a 1:1 screen" ends and a wider one begins, as a width/height ratio of the screen canvas.
  *
  * Only the pan target asks, and it is a fraction off square rather than exactly 1 so that a window
  * a few dp out of square — insets, a status bar, rounding — still counts as the square one Dylan

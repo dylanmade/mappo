@@ -24,6 +24,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +51,18 @@ import kotlinx.coroutines.launch
 /** Duration of the frame's fade-out exit (MainScreen delays moveTaskToBack by this so the
  *  exit is visible). The frame deliberately rides the minput modal motion spec. */
 const val ScreenFrameFadeMillis = MinputModalExitMillis
+
+/**
+ * **The shape of Mappo's screen canvas**, width over height — 1 in the compact 1:1 preview, the
+ * display's own shape expanded. Null outside a [ScreenFrame].
+ *
+ * The compact screen is a square drawn INSIDE the full display, so the window — and
+ * `LocalConfiguration` — never change shape when it is toggled. Anything sized by "is this a 1:1
+ * screen" has to ask this instead (the remap stage's pan target does; Dylan, 2026-09-28: "when the
+ * screen size is reduced to 1:1, we're still panning to a 3 tile distance"). It is the shape the
+ * frame is heading FOR, so it switches once when toggled rather than on every frame of the resize.
+ */
+val LocalScreenAspect = compositionLocalOf<Float?> { null }
 
 /** Duration of the resize between the compact 1:1 screen and the full display. */
 private const val ExpandMillis = 320
@@ -149,6 +163,8 @@ fun ScreenFrame(
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val drawerScope = rememberCoroutineScope()
             val closeDrawer: () -> Unit = { drawerScope.launch { drawerState.close() } }
+            val aspect = if (expanded && availH.value > 0f) availW / availH else 1f
+            CompositionLocalProvider(LocalScreenAspect provides aspect) {
             ModalNavigationDrawer(
                 drawerState = drawerState,
                 drawerContent = { drawerContent(closeDrawer) },
@@ -163,6 +179,7 @@ fun ScreenFrame(
                         onOpenDrawer = { drawerScope.launch { drawerState.open() } },
                     )
                 }
+            }
             }
         }
     }
