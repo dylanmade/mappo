@@ -515,6 +515,9 @@ internal fun RemapStage(
         // dead centre (see [restSpan]). Published from the layout, because only the layout knows
         // how wide the boxes came out; -1 until the first pass has run.
         val restCentreScroll = remember { mutableIntStateOf(-1) }
+        // The controller column's width as last laid out — where a travel's own starts from. A plain
+        // holder: written and read inside the layout only.
+        val centreHeldBox = remember { intArrayOf(0) }
         LaunchedEffect(reframe.request.intValue) {
             if (reframe.request.intValue == 0) return@LaunchedEffect
             reframe.arm(reframe.request.intValue)
@@ -866,8 +869,25 @@ internal fun RemapStage(
                 val fromRight = columnIn(fromWidths) { it.right }
                 val toLeft = columnIn(toWidths) { it.left }
                 val toRight = columnIn(toWidths) { it.right }
-                val fromCentre = centreBeside(fromLeft, fromRight)
-                val toCentre = centreBeside(toLeft, toRight)
+                // **The squeeze is the RESTING grid's, in edit mode too** (Dylan, 2026-09-28: walking
+                // from a narrow group to a wide one, "the center column gets like two pixels wider").
+                // Asked of whichever group happened to be tiled, it moved on every hop in the one-group
+                // reveal, and the picture with it. The resting widths are the one set that does not
+                // change as the cursor moves — a group not showing tiles cannot even say how wide its
+                // tiles would be (its tiled intrinsic is only real once they exist) — so the picture
+                // is one size in the view mode, through an open, and across every hop. Planned per
+                // travel and held in between, so even a layout change mid-edit only moves it with the
+                // next travel; the view mode alone follows it live, as the resting grid always has.
+                val endCentre = centreBeside(
+                    columnIn(IntArray(count) { basicM[it].minIntrinsicWidth(gridH) }) { it.left },
+                    columnIn(IntArray(count) { basicM[it].minIntrinsicWidth(gridH) }) { it.right },
+                )
+                if (replanned) {
+                    editMorph.captureCentre(from = centreHeldBox[0].takeIf { it > 0 } ?: endCentre, to = endCentre)
+                }
+                if (!editing && editSettled) editMorph.captureCentre(from = endCentre, to = endCentre)
+                val fromCentre = editMorph.centreFrom.takeIf { it > 0 } ?: endCentre
+                val toCentre = editMorph.centreTo.takeIf { it > 0 } ?: endCentre
                 val travel = editMorph.at(gridTravel)
                 // The columns ON SCREEN this frame: each as wide as its widest box actually is,
                 // FLOORED by the interpolation of its two ends — when one box in a column opens as
@@ -876,6 +896,7 @@ internal fun RemapStage(
                 val leftColumnW = maxOf(columnIn(measuredWidths) { it.left }, lerpInt(fromLeft, toLeft, travel))
                 val rightColumnW = maxOf(columnIn(measuredWidths) { it.right }, lerpInt(fromRight, toRight, travel))
                 val centreColumnW = lerpInt(fromCentre, toCentre, travel)
+                centreHeldBox[0] = centreColumnW
                 val contentW = leftColumnW + columnGap + centreColumnW + columnGap + rightColumnW
 
                 // ── THE CAMERA (rebuilt 2026-09-28 — see [StageCamera]) ──────────────────────
@@ -1742,11 +1763,7 @@ private class StageCamera {
     private var trail = 0
     private var destination: CameraDestination? = null
     private var ctrlFrom = 0f
-    private var leadFrom = 0
-    private var gridWFrom = 0
     private var byReframe = false
-    /** The last pass's grid width, where a travel's own starts from. */
-    private var lastGridW = 0
 
     /** The controller column's x in the window, as the last pass drew it. */
     var lastDrawnCtrl: Float? = null
@@ -1766,9 +1783,6 @@ private class StageCamera {
     /** A travel begins — or is re-planned in flight — from what is on screen right now. */
     fun plan(byReframe: Boolean, destination: CameraDestination, drawnCtrl: Float?) {
         ctrlFrom = drawnCtrl ?: destination.ctrl
-        // The room and width the layout had last pass — mid-travel, whatever that travel had reached.
-        leadFrom = lastLead
-        gridWFrom = lastGridW
         this.byReframe = byReframe
         this.destination = destination
     }
@@ -1781,7 +1795,6 @@ private class StageCamera {
         trail = 0
     }
 
-    private var lastLead = 0
     private var lastContentW = 0
 
     fun place(
@@ -1798,8 +1811,6 @@ private class StageCamera {
         if (to == null) {
             val leadNow = if (resting) rest.lead else lead
             val gridW = if (resting) rest.gridW else maxOf(lead + contentW + trail, viewportGridW)
-            lastLead = leadNow
-            lastGridW = gridW
             return CameraPlacement(
                 startX = edgeX + leadNow,
                 gridW = gridW,
@@ -1809,21 +1820,25 @@ private class StageCamera {
         }
         val at = progress.coerceIn(0f, 1f)
         val ctrl = ctrlFrom + (to.ctrl - ctrlFrom) * at
-        val leadNow = lerpInt(leadFrom, to.lead, at)
-        val gridW = maxOf(lerpInt(gridWFrom, to.gridW, at), viewportGridW)
-        val max = gridW - viewportGridW
-        val effective = scroll.coerceIn(0, max)
+        // The content's leading edge in the window, and how much of it is hidden past each edge.
         val contentAt = (ctrl - leftW - columnGap).roundToInt()
+        val hiddenLeft = (edgeX - contentAt).coerceAtLeast(0)
+        val hiddenRight = (contentAt + contentW - (edgeX + viewportGridW)).coerceAtLeast(0)
+        // **The range is exactly what is hidden, and the cues are told exactly where in it the view
+        // is** — both from the same two numbers (Dylan, 2026-09-28: "the slightest jitter" walking
+        // onto a group wide enough to run past the edge). They used to come from separately rounded
+        // interpolations, a pixel apart on odd frames — enough for the far edge's fade and chevron
+        // to blink on and off through the whole travel over content that was not there. At the
+        // travel's end this is exactly the settled layout ([cameraDestination]'s gridW and scroll),
+        // so the hand-off moves nothing.
+        val gridW = viewportGridW + hiddenLeft + hiddenRight
+        val effective = scroll.coerceIn(0, gridW - viewportGridW)
         lastContentW = contentW
-        lastLead = leadNow
-        lastGridW = gridW
-        // As if scrolled: how far the content is from where this layout would put it unscrolled.
-        val virtual = edgeX + leadNow - contentAt
         return CameraPlacement(
             startX = contentAt + effective,
             gridW = gridW,
             effectiveScroll = effective,
-            cueShift = virtual.coerceIn(0, max) - effective,
+            cueShift = hiddenLeft - effective,
         )
     }
 
@@ -1916,6 +1931,21 @@ private class EditMorphPlan {
         toWidths = widths
     }
 
+    /**
+     * The controller column's width at each end — captured when a travel is planned and HELD after
+     * it, unlike the box widths: nothing about a settled edit mode should move the picture (see the
+     * stage's `squeezeFor`). Zero until the first plan.
+     */
+    var centreFrom = 0
+        private set
+    var centreTo = 0
+        private set
+
+    fun captureCentre(from: Int, to: Int) {
+        centreFrom = from
+        centreTo = to
+    }
+
     private companion object {
         /** A pixel of rounding either way before a width counts as having outgrown its journey. */
         const val WidthSlack = 1
@@ -1968,7 +1998,6 @@ private class ReframePlan {
         val changed = if (was != null && !was.contentEquals(widths)) {
             widths.indices.first { widths[it] != was[it] }
         } else null
-        if (claimed == null && changed != null) println("DBGRF unclaimed change idx=$changed was=${was?.toList()} now=${widths.toList()} busy=$busy")
         val group = claimed ?: changed?.takeIf { !busy }?.let(groupAt) ?: return null
         servedTick = frameTick
         request.intValue++

@@ -4355,4 +4355,148 @@ class RemapControlsScreenTest {
         val hidden = if (onLeft) window.left - x else x + w - window.right
         assert(hidden > 1f) { "$wide should run past the window's edge, but shows whole" }
     }
+
+    /**
+     * **The scroll cues do not blink through a travel** (Dylan, 2026-09-28: "the slightest jitter"
+     * walking — with the d-pad, on a 4:3 screen — from a single-assignment group onto one with three
+     * or more).
+     *
+     * The camera held perfectly still; what moved was the edge fade and chevron. Through a travel the
+     * cues were handed a position and a range from two separately rounded interpolations, a pixel
+     * apart on odd frames, and "a pixel short of the end" lit the FAR edge's cue for that frame — on,
+     * off, on again, over content that was not there. Sampled every frame exactly as the cues
+     * compute it (position = scroll + published shift, against the scroller's range): the far cue
+     * must never light, and the near one, once lit, must stay lit.
+     */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun theScrollCues_doNotBlink_walkingOntoAWiderGroup() {
+        var modes: androidx.compose.ui.input.InputModeManager? = null
+        var published = 0f
+        composeRule.setContent {
+            modes = androidx.compose.ui.platform.LocalInputModeManager.current
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalTileReveal provides TileReveal.FOCUSED_GROUP,
+                    com.mappo.ui.screen.remap.LocalBodyShiftProbe provides { published = it },
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(800.dp, 600.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig().withPressStack(InputSource.DPAD, 7000L),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+        // The d-pad's own path: keyboard input mode, the group opened with A, a hop with Down.
+        composeRule.runOnIdle { modes!!.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard) }
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER").requestFocus()
+        composeRule.onNodeWithTag("simple-group:LEFT_SHOULDER")
+            .performKeyInput { keyDown(Key.ButtonA); keyUp(Key.ButtonA) }
+        settlePan()
+        relayout()
+
+        val body = composeRule.onNodeWithTag(ControlsBodyTestTag, useUnmergedTree = true)
+        fun cues(): Pair<Boolean, Boolean> {
+            val range = body.fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange]
+            val at = range.value() + published
+            return (at > 0f) to (at < range.maxValue())
+        }
+        composeRule.mainClock.autoAdvance = false
+        composeRule.onNodeWithTag("cell:LEFT_SHOULDER:LEFT_BUMPER:click:0", useUnmergedTree = true)
+            .requestFocus()
+        composeRule.onRoot().performKeyInput { keyDown(Key.DirectionDown); keyUp(Key.DirectionDown) }
+        val frames = buildList {
+            repeat(40) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.waitForIdle()
+                add(cues())
+            }
+        }
+        composeRule.mainClock.autoAdvance = true
+        assertRevealed("DPAD", "cell:DPAD:DPAD:dpad_up:3")
+
+        val far = frames.map { it.second }
+        assert(far.none { it }) { "the far edge's cue lit with nothing past it: $far" }
+        val near = frames.map { it.first }
+        val firstLit = near.indexOfFirst { it }
+        assert(firstLit >= 0 && near.drop(firstLit).all { it }) { "the near edge's cue blinked: $near" }
+    }
+
+    /**
+     * **The controller does not change size on a hop** (Dylan, 2026-09-28: walking from a
+     * single-assignment group onto a wider one, "the center column gets like two pixels wider (1 on
+     * each side, it looks like), and this is what I'm perceiving as jitter").
+     *
+     * The controller column's squeeze was asked of whichever group was tiled, so every hop between
+     * groups of different widths moved it by a pixel or two. It is the grid's now, and held in edit
+     * mode: through the whole hop — the real d-pad path, 4:3, real text — the picture keeps its width
+     * and its place on every frame, on both flanks.
+     */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun theController_keepsItsSize_walkingOntoAWiderGroup_left() = assertControllerSteadyOnHop(onLeft = true)
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test
+    fun theController_keepsItsSize_walkingOntoAWiderGroup_right() = assertControllerSteadyOnHop(onLeft = false)
+
+    // 4:3 at the size where the grid sits right at the squeeze's edge — where it used to move.
+    private fun assertControllerSteadyOnHop(onLeft: Boolean, width: Int = 640, height: Int = 480) {
+        var modes: androidx.compose.ui.input.InputModeManager? = null
+        val (narrow, wide, fromTile, wideCell) = if (onLeft) {
+            listOf("LEFT_SHOULDER", "DPAD", "cell:LEFT_SHOULDER:LEFT_BUMPER:click:0", "cell:DPAD:DPAD:dpad_up:3")
+        } else {
+            listOf("RIGHT_SHOULDER", "FACE", "cell:RIGHT_SHOULDER:RIGHT_BUMPER:click:0", "cell:FACE:BUTTON_DIAMOND:button_y:3")
+        }
+        composeRule.setContent {
+            modes = androidx.compose.ui.platform.LocalInputModeManager.current
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(LocalTileReveal provides TileReveal.FOCUSED_GROUP) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(width.dp, height.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig().withPressStack(
+                                if (onLeft) InputSource.DPAD else InputSource.BUTTON_DIAMOND,
+                                7000L,
+                            ),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        settlePan()
+        composeRule.runOnIdle { modes!!.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard) }
+        composeRule.onNodeWithTag("simple-group:$narrow").requestFocus()
+        composeRule.onNodeWithTag("simple-group:$narrow")
+            .performKeyInput { keyDown(Key.ButtonA); keyUp(Key.ButtonA) }
+        settlePan()
+        relayout()
+
+        fun picture() = composeRule.onNodeWithTag("controller-image", useUnmergedTree = true)
+            .fetchSemanticsNode().let { it.positionInRoot.x to it.size.width }
+        val before = picture()
+        composeRule.mainClock.autoAdvance = false
+        composeRule.onNodeWithTag(fromTile, useUnmergedTree = true).requestFocus()
+        composeRule.onRoot().performKeyInput { keyDown(Key.DirectionDown); keyUp(Key.DirectionDown) }
+        val frames = buildList {
+            repeat(40) {
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.waitForIdle()
+                add(picture())
+            }
+        }
+        composeRule.mainClock.autoAdvance = true
+        assertRevealed(wide, wideCell)
+        assert(frames.all { it == before }) {
+            "the controller changed on the hop (x to width), from $before: ${frames.distinct()}"
+        }
+    }
 }
