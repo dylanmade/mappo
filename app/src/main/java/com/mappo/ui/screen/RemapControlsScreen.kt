@@ -513,7 +513,11 @@ fun RemapControlsScreen(
                 }
             },
     ) {
-        Scaffold(
+        // The layouts drawer is the frame's LEFT EDGE (2026-09-28): it runs from the top of the
+        // screen down to the frame's bottom bar and PUSHES the top bar and the controls content
+        // together (its Row neighbour) rather than opening under the bar. The bottom bar,
+        // outside this screen, keeps its full width — the Mappo button stays in its corner.
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 // While a panel is up it behaves modally: directional focus must not
@@ -528,74 +532,72 @@ fun RemapControlsScreen(
                             .focusGroup()
                     } else Modifier,
                 ),
-            // The view sits on the LOWEST plane, which is what the bars (on the bar
-            // plane one step up — see MinputBar) read as raised above. The Scaffold's
-            // default `background` role would band its own colour behind them.
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            topBar = {
-                // The 2026-09-26 bar: a real strip with a lit bottom edge (see
-                // RemapControlsTopBar) carrying the identity widget (the layouts drawer's
-                // summon) at the start, the action-set switcher centred, and the
-                // physical/virtual EDITOR switch at the end — the latter being where
-                // "Edit overlay" went. Auto-detect left the bar 2026-08-30 for the Mappo
-                // drawer — it is a global setting, not a layout property.
-                RemapControlsTopBar(
-                    // The layout being viewed; an application with no layout reads "None" —
-                    // not the stale name of another app's layout (2026-08-26 audit). Whether
-                    // it is the ACTIVE layout or one being previewed is the identity stack's
-                    // overline now (2026-09-26), where the name used to carry a "(Preview)"
-                    // suffix; the application itself is the leading launcher icon.
-                    layoutName = if (showNoLayoutState) "None" else layoutName ?: "Layout",
-                    previewing = !isActiveLayout,
-                    appPackage = effectiveAppPackage,
-                    identityHighlighted = layoutsDrawerOpen,
-                    onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
-                    config = config,
-                    viewingSet = viewingSet,
-                    onSelectActionSet = { id ->
-                        onSelectActionSet(id)
-                        onSelectLayer(null)
-                    },
-                    onAddSet = { dialog = ActionSetDialogState.Add },
-                    onEditOverlay = onEditOverlay,
-                )
-            },
-        ) { innerPadding ->
-            // The drawer opens BETWEEN the bars (2026-08-24): the full-width top bar sits
-            // above it, the frame's bottom bar below. It PUSHES the controls content (its
-            // Row neighbor) rather than overlaying it — both stay interactive, and the
-            // content live-previews the card the drawer is scrolled to.
-            Row(Modifier.fillMaxSize().padding(innerPadding)) {
-                LayoutsDrawerPane(
-                    open = layoutsDrawerOpen,
-                    appPackage = effectiveAppPackage,
-                    apps = installedApps,
-                    activeAppPackage = detectedAppPackage,
-                    layouts = layouts,
-                    activeLayoutId = activeLayoutId,
-                    onPreviewLayout = onPreviewLayout,
-                    onActivateLayout = { layout ->
-                        requestActivate(layout.packageName) { onActivateLayoutCard(layout) }
-                    },
-                    onNewLayout = { addLayoutOpen = true },
-                    // Both focus-preview and tap-select in applications mode are VIEWING
-                    // moves only (2026-08-27): they repoint the browsing context (and the
-                    // controls view behind), never the active application — auto
-                    // detection only turns off when a non-active app's LAYOUT is
-                    // actually activated (requestActivate above).
-                    onPreviewApplication = { pkg ->
-                        viewingAppOverride = pkg
-                        onPreviewApplication(pkg)
-                    },
-                    onSelectApplication = { app ->
-                        viewingAppOverride = app.packageName
-                        onPreviewApplication(app.packageName)
-                    },
-                    onFullyClosed = onDrawerFullyClosed,
-                )
+        ) {
+            LayoutsDrawerPane(
+                open = layoutsDrawerOpen,
+                appPackage = effectiveAppPackage,
+                apps = installedApps,
+                activeAppPackage = detectedAppPackage,
+                layouts = layouts,
+                activeLayoutId = activeLayoutId,
+                onPreviewLayout = onPreviewLayout,
+                onActivateLayout = { layout ->
+                    requestActivate(layout.packageName) { onActivateLayoutCard(layout) }
+                },
+                onNewLayout = { addLayoutOpen = true },
+                // Both focus-preview and tap-select in applications mode are VIEWING
+                // moves only (2026-08-27): they repoint the browsing context (and the
+                // controls view behind), never the active application — auto
+                // detection only turns off when a non-active app's LAYOUT is
+                // actually activated (requestActivate above).
+                onPreviewApplication = { pkg ->
+                    viewingAppOverride = pkg
+                    onPreviewApplication(pkg)
+                },
+                onSelectApplication = { app ->
+                    viewingAppOverride = app.packageName
+                    onPreviewApplication(app.packageName)
+                },
+                onFullyClosed = onDrawerFullyClosed,
+            )
+            Scaffold(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                // The view sits on the LOWEST plane, which is what the bars (on the bar
+                // plane one step up — see MinputBar) read as raised above. The Scaffold's
+                // default `background` role would band its own colour behind them.
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                topBar = {
+                    // The 2026-09-26 bar: a real strip with a lit bottom edge (see
+                    // RemapControlsTopBar) carrying the identity widget (the layouts drawer's
+                    // summon) at the start, the action-set switcher centred, and the
+                    // physical/virtual EDITOR switch at the end — the latter being where
+                    // "Edit overlay" went. Auto-detect left the bar 2026-08-30 for the Mappo
+                    // drawer — it is a global setting, not a layout property.
+                    RemapControlsTopBar(
+                        // The layout being viewed; an application with no layout reads "None" —
+                        // not the stale name of another app's layout (2026-08-26 audit). Whether
+                        // it is the ACTIVE layout or one being previewed is the identity stack's
+                        // overline now (2026-09-26), where the name used to carry a "(Preview)"
+                        // suffix; the application itself is the leading launcher icon.
+                        layoutName = if (showNoLayoutState) "None" else layoutName ?: "Layout",
+                        previewing = !isActiveLayout,
+                        appPackage = effectiveAppPackage,
+                        identityHighlighted = layoutsDrawerOpen,
+                        onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
+                        config = config,
+                        viewingSet = viewingSet,
+                        onSelectActionSet = { id ->
+                            onSelectActionSet(id)
+                            onSelectLayer(null)
+                        },
+                        onAddSet = { dialog = ActionSetDialogState.Add },
+                        onEditOverlay = onEditOverlay,
+                    )
+                },
+            ) { innerPadding ->
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
                     // The lowest plane — see the Scaffold container above.
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 ) {

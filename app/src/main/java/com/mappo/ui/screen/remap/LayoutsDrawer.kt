@@ -30,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,39 +47,39 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowUpDown
-import com.composables.icons.lucide.ChevronDown
-import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Layout
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
-import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputPillIconSize
-import com.mappo.ui.minput.MinputPod
-import com.mappo.ui.minput.MinputPodPadding
-import com.mappo.ui.minput.MinputPodPlateCorner
 import com.mappo.ui.minput.MinputTextField
-import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputHighlightContainer
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
-import com.mappo.ui.minput.minputMicroTextStyle
 import com.mappo.ui.minput.minputMiniTextStyle
+import androidx.compose.foundation.background
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputBarHeight
+import com.mappo.ui.minput.MinputBoxStroke
+import com.mappo.ui.minput.MinputEdge
+import com.mappo.ui.minput.MinputIconButton
+import com.mappo.ui.minput.minputBevelEdge
+import com.mappo.ui.minput.minputBevelHighlight
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.math.hypot
 import kotlin.math.max
@@ -95,19 +94,26 @@ import kotlin.math.max
  * bars (2026-08-24): the top bar and the frame's bottom bar both keep their full width
  * above/below it.
  *
- * Anatomy: the full-width **Applications button** (the viewed application's icon + name),
- * then a Search · Sort controls row (the sort button opens the standard minput option
- * menu — Recent/Likes/A to Z/Z to A), then the card list in two categories: **Installed**
- * (on-device layouts for this app, ending with the "+ New layout" card) and **Community**
- * (published, not-yet-installed layouts — empty until community sharing lands). The
- * active layout's card wears the highlight plane — no separate default-layout concept:
- * the active layout IS its application's functional default.
+ * Anatomy (2026-09-28 retool): the pane is the **hidden left edge of the screen frame** — it
+ * wears the bars' plane and lights only its content-facing edge, so with the top and bottom
+ * bars it reads as three sides of one bezel around the controls view. It spans from the top of
+ * the screen down to the bottom bar, PUSHING the top bar right (the bottom bar keeps its full
+ * width, and the Mappo button its corner). Top to bottom:
+ *  - the **header row**, level with the top bar and the same height: the application
+ *    dropdown ([BarStackButton], the top bar's own identity widget with a dropdown arrow) —
+ *    chrome-less, so the header reads as the bar continuing;
+ *  - the Search · Sort row (the sort button is a bare icon button like the layout-set kebab,
+ *    opening the standard minput option menu — Recent/Likes/A to Z/Z to A);
+ *  - the list: "+ New layout", then **Installed** (on-device layouts for this app) and
+ *    **Community** (published, not-yet-installed — empty until sharing lands) as borderless
+ *    two-line rows. The active layout's row wears the highlight plane — no separate
+ *    default-layout concept: the active layout IS its application's functional default.
  *
  * **Applications mode** (2026-08-27, replacing the retired right-side applications
- * drawer): pressing the Applications button TRANSITIONS this same pane into the
- * applications list — the higher surface color radiates outward from the button until it
- * covers the drawer, the button wears the highlight plane (the design language's open
- * marking), and the same controls re-target: search filters apps, sort offers
+ * drawer): pressing the application dropdown TRANSITIONS this same pane into the
+ * applications list — the higher surface color radiates outward from the dropdown until it
+ * covers the drawer's body (the header stays on the bar plane), the dropdown goes accent and
+ * flips its arrow (the bars' open marking), and the same controls re-target: search filters apps, sort offers
  * [ApplicationSort], and Installed/Community list applications. Focusing or tapping an
  * application previews it (tap also radiates back into layouts mode, now scoped to the
  * picked app) — selection is a VIEWING move only; auto detection is only disabled when a
@@ -145,7 +151,25 @@ internal fun LayoutsDrawerPane(
         onFullyClosed = onFullyClosed,
         modifier = modifier,
     ) {
-        LayoutsDrawerContent(
+        // The bar plane, lit along the content-facing edge — the bars' own treatment
+        // (MinputBar), turned on its side. The line starts at the top bar's lit edge rather
+        // than the top of the screen: above that, this edge sits beside the bar on the same
+        // plane, not beside the content, so lighting it there would split the two. Starting a
+        // stroke early fills the corner the two lines would otherwise leave unlit.
+        val plane = MaterialTheme.colorScheme.surfaceContainer
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(plane)
+                .minputBevelEdge(
+                    color = minputBevelHighlight(plane),
+                    edge = MinputEdge.END,
+                    leadInset = MinputBarHeight - MinputBoxStroke,
+                ),
+        ) {
+            // A raw background() isn't a Surface, so the content color has to be provided.
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                LayoutsDrawerContent(
             appPackage = appPackage,
             apps = apps,
             activeAppPackage = activeAppPackage,
@@ -156,7 +180,9 @@ internal fun LayoutsDrawerPane(
             onNewLayout = onNewLayout,
             onPreviewApplication = onPreviewApplication,
             onSelectApplication = onSelectApplication,
-        )
+                )
+            }
+        }
     }
 }
 
@@ -166,9 +192,9 @@ internal fun LayoutsDrawerPane(
  * screen edge. The neighbor in the parent Row resizes as the pane animates — a push pane,
  * not an overlay.
  *
- * The sheet is TRANSPARENT (2026-08-30, following the top bar): no chrome fill, no
- * content-facing divider — the pane is a layout tool, and its contents carry their own
- * ground on [com.mappo.ui.minput.MinputPod]s.
+ * The shell itself is unpainted — the pane dresses its own sheet (the layouts drawer wears
+ * the bar plane and a lit edge since 2026-09-28; before that it was transparent, its contents
+ * riding [com.mappo.ui.minput.MinputPod]s).
  *
  * [onFullyClosed] fires when the CLOSE animation completes (not at close intent): callers
  * revert transient preview state there, so the drawer's content stays scoped and stable
@@ -252,175 +278,158 @@ private fun LayoutsDrawerContent(
     }
 
     // The apps-mode reveal: the higher surface color radiates outward from the
-    // Applications button until it covers the drawer background (and retreats back into
-    // the button on the way out) — the mode visibly GROWS out of the control that owns it.
+    // application dropdown until it covers the drawer's body (and retreats back into
+    // the dropdown on the way out) — the mode visibly GROWS out of the control that owns it.
     val revealProgress by animateFloatAsState(
         targetValue = if (appsMode) 1f else 0f,
         animationSpec = tween(AppsRevealMillis, easing = FastOutSlowInEasing),
         label = "appsReveal",
     )
     val revealColor = MaterialTheme.colorScheme.surfaceContainerHigh
-    var rootCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var bodyCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var revealCenter by remember { mutableStateOf(Offset.Zero) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(PanelContentPadding),
-        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-    ) {
-        // ── Pod 1: the filter row ──────────────────────────────────────────────
-        MinputPod(modifier = Modifier.fillMaxWidth()) {
-            MinputTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = if (appsMode) "Search apps" else "Search layouts",
-                leadingIcon = Lucide.Search,
-                clearable = true,
-                // Top-of-screen field — the sanctioned modal-less variant.
-                inlineEdit = true,
-                // Experimental bevel-on-fields trial (2026-08-27) — judged here first.
-                bevel = true,
-                modifier = Modifier.weight(1f),
+    Column(Modifier.fillMaxSize()) {
+        // ── Header: the application dropdown, level with the top bar ──────────────
+        // Same height and edge inset as the bar, so the dropdown sits on the bar's line as
+        // though the bar ran on to the screen edge (which, visually, it does).
+        val viewedApp = appPackage?.let { pkg -> apps.firstOrNull { it.packageName == pkg } }
+        Box(
+            contentAlignment = Alignment.CenterStart,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MinputBarHeight)
+                .padding(horizontal = MinputBarEdgePadding),
+        ) {
+            BarStackButton(
+                appPackage = appPackage,
+                overline = "Application",
+                value = viewedApp?.label ?: appPackage ?: "None",
+                highlighted = appsMode,
+                onClick = {
+                    appsMode = !appsMode
+                    query = ""
+                },
+                dropdownArrow = true,
+                // The pane is the cap here, not the bar's name budget.
+                valueMaxWidth = Dp.Infinity,
+                modifier = Modifier
+                    .testTag("drawer:application")
+                    // The reveal radiates from the dropdown's centre.
+                    .onGloballyPositioned { coords ->
+                        bodyCoords?.let { revealCenter = it.localBoundingBoxOf(coords).center }
+                    },
             )
-            Box {
-                // Wears the highlight plane while its menu is up — the design language's
-                // selected/active marking (the change button's drawer-open treatment).
-                MinputButton(
-                    onClick = { sortMenuOpen = true },
-                    leadingIcon = rememberVectorPainter(Lucide.ArrowUpDown),
-                    contentDescription = if (appsMode) "Sort applications" else "Sort layouts",
-                    // Standard box chrome (2026-08-27, replacing the bare trial): the
-                    // family fill + bevel ring, matching the buttons around it.
-                    highlighted = sortMenuOpen,
-                )
-                if (appsMode) {
-                    MinputDropdownMenu(
-                        expanded = sortMenuOpen,
-                        onDismissRequest = { sortMenuOpen = false },
-                        current = appSort,
-                        options = ApplicationSort.entries,
-                        optionLabel = { it.label },
-                        onPick = { appSort = it },
-                    )
-                } else {
-                    MinputDropdownMenu(
-                        expanded = sortMenuOpen,
-                        onDismissRequest = { sortMenuOpen = false },
-                        current = layoutSort,
-                        options = LayoutSort.entries,
-                        optionLabel = { it.label },
-                        onPick = { layoutSort = it },
-                    )
-                }
-            }
         }
 
-        // ── Pod 2: the Applications button over the card list ──────────────────
-        // A tall plate, so it takes an explicit corner: the pod's default radius is half
-        // the RESTING height (a pill at bar scale), which on a full-height plate reads
-        // too round for a drawer. This one relates to the cards riding it — twice their
-        // corner (2026-08-30, Dylan: "a proper rectangular drawer with rounded corners").
-        MinputPod(
-            corner = MinputPodPlateCorner,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        ) {
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .onGloballyPositioned { rootCoords = it }
-                    .drawBehind {
-                        if (revealProgress > 0f) {
-                            // Radius runs to the pod corner FARTHEST from the button
-                            // center so full progress always covers the whole plate.
-                            // This node is the pod's PADDED interior, and drawBehind
-                            // isn't clipped to its own bounds — the pod's Surface clips
-                            // it to the pill instead — so the radius carries the pod's
-                            // inset as bleed, letting the plane reach the plate's rim
-                            // rather than stopping short of it.
-                            val bleed = MinputPodPadding.toPx()
-                            val maxRadius = hypot(
-                                max(revealCenter.x, size.width - revealCenter.x) + bleed,
-                                max(revealCenter.y, size.height - revealCenter.y) + bleed,
-                            )
-                            drawCircle(
-                                color = revealColor,
-                                radius = revealProgress * maxRadius,
-                                center = revealCenter,
-                            )
-                        }
-                    },
-                verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-            ) {
-                // The Applications button: the viewed application's identity (icon +
-                // name) and the way into applications mode; wears the highlight plane
-                // while open — the design language's open/selected marking (the drawer
-                // summons' treatment).
-                val viewedApp = appPackage?.let { pkg -> apps.firstOrNull { it.packageName == pkg } }
-                val appIcon = rememberAppIconPainter(appPackage)
-                MinputButton(
-                    text = viewedApp?.label ?: appPackage ?: "No application",
-                    onClick = {
-                        appsMode = !appsMode
-                        query = ""
-                    },
-                    leadingIcon = appIcon ?: rememberVectorPainter(Lucide.LayoutGrid),
-                    // Launcher icons carry fixed colors (never re-tint); the Lucide
-                    // fallback glyph tints like any concept icon — at the label's
-                    // strength (2026-08-30: chromed button labels moved to onSurface).
-                    leadingIconTint = if (appIcon != null) {
-                        Color.Unspecified
-                    } else MaterialTheme.colorScheme.onSurface,
-                    // Identity packed to the start, dropdown arrow pinned to the far end
-                    // (2026-08-27 trial vs the centered stack — flip alignStart to compare).
-                    trailingIcon = rememberVectorPainter(Lucide.ChevronDown),
-                    alignStart = true,
-                    highlighted = appsMode,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // The reveal radiates from the button's center.
-                        .onGloballyPositioned { coords ->
-                            rootCoords?.let { revealCenter = it.localBoundingBoxOf(coords).center }
-                        },
-                )
-
-                // The two lists crossfade on the reveal's clock, so the applications
-                // list resolves in as the radiating plane covers the pod (and out as it
-                // retreats).
-                Crossfade(
-                    targetState = appsMode,
-                    animationSpec = tween(AppsRevealMillis),
-                    label = "drawerList",
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                ) { showApps ->
-                    if (showApps) {
-                        ApplicationsList(
-                            apps = apps,
-                            activeAppPackage = activeAppPackage,
-                            query = query,
-                            sort = appSort,
-                            onPreviewApplication = onPreviewApplication,
-                            onSelectApplication = { app ->
-                                // Radiate back into layouts mode — the layouts list rescopes to
-                                // the picked application "behind" the retreating plane.
-                                appsMode = false
-                                query = ""
-                                onSelectApplication(app)
-                            },
+        // ── Body: search · sort over the list ─────────────────────────────────────
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .onGloballyPositioned { bodyCoords = it }
+                // The reveal is the BODY's: the header stays on the bar plane, so the frame
+                // doesn't change colour at its seam with the top bar. Clipped, because its
+                // centre sits up in the header and drawBehind isn't bounded by the node.
+                .clipToBounds()
+                .drawBehind {
+                    if (revealProgress > 0f) {
+                        // Radius runs to the corner FARTHEST from the centre, so full
+                        // progress always covers the whole body.
+                        val maxRadius = hypot(
+                            max(revealCenter.x, size.width - revealCenter.x),
+                            max(revealCenter.y, size.height - revealCenter.y),
                         )
-                    } else {
-                        LayoutsList(
-                            appPackage = appPackage,
-                            layouts = layouts,
-                            activeLayoutId = activeLayoutId,
-                            query = query,
-                            sort = layoutSort,
-                            onPreviewLayout = onPreviewLayout,
-                            onActivateLayout = onActivateLayout,
-                            onNewLayout = onNewLayout,
+                        drawCircle(
+                            color = revealColor,
+                            radius = revealProgress * maxRadius,
+                            center = revealCenter,
                         )
                     }
+                }
+                .padding(horizontal = MinputBarEdgePadding),
+            verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
+            ) {
+                MinputTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = if (appsMode) "Search apps" else "Search layouts",
+                    leadingIcon = Lucide.Search,
+                    clearable = true,
+                    // Top-of-screen field — the sanctioned modal-less variant.
+                    inlineEdit = true,
+                    // Experimental bevel-on-fields trial (2026-08-27) — judged here first.
+                    bevel = true,
+                    modifier = Modifier.weight(1f),
+                )
+                // A bare icon button, like the layout-set kebab (2026-09-28): the drawer is a
+                // bar surface now, and its utility glyphs follow the bar's.
+                Box {
+                    MinputIconButton(
+                        icon = Lucide.ArrowUpDown,
+                        contentDescription = if (appsMode) "Sort applications" else "Sort layouts",
+                        onClick = { sortMenuOpen = true },
+                    )
+                    if (appsMode) {
+                        MinputDropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false },
+                            current = appSort,
+                            options = ApplicationSort.entries,
+                            optionLabel = { it.label },
+                            onPick = { appSort = it },
+                        )
+                    } else {
+                        MinputDropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false },
+                            current = layoutSort,
+                            options = LayoutSort.entries,
+                            optionLabel = { it.label },
+                            onPick = { layoutSort = it },
+                        )
+                    }
+                }
+            }
+
+            // The two lists crossfade on the reveal's clock, so the applications list
+            // resolves in as the radiating plane covers the body (and out as it retreats).
+            Crossfade(
+                targetState = appsMode,
+                animationSpec = tween(AppsRevealMillis),
+                label = "drawerList",
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            ) { showApps ->
+                if (showApps) {
+                    ApplicationsList(
+                        apps = apps,
+                        activeAppPackage = activeAppPackage,
+                        query = query,
+                        sort = appSort,
+                        onPreviewApplication = onPreviewApplication,
+                        onSelectApplication = { app ->
+                            // Radiate back into layouts mode — the layouts list rescopes to
+                            // the picked application "behind" the retreating plane.
+                            appsMode = false
+                            query = ""
+                            onSelectApplication(app)
+                        },
+                    )
+                } else {
+                    LayoutsList(
+                        appPackage = appPackage,
+                        layouts = layouts,
+                        activeLayoutId = activeLayoutId,
+                        query = query,
+                        sort = layoutSort,
+                        onPreviewLayout = onPreviewLayout,
+                        onActivateLayout = onActivateLayout,
+                        onNewLayout = onNewLayout,
+                    )
                 }
             }
         }
@@ -460,10 +469,8 @@ private fun LayoutsList(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-        // The pod supplies the surrounding inset now (2026-08-30) — only the gap up to
-        // the Applications button above is this list's to give.
-        contentPadding = PaddingValues(top = DrawerControlGap),
+        verticalArrangement = Arrangement.spacedBy(DrawerRowGap),
+        contentPadding = PaddingValues(bottom = DrawerControlGap),
     ) {
         // FIRST in the list (2026-08-30, Dylan — it was the Installed section's last
         // card): the create-layout route, in the layout cards' chrome.
@@ -496,16 +503,18 @@ private fun LayoutsList(
 }
 
 /**
- * One layout card: name over author on the left; a right-hand corner stack — the like
- * count (filled heart + count, right edge pinned to the card padding so a growing count
- * expands LEFT while the icon→digit gap stays fixed) over the [installed] marker on the
- * next row — then the two-line description strip. Cards are ELEVATED by default; the
- * ACTIVE layout's card wears the highlight plane — the design language's selected/active
- * marking (which replaced the old "ACTIVE" overline). [showDescription] is the seam for a
- * future compact/full drawer density setting — compact hides the strip.
+ * One layout row (2026-09-28 retool: borderless, two lines, the description strip gone):
+ *  - line 1 — the layout's name (the controls view's input-label colour), the like count at
+ *    the end (filled heart + count; the count grows LEFT while the icon→digit gap holds);
+ *  - line 2 — "by <author>" in the same text variant, in the bar overline's colour (the
+ *    "Active layout" line), with the [installed] marker at the end.
+ *
+ * No fill and no ring at rest — the drawer is a bar surface, and its rows read as a list on it
+ * rather than a stack of buttons. The ACTIVE layout's row wears the highlight plane — the
+ * design language's selected/active marking.
  *
  * [installed] draws the download glyph (2026-08-30): it replaced the INSTALLED/COMMUNITY
- * section headers, so the marker on the card — not a header above a run of them — is what
+ * section headers, so the marker on the row — not a header above a run of them — is what
  * separates a layout already on this device from one that isn't.
  */
 @Composable
@@ -515,94 +524,65 @@ private fun LayoutCard(
     installed: Boolean,
     onPreview: () -> Unit,
     onActivate: () -> Unit,
-    showDescription: Boolean = true,
 ) {
-    // surface 2 resting / highlight when active — the selection plane's content is
-    // onPrimary, its secondary text the same role softened (no onPrimaryVariant exists).
-    val container = if (active) minputHighlightContainer() else minputBoxContainer()
+    // The selection plane's content is onPrimary, its secondary text the same role softened
+    // (no onPrimaryVariant exists).
     val primaryContent = if (active) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurface
     val secondaryContent = if (active) {
         MaterialTheme.colorScheme.onPrimary.copy(alpha = SecondaryOnHighlightAlpha)
     } else MaterialTheme.colorScheme.onSurfaceVariant
-    val interaction = remember { MutableInteractionSource() }
-    Surface(
-        shape = RoundedCornerShape(MinputMorphCorner),
-        color = container,
-        border = minputBevelBorder(container, MinputMorphCorner),
+    Column(
+        verticalArrangement = Arrangement.spacedBy(RowLineGap),
         modifier = Modifier
-            .fillMaxWidth()
-            .minputInteractiveMotion(interaction)
-            // Controller browsing previews as focus lands, mirroring touch scroll.
-            .onFocusChanged { if (it.isFocused) onPreview() }
-            .clip(RoundedCornerShape(MinputMorphCorner))
-            .clickable(
-                interactionSource = interaction,
-                indication = minputIndication(),
+            .drawerRow(
+                active = active,
                 onClickLabel = "Activate ${layout.name}",
+                onFocus = onPreview,
                 onClick = onActivate,
-            ),
+            )
+            .padding(CardPadding),
     ) {
-        Column(Modifier.fillMaxWidth().padding(CardPadding)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = layout.name,
-                        style = minputMiniTextStyle(),
-                        color = primaryContent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = layout.author.ifEmpty { "You" },
-                        style = minputMicroTextStyle(),
-                        color = secondaryContent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = layout.name,
+                style = minputMiniTextStyle(),
+                color = primaryContent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(MinputGlyphLabelGap))
+            Icon(
+                FilledHeartIcon,
+                contentDescription = "Likes",
+                modifier = Modifier.size(LikeIconSize),
+                tint = secondaryContent,
+            )
+            Spacer(Modifier.width(LikeCountGap))
+            Text(
+                text = layout.likeCount.toString(),
+                style = minputMiniTextStyle(),
+                color = secondaryContent,
+                maxLines = 1,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "by ${layout.author.ifEmpty { "you" }}",
+                style = minputMiniTextStyle(),
+                color = secondaryContent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (installed) {
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                // Right edge rides the card padding; the count digits grow leftward, and
-                // the installed marker sits on the next row under them.
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            FilledHeartIcon,
-                            contentDescription = "Likes",
-                            modifier = Modifier.size(LikeIconSize),
-                            tint = secondaryContent,
-                        )
-                        Spacer(Modifier.width(LikeCountGap))
-                        Text(
-                            text = layout.likeCount.toString(),
-                            // The card TITLE's variant (2026-08-30, Dylan): at micro
-                            // scale the digits were hard to make out.
-                            style = minputMiniTextStyle(),
-                            color = secondaryContent,
-                            maxLines = 1,
-                        )
-                    }
-                    if (installed) {
-                        Icon(
-                            Icons.Filled.Download,
-                            contentDescription = "Installed",
-                            modifier = Modifier.size(InstalledIconSize),
-                            tint = secondaryContent,
-                        )
-                    }
-                }
-            }
-            if (showDescription) {
-                Spacer(Modifier.height(DescriptionGap))
-                Text(
-                    // Two lines are always reserved (minLines) so card heights stay
-                    // uniform whether or not a description exists.
-                    text = layout.description.ifBlank { PlaceholderDescription },
-                    style = minputMicroTextStyle().copy(fontStyle = FontStyle.Italic),
-                    color = secondaryContent,
-                    minLines = 2,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = "Installed",
+                    modifier = Modifier.size(InstalledIconSize),
+                    tint = secondaryContent,
                 )
             }
         }
@@ -610,9 +590,9 @@ private fun LayoutCard(
 }
 
 /**
- * The list's permanent FIRST card (2026-08-30 — it used to close the Installed section):
- * an empty card in the layout cards' chrome, carrying only the "New layout" affordance
- * and routing into the create-layout flow.
+ * The list's permanent FIRST row (2026-08-30 — it used to close the Installed section),
+ * routing into the create-layout flow. Borderless like the layout rows beneath it
+ * (2026-09-28).
  *
  * A real leading [Icon] — the action-set group button's Lucide plus — replaces the
  * 2026-08-25 TEXT-glyph "+ ": that note (a single string self-centers on both axes, where
@@ -623,42 +603,55 @@ private fun LayoutCard(
  */
 @Composable
 private fun NewLayoutCard(onClick: () -> Unit) {
-    val container = minputBoxContainer()
-    val interaction = remember { MutableInteractionSource() }
-    Surface(
-        shape = RoundedCornerShape(MinputMorphCorner),
-        color = container,
-        border = minputBevelBorder(container, MinputMorphCorner),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
         modifier = Modifier
-            .fillMaxWidth()
-            .minputInteractiveMotion(interaction)
-            .clip(RoundedCornerShape(MinputMorphCorner))
-            .clickable(
-                interactionSource = interaction,
-                indication = minputIndication(),
-                onClickLabel = "New layout",
-                onClick = onClick,
-            ),
+            .drawerRow(active = false, onClickLabel = "New layout", onClick = onClick)
+            .height(NewLayoutCardHeight),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth().height(NewLayoutCardHeight),
-        ) {
-            Icon(
-                Lucide.Plus,
-                contentDescription = null,
-                modifier = Modifier.size(MinputPillIconSize),
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.width(MinputGlyphLabelGap))
-            Text(
-                text = "New layout",
-                style = minputMiniTextStyle(),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
+        Icon(
+            Lucide.Plus,
+            contentDescription = null,
+            modifier = Modifier.size(MinputPillIconSize),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "New layout",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
+}
+
+/**
+ * **One row of the drawer's lists** — layouts, the new-layout row, applications (2026-09-28).
+ * Full width, borderless: no fill at rest, the highlight plane when [active]; the family's
+ * press lift, ripple and focus state; [onFocus] fires as controller focus lands (browsing
+ * previews). One helper so the three row kinds can't drift apart.
+ */
+@Composable
+internal fun Modifier.drawerRow(
+    active: Boolean,
+    onClickLabel: String,
+    onClick: () -> Unit,
+    onFocus: () -> Unit = {},
+): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(MinputMorphCorner)
+    return this
+        .fillMaxWidth()
+        .minputInteractiveMotion(interaction)
+        .onFocusChanged { if (it.isFocused) onFocus() }
+        .clip(shape)
+        .background(if (active) minputHighlightContainer() else Color.Transparent)
+        .clickable(
+            interactionSource = interaction,
+            indication = minputIndication(),
+            onClickLabel = onClickLabel,
+            onClick = onClick,
+        )
 }
 
 /**
@@ -713,32 +706,28 @@ private const val AppsRevealMillis = 300
 internal val DrawerControlGap = 6.dp
 
 
-/** Interior padding of a layout card. */
+/** Interior padding of a drawer list row. */
 internal val CardPadding = 8.dp
 
-/** The like heart, sized to the mini text line beside it (2026-08-30: the count moved up
- *  from the micro variant, so the glyph followed). */
+/** The like heart, sized to the mini text line beside it. */
 private val LikeIconSize = 12.dp
 
-/** The installed (download) marker under the like count. */
-private val InstalledIconSize = 12.dp
+/** The installed (download) marker under the like count — shared with the application rows. */
+internal val InstalledIconSize = 12.dp
 
 /** Fixed gap between the heart and the count's first digit. */
 private val LikeCountGap = 4.dp
 
-/** Gap above the description strip. */
-private val DescriptionGap = 2.dp
+/** Gap between a layout row's two lines. */
+private val RowLineGap = 2.dp
+
+/** Gap between the drawer's list rows — tighter than the control rhythm: the rows are
+ *  borderless, so they read as one list rather than a stack of cards. */
+internal val DrawerRowGap = 2.dp
 
 /** Height of the [NewLayoutCard] — slimmer than a populated card, tall enough to read as
  *  a card slot rather than a button. */
 private val NewLayoutCardHeight = 36.dp
-
-/** TEMPORARY (2026-08-25, Dylan): stand-in description so the drawer's card density and
- *  typography can be judged before real descriptions exist — every card whose layout has
- *  no description renders this. Remove once descriptions are editable. */
-private const val PlaceholderDescription =
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor " +
-        "incididunt ut labore et dolore magna aliqua."
 
 /** Secondary text on the highlight plane: onPrimary softened, since the scheme has no
  *  dedicated secondary-on-primary role. */

@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.outlined.Layers
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -98,10 +101,10 @@ internal fun RemapControlsTopBar(
             modifier = Modifier.fillMaxSize(),
             // ── start: the identity widget (the layouts drawer's summon) ──
             start = {
-                BarIdentityButton(
+                BarStackButton(
                     appPackage = appPackage,
                     overline = if (previewing) "Previewing layout" else "Active layout",
-                    layoutName = layoutName,
+                    value = layoutName,
                     highlighted = identityHighlighted,
                     onClick = onIdentityClick,
                     modifier = Modifier.testTag("bar:identity"),
@@ -180,21 +183,31 @@ private fun BarSlots(
 }
 
 /**
- * The identity widget: the viewed application's launcher icon beside an overline + layout name
- * stack, the whole thing a button that toggles the layouts drawer.
+ * The identity widget: the viewed application's launcher icon beside an overline + value
+ * stack, the whole thing one chrome-less button.
+ *
+ * Two mounts, deliberately the SAME component (2026-09-28): the top bar's identity (ACTIVE
+ * LAYOUT over the layout's name — toggles the layouts drawer) and the layouts drawer's own
+ * header (APPLICATION over the application's name — toggles applications mode). The drawer's
+ * header row sits level with the bar, on the same plane, so the two read as one strip with two
+ * widgets on it; letting them drift apart would break that.
  *
  * Chrome-less by design — the bars carry no pills now — so the OPEN state is read off the text
- * and glyph going accent rather than off a highlight plate. The layout's name is user-typed, so
- * it goes through [NameableText] (never a bare `Text` in chrome).
+ * and glyph going accent rather than off a highlight plate. [dropdownArrow] adds the standard
+ * dropdown triangle at the end, flipping while [highlighted] (the exposed-dropdown
+ * convention). The value is user-typed (or a launcher label), so it goes through
+ * [NameableText] (never a bare `Text` in chrome).
  */
 @Composable
-private fun BarIdentityButton(
+internal fun BarStackButton(
     appPackage: String?,
     overline: String,
-    layoutName: String,
+    value: String,
     highlighted: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    dropdownArrow: Boolean = false,
+    valueMaxWidth: Dp = IdentityNameMaxWidth,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val accent = MaterialTheme.colorScheme.primary
@@ -227,7 +240,11 @@ private fun BarIdentityButton(
             )
         }
         Spacer(Modifier.width(MinputBarIconTextGap))
-        Column(verticalArrangement = Arrangement.spacedBy(MinputBarStackGap)) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+            // Never fill: the stack wraps its text, but gives way before the arrow does.
+            modifier = Modifier.weight(1f, fill = false),
+        ) {
             Text(
                 text = overline.uppercase(),
                 style = minputOverlineTextStyle(),
@@ -235,10 +252,22 @@ private fun BarIdentityButton(
                 maxLines = 1,
             )
             NameableText(
-                text = layoutName,
+                text = value,
                 style = minputMiniTextStyle(),
                 color = nameColor,
-                maxWidth = IdentityNameMaxWidth,
+                maxWidth = valueMaxWidth,
+            )
+        }
+        if (dropdownArrow) {
+            val flip by animateFloatAsState(
+                targetValue = if (highlighted) 180f else 0f,
+                label = "dropdownArrow",
+            )
+            Icon(
+                Icons.Filled.ArrowDropDown,
+                contentDescription = null,
+                modifier = Modifier.size(MinputBarWidgetIconSize).rotate(flip),
+                tint = nameColor,
             )
         }
     }

@@ -1201,9 +1201,9 @@ class RemapControlsScreenTest {
 
     @Test
     fun applicationsButton_entersApplicationsMode_withAppCards() {
-        // The layouts drawer's full-width Applications button (2026-08-27: the retired
-        // right-side applications drawer folded into the layouts drawer) radiates the
-        // pane into applications mode: a card per detected app under the same category
+        // The layouts drawer's application dropdown — its header row (2026-08-27: the
+        // retired right-side applications drawer folded into the layouts drawer) radiates
+        // the pane into applications mode: a card per detected app under the same category
         // headers. Picking an app transitions back to layouts mode scoped to it.
         composeRule.setContent {
             MaterialTheme {
@@ -1237,17 +1237,17 @@ class RemapControlsScreenTest {
             }
         }
 
-        // The layouts drawer first — the Applications button lives inside it, wearing
-        // the viewed application's identity ("Alpha Game": the active layout's app).
+        // The layouts drawer first — the application dropdown heads it, wearing the
+        // viewed application's identity ("Alpha Game": the active layout's app).
         composeRule.onNodeWithTag("bar:identity").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Alpha Game", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("drawer:application").performClick()
         composeRule.waitForIdle()
 
         // Applications mode: cards are name-only (2026-08-26: the active-layout
-        // subtitle retired). "Alpha Game" appears twice — its app card AND the
-        // Applications button itself, which still shows the viewed application.
+        // subtitle retired). "Alpha Game" appears twice — its app row AND the
+        // application dropdown itself, which still shows the viewed application.
         composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
 

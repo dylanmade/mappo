@@ -168,8 +168,9 @@ fun Modifier.minputPressIndication(interactionSource: InteractionSource): Modifi
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
 val MinputBoxStroke = 0.75.dp
 
-/** Which edge of a surface a [minputBevelEdge] runs along. */
-enum class MinputEdge { TOP, BOTTOM }
+/** Which edge of a surface a [minputBevelEdge] runs along. START/END are layout-direction
+ *  aware, like the rest of Compose. */
+enum class MinputEdge { TOP, BOTTOM, START, END }
 
 /**
  * The bevel's LIT edge as a flat color — the same white-nudge the [minputBevelBorder] paints
@@ -184,21 +185,34 @@ fun minputBevelHighlight(base: Color): Color =
     lerp(base, Color.White, (BevelTopHighlightStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
 
 /** Draw a [width] line of [color] along one [edge] of this node — the flat-surface companion
- *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top. */
+ *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top.
+ *
+ *  [leadInset] starts the line that far along its edge (from the top for START/END, from the
+ *  start for TOP/BOTTOM) — for a surface whose edge only faces the content for part of its
+ *  run: the layouts drawer's end edge sits beside the top bar before it reaches the content,
+ *  and only lights from the bar's own lit edge down, so the two meet as one inner rim. */
 fun Modifier.minputBevelEdge(
     color: Color,
     edge: MinputEdge,
     width: Dp = MinputBoxStroke,
+    leadInset: Dp = 0.dp,
 ): Modifier = drawWithContent {
     drawContent()
     val stroke = width.toPx()
-    val y = if (edge == MinputEdge.TOP) stroke / 2f else size.height - stroke / 2f
-    drawLine(
-        color = color,
-        start = Offset(0f, y),
-        end = Offset(size.width, y),
-        strokeWidth = stroke,
-    )
+    val lead = leadInset.toPx()
+    val rtl = layoutDirection == LayoutDirection.Rtl
+    when (edge) {
+        MinputEdge.TOP, MinputEdge.BOTTOM -> {
+            val y = if (edge == MinputEdge.TOP) stroke / 2f else size.height - stroke / 2f
+            val (from, to) = if (rtl) size.width - lead to 0f else lead to size.width
+            drawLine(color, Offset(from, y), Offset(to, y), strokeWidth = stroke)
+        }
+        MinputEdge.START, MinputEdge.END -> {
+            val atLeft = (edge == MinputEdge.START) != rtl
+            val x = if (atLeft) stroke / 2f else size.width - stroke / 2f
+            drawLine(color, Offset(x, lead), Offset(x, size.height), strokeWidth = stroke)
+        }
+    }
 }
 
 /** How far the bevel's highlights deviate from the base fill — "ever so slightly". */

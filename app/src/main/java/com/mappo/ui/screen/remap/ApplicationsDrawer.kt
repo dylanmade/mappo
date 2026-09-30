@@ -1,7 +1,5 @@
 package com.mappo.ui.screen.remap
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,19 +11,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.LayoutGrid
@@ -34,19 +27,13 @@ import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.minputBevelBorder
-import com.mappo.ui.minput.minputBoxContainer
-import com.mappo.ui.minput.minputHighlightContainer
-import com.mappo.ui.minput.minputIndication
-import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMicroTextStyle
 import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
  * The applications list (2026-08-27) — the layouts drawer's APPLICATIONS MODE content.
  * (The standalone right-side applications drawer this file used to host is retired: the
- * drawer's full-width Applications button now radiates this list into the same pane —
+ * drawer's application dropdown now radiates this list into the same pane —
  * see [LayoutsDrawerPane].)
  *
  * Focusing (d-pad) or tapping an application card previews that application's ACTIVE
@@ -84,10 +71,8 @@ internal fun ApplicationsList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(DrawerControlGap),
-        // The pod supplies the surrounding inset now (2026-08-30) — only the gap up to
-        // the Applications button above is this list's to give.
-        contentPadding = PaddingValues(top = DrawerControlGap),
+        verticalArrangement = Arrangement.spacedBy(DrawerRowGap),
+        contentPadding = PaddingValues(bottom = DrawerControlGap),
     ) {
         // Headerless (2026-08-30, matching the layouts list): the INSTALLED/COMMUNITY
         // overlines retired — the download marker at a card's end says "installed on
@@ -125,8 +110,9 @@ internal fun ApplicationsList(
 
 /**
  * One application card: launcher icon beside the application name (2026-08-26: subtitle
- * retired — name only), closed by the [installed] marker. Cards wear the layout cards'
- * chrome; the application whose layout is ACTIVE wears the highlight plane.
+ * retired — name only), closed by the [installed] marker. Borderless rows like the layout
+ * rows ([drawerRow], 2026-09-28); the application whose layout is ACTIVE wears the
+ * highlight plane.
  *
  * [installed] draws the download glyph at the row's END (2026-08-30): it replaced the
  * INSTALLED/COMMUNITY section headers, so the marker on the card is what separates an
@@ -140,63 +126,50 @@ private fun ApplicationCard(
     onPreview: () -> Unit,
     onSelect: () -> Unit,
 ) {
-    val container = if (active) minputHighlightContainer() else minputBoxContainer()
     val primaryContent = if (active) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurface
     val secondaryContent = if (active) {
         MaterialTheme.colorScheme.onPrimary.copy(alpha = SecondaryOnHighlightAlpha)
     } else MaterialTheme.colorScheme.onSurfaceVariant
-    val interaction = remember { MutableInteractionSource() }
-    Surface(
-        shape = RoundedCornerShape(MinputMorphCorner),
-        color = container,
-        border = minputBevelBorder(container, MinputMorphCorner),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .fillMaxWidth()
-            .minputInteractiveMotion(interaction)
-            // Controller browsing previews as focus lands, mirroring touch scroll.
-            .onFocusChanged { if (it.isFocused) onPreview() }
-            .clip(RoundedCornerShape(MinputMorphCorner))
-            .clickable(
-                interactionSource = interaction,
-                indication = minputIndication(),
+            .drawerRow(
+                active = active,
                 onClickLabel = "Select ${app.label}",
+                onFocus = onPreview,
                 onClick = onSelect,
-            ),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(CardPadding),
-        ) {
-            val icon = rememberAppIconPainter(app.packageName)
-            if (icon != null) {
-                AppIconImage(icon, size = AppCardIconSize)
-            } else {
-                Icon(
-                    Lucide.LayoutGrid,
-                    contentDescription = null,
-                    modifier = Modifier.size(AppCardIconSize),
-                    tint = secondaryContent,
-                )
-            }
-            Spacer(Modifier.width(AppCardIconTextGap))
-            Text(
-                text = app.label,
-                style = minputMiniTextStyle(),
-                color = primaryContent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
-            if (installed) {
-                Spacer(Modifier.width(MinputGlyphLabelGap))
-                Icon(
-                    Icons.Filled.Download,
-                    contentDescription = "Installed",
-                    modifier = Modifier.size(InstalledIconSize),
-                    tint = secondaryContent,
-                )
-            }
+            .padding(CardPadding),
+    ) {
+        val icon = rememberAppIconPainter(app.packageName)
+        if (icon != null) {
+            AppIconImage(icon, size = AppCardIconSize)
+        } else {
+            Icon(
+                Lucide.LayoutGrid,
+                contentDescription = null,
+                modifier = Modifier.size(AppCardIconSize),
+                tint = secondaryContent,
+            )
+        }
+        Spacer(Modifier.width(AppCardIconTextGap))
+        Text(
+            text = app.label,
+            style = minputMiniTextStyle(),
+            color = primaryContent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (installed) {
+            Spacer(Modifier.width(MinputGlyphLabelGap))
+            Icon(
+                Icons.Filled.Download,
+                contentDescription = "Installed",
+                modifier = Modifier.size(InstalledIconSize),
+                tint = secondaryContent,
+            )
         }
     }
 }
@@ -225,5 +198,3 @@ private val AppCardIconSize = 16.dp
 /** Gap between the launcher icon and the card's text stack. */
 private val AppCardIconTextGap = 6.dp
 
-/** The installed (download) marker closing an application card — the layout cards' size. */
-private val InstalledIconSize = 12.dp
