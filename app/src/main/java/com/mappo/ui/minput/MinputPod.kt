@@ -69,7 +69,8 @@ fun MinputPod(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = horizontalArrangement,
-            modifier = Modifier.padding(MinputPodPadding),
+            // The stroke rule: the pod's inset starts inside its bevel ring.
+            modifier = Modifier.minputStrokeInset().padding(MinputPodPadding),
             content = content,
         )
     }

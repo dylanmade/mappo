@@ -192,7 +192,9 @@ fun MinputModal(
             // content color a Surface would — otherwise text/ripples inherit whatever the
             // host (frame chrome, overlay root) left in LocalContentColor.
             CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                Box(Modifier.fillMaxSize(), content = content)
+                // The stroke rule: whatever the modal hosts is inset by its ring first, so a
+                // panel's own padding is measured from the ring's inner edge.
+                Box(Modifier.fillMaxSize().minputStrokeInset(), content = content)
             }
         }
     }

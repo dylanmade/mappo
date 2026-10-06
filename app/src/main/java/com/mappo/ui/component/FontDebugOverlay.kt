@@ -53,6 +53,7 @@ import com.composables.icons.lucide.ArrowUpToLine
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Star
+import com.mappo.ui.minput.minputStrokeInset
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputButton
@@ -154,6 +155,7 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                     .clip(shape)
                     .background(container)
                     .border(minputBevelBorder(container, MinputMorphCorner), shape)
+                    .minputStrokeInset()
                     .padding(PanelPadding),
             ) {
                 CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -320,6 +322,7 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                     onClick = { expanded = !expanded },
                 )
                 .height(MinputSize.Standard.height)
+                .minputStrokeInset()
                 .padding(horizontal = MinputSize.Standard.contentPadding),
         ) {
             Text(

@@ -82,7 +82,6 @@ import com.mappo.ui.minput.minputBevelEdge
 import com.mappo.ui.minput.minputBevelHighlight
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconSize
-import com.mappo.ui.minput.MinputRoundEndBias
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.math.hypot
 import kotlin.math.max
@@ -357,7 +356,7 @@ private fun LayoutsDrawerContent(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(SearchSortGap),
+                horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
             ) {
                 MinputTextField(
                     value = query,
@@ -723,18 +722,6 @@ internal val InstalledIconSize = MinputIconSize.Xs
 
 /** Fixed gap between the heart and the count's first digit. */
 private val LikeCountGap = 4.dp
-
-/**
- * The air between the search field and the sort button — set so the sort glyph reads CENTRED
- * between the field and the drawer's lit edge (Dylan, 2026-10-06: it read further from the
- * field than from the edge, and measured so — 11.5dp against 10.5dp).
- *
- * Two corrections off the control rhythm: the drawer's END edge is its lit line, which sits a
- * stroke inside the pane, so the edge side was a stroke short; and the field's end is a full
- * pill arc, whose visual mass sits inboard of its geometric edge — the library's round-end rule
- * ([com.mappo.ui.minput.minputRoundEndBias]) — so the gap beside it reads wider than it measures.
- */
-private val SearchSortGap = DrawerControlGap - MinputBoxStroke - MinputRoundEndBias / 2
 
 /** Gap between a layout row's two lines. */
 private val RowLineGap = 2.dp

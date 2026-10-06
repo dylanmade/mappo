@@ -3,6 +3,7 @@ package com.mappo.ui.minput
 import android.graphics.ComposeShader
 import android.graphics.PorterDuff
 import android.os.Build
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.foundation.indication
@@ -168,6 +169,37 @@ fun Modifier.minputPressIndication(interactionSource: InteractionSource): Modifi
 /** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
 val MinputBoxStroke = 0.75.dp
 
+/**
+ * **The stroke rule** (Dylan, 2026-10-06) — one rule for every stroke minput draws: bevel
+ * rings, the bars' and the drawer's lit edges, field outlines.
+ *
+ *  1. A stroke is drawn INSIDE its shape. The shape's bounds are what it looks like from
+ *     outside, so a Standard control is 24dp whether it wears a ring or not, gaps between
+ *     elements are exactly the gaps asked for, and no ancestor's clip can cut a ring off.
+ *  2. Whatever sits INSIDE a stroked surface is inset by the stroke FIRST, then by its own
+ *     padding — so padding is measured from the stroke's inner edge, which is where the eye
+ *     measures it from. This modifier is that first inset; every stroked minput surface
+ *     applies it to its own content, so call sites never compensate by hand.
+ *
+ * Rule 2 is what was missing when the layouts drawer's sort button sat closer to the drawer's
+ * lit edge than to the search field: both gaps were 6dp from the bounds, but the edge line
+ * took 0.75dp of one of them. (Outside strokes were tried on 2026-07-13 and backed out — state
+ * layers, disabled alpha and clipping all stop at the bounds — and re-rejected 2026-10-06.)
+ *
+ * [stroked] false = no inset (a bare / unringed variant of the same component), so a
+ * component can apply this unconditionally and pass whether its ring is showing.
+ */
+fun Modifier.minputStrokeInset(stroked: Boolean = true): Modifier =
+    if (stroked) padding(MinputBoxStroke) else this
+
+/** [minputStrokeInset] for a surface stroked along ONE edge (a bar's or a drawer's lit edge). */
+fun Modifier.minputStrokeInset(edge: MinputEdge): Modifier = when (edge) {
+    MinputEdge.TOP -> padding(top = MinputBoxStroke)
+    MinputEdge.BOTTOM -> padding(bottom = MinputBoxStroke)
+    MinputEdge.START -> padding(start = MinputBoxStroke)
+    MinputEdge.END -> padding(end = MinputBoxStroke)
+}
+
 /** Which edge of a surface a [minputBevelEdge] runs along. START/END are layout-direction
  *  aware, like the rest of Compose. */
 enum class MinputEdge { TOP, BOTTOM, START, END }
@@ -185,7 +217,9 @@ fun minputBevelHighlight(base: Color): Color =
     lerp(base, Color.White, (BevelTopHighlightStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
 
 /** Draw a [width] line of [color] along one [edge] of this node — the flat-surface companion
- *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top.
+ *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top. It insets
+ *  everything after it in the chain by the stroke on that edge ([minputStrokeInset]), so the
+ *  surface's own padding starts at the line's inner side — the stroke rule.
  *
  *  [leadInset] starts the line that far along its edge (from the top for START/END, from the
  *  start for TOP/BOTTOM) — for a surface whose edge only faces the content for part of its
@@ -194,11 +228,10 @@ fun minputBevelHighlight(base: Color): Color =
 fun Modifier.minputBevelEdge(
     color: Color,
     edge: MinputEdge,
-    width: Dp = MinputBoxStroke,
     leadInset: Dp = 0.dp,
 ): Modifier = drawWithContent {
     drawContent()
-    val stroke = width.toPx()
+    val stroke = MinputBoxStroke.toPx()
     val lead = leadInset.toPx()
     val rtl = layoutDirection == LayoutDirection.Rtl
     when (edge) {
@@ -213,7 +246,7 @@ fun Modifier.minputBevelEdge(
             drawLine(color, Offset(x, lead), Offset(x, size.height), strokeWidth = stroke)
         }
     }
-}
+}.minputStrokeInset(edge)
 
 /** How far the bevel's highlights deviate from the base fill — "ever so slightly". */
 private const val BevelTopHighlightStrength = 0.10f

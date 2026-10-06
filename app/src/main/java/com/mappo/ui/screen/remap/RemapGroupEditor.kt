@@ -126,6 +126,7 @@ import com.mappo.ui.screen.displayLabel as activatorDisplayLabel
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
 import com.mappo.ui.theme.LocalMappoExtraColors
 import com.mappo.ui.theme.PressTypeColors
+import com.mappo.ui.minput.minputStrokeInset
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputDropdownMenu
@@ -1262,7 +1263,9 @@ private fun RowTileContent(
     val tinted = pressType != null && pressType != ActivatorType.FULL_PRESS
     val content = if (tinted) RowTileTintedText else MaterialTheme.colorScheme.onSurface
     Row(
-        modifier = Modifier.fillMaxSize().padding(horizontal = RowTileContentPadding),
+        // The stroke rule: every tile wears a ring (bevel, or the "+" slot's hairline), so the
+        // text's margin starts inside it.
+        modifier = Modifier.fillMaxSize().minputStrokeInset().padding(horizontal = RowTileContentPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {

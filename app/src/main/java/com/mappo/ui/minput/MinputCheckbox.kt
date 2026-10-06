@@ -94,7 +94,9 @@ fun MinputCheckbox(
                 .size(size)
                 .clip(shape)
                 .background(fill)
-                .border(MinputBoxStroke, outline, shape),
+                .border(MinputBoxStroke, outline, shape)
+                // The stroke rule: the tick's inset starts inside the outline.
+                .minputStrokeInset(),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -102,7 +104,7 @@ fun MinputCheckbox(
                 contentDescription = null,
                 tint = colors.onPrimary,
                 modifier = Modifier
-                    .size(size - MinputCheckboxTickInset * 2)
+                    .size(size - (MinputCheckboxTickInset + MinputBoxStroke) * 2)
                     .graphicsLayer {
                         alpha = tick
                         scaleX = tick

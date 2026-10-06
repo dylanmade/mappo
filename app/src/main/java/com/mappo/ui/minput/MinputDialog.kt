@@ -123,6 +123,8 @@ fun MinputDialog(
                             .clip(shape)
                             .background(container)
                             .border(minputBevelBorder(container, MinputMorphCorner), shape)
+                            // The stroke rule: the card's padding starts inside its ring.
+                            .minputStrokeInset()
                             .padding(MinputDialogPadding),
                     ) {
                         // The card paints its plane with a raw background, so it must

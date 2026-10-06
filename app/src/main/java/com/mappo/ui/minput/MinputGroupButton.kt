@@ -164,6 +164,9 @@ fun <T> MinputGroupButton(
                 Row(
                     modifier = Modifier
                         .fillMaxHeight()
+                        // The stroke rule: every segment wears the ring, so its padding
+                        // starts inside it.
+                        .minputStrokeInset()
                         // An icon-only segment is a SQUARE of glyph room (a pill's height
                         // across) plus each end's round allowance, so a pair of them reads as two
                         // glyph tiles rather than two capsules — and the arcs get their space

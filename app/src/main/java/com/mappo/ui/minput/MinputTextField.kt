@@ -148,7 +148,8 @@ fun MinputTextField(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = size.contentPadding),
+            // The stroke rule: an outlined field's padding starts inside its outline.
+            modifier = Modifier.minputStrokeInset(outlined).padding(horizontal = size.contentPadding),
         ) {
             if (leadingIcon != null) {
                 Icon(
@@ -402,7 +403,11 @@ internal fun MinputTextWell(
             decorationBox = { innerTextField ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = size.contentPadding),
+                    // The stroke rule, keyed on the RESTING outline: the focus ring is a
+                    // transient state layer sharing its slot, and must not shift the text.
+                    modifier = Modifier
+                        .minputStrokeInset(outlined)
+                        .padding(horizontal = size.contentPadding),
                 ) {
                     if (leadingIcon != null) {
                         Icon(

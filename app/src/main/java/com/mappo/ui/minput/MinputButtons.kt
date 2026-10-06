@@ -127,10 +127,11 @@ fun MinputButton(
     // Absolute radius, never a percentage: a percentage corner turns any button taller than
     // it is wide into a capsule (see MinputPod's note).
     val shape = RoundedCornerShape(corner)
+    val ringed = !(bare && !highlighted)
     Surface(
         shape = shape,
         color = container,
-        border = if (bare && !highlighted) null else minputBevelBorder(container, corner),
+        border = if (ringed) minputBevelBorder(container, corner) else null,
         modifier = modifier
             .minputInteractiveMotion(interaction)
             .height(height)
@@ -171,6 +172,8 @@ fun MinputButton(
                 horizontalArrangement = if (alignStart) Arrangement.Start else Arrangement.Center,
                 modifier = Modifier
                     .height(height)
+                    // The stroke rule: the label's padding starts inside the ring.
+                    .minputStrokeInset(ringed)
                     // A leading glyph inks less than its box (Material live area, Lucide
                     // stroke inset), so with symmetric padding the icon flank reads wider
                     // than the text flank — pull the start inset in by the family's

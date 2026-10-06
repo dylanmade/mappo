@@ -69,9 +69,13 @@ fun MinputSwitch(
         targetValue = if (checked) trackColor else colors.outline,
         label = "switchOutline",
     )
-    val thumbSize = height - MinputSwitchThumbInset * 2
+    // The stroke rule: the thumb's inset is measured from the outline's inner edge — the track's
+    // content box (see the Box below) is already inset by the stroke.
+    val inner = height - MinputBoxStroke * 2
+    val innerWidth = width - MinputBoxStroke * 2
+    val thumbSize = inner - MinputSwitchThumbInset * 2
     val thumbTravel by animateDpAsState(
-        targetValue = if (checked) width - thumbSize - MinputSwitchThumbInset else MinputSwitchThumbInset,
+        targetValue = if (checked) innerWidth - thumbSize - MinputSwitchThumbInset else MinputSwitchThumbInset,
         label = "switchThumbTravel",
     )
     Box(
@@ -95,7 +99,8 @@ fun MinputSwitch(
                     )
                 } else Modifier,
             )
-            .then(if (enabled) Modifier else Modifier.alpha(0.55f)),
+            .then(if (enabled) Modifier else Modifier.alpha(0.55f))
+            .minputStrokeInset(),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(

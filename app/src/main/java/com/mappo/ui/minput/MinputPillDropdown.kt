@@ -96,7 +96,8 @@ fun <T> MinputPillDropdown(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(
+                // The stroke rule: padding starts inside the bevel ring.
+                modifier = Modifier.minputStrokeInset().padding(
                     start = size.contentPadding - iconBias / 2,
                     end = size.contentPadding + iconBias / 2,
                 ),
