@@ -62,7 +62,7 @@ import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.ui.minput.MinputDropdownMenu
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
-import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputHighlightContainer
 import com.mappo.ui.minput.minputIndication
@@ -80,6 +80,9 @@ import com.mappo.ui.minput.MinputEdge
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.minputBevelEdge
 import com.mappo.ui.minput.minputBevelHighlight
+import com.mappo.ui.minput.MinputIcon
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputRoundEndBias
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.math.hypot
 import kotlin.math.max
@@ -100,7 +103,8 @@ import kotlin.math.max
  * the screen down to the bottom bar, PUSHING the top bar right (the bottom bar keeps its full
  * width, and the Mappo button its corner). Top to bottom:
  *  - the **header row**, level with the top bar and the same height: the application
- *    dropdown ([BarStackButton], the top bar's own identity widget with a dropdown arrow) —
+ *    dropdown ([BarStackButton], the top bar's own identity widget — here the app's name alone
+ *    as the overline, a dropdown arrow in the same colour, the application rows' icon size) —
  *    chrome-less, so the header reads as the bar continuing;
  *  - the Search · Sort row (the sort button is a bare icon button like the layout-set kebab,
  *    opening the standard minput option menu — Recent/Likes/A to Z/Z to A);
@@ -303,8 +307,9 @@ private fun LayoutsDrawerContent(
         ) {
             BarStackButton(
                 appPackage = appPackage,
-                overline = "Application",
-                value = viewedApp?.label ?: appPackage ?: "None",
+                overline = viewedApp?.label ?: appPackage ?: "No application",
+                value = null,
+                iconSize = AppCardIconSize,
                 highlighted = appsMode,
                 onClick = {
                     appsMode = !appsMode
@@ -352,7 +357,7 @@ private fun LayoutsDrawerContent(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(DrawerControlGap),
+                horizontalArrangement = Arrangement.spacedBy(SearchSortGap),
             ) {
                 MinputTextField(
                     value = query,
@@ -362,8 +367,6 @@ private fun LayoutsDrawerContent(
                     clearable = true,
                     // Top-of-screen field — the sanctioned modal-less variant.
                     inlineEdit = true,
-                    // Experimental bevel-on-fields trial (2026-08-27) — judged here first.
-                    bevel = true,
                     modifier = Modifier.weight(1f),
                 )
                 // A bare icon button, like the layout-set kebab (2026-09-28): the drawer is a
@@ -505,7 +508,8 @@ private fun LayoutsList(
 /**
  * One layout row (2026-09-28 retool: borderless, two lines, the description strip gone):
  *  - line 1 — the layout's name (the controls view's input-label colour), the like count at
- *    the end (filled heart + count; the count grows LEFT while the icon→digit gap holds);
+ *    the end in the same variant AND colour (filled heart + count; the count grows LEFT while
+ *    the icon→digit gap holds);
  *  - line 2 — "by <author>" in the same text variant, in the bar overline's colour (the
  *    "Active layout" line), with the [installed] marker at the end.
  *
@@ -553,17 +557,20 @@ private fun LayoutCard(
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(MinputGlyphLabelGap))
-            Icon(
+            // The count is LINE 1's trailing item, so it wears line 1's colour as well as its
+            // text variant (2026-10-05): in the dimmer secondary grey the same face read as a
+            // lighter, smaller one beside the title.
+            MinputIcon(
                 FilledHeartIcon,
                 contentDescription = "Likes",
-                modifier = Modifier.size(LikeIconSize),
-                tint = secondaryContent,
+                size = MinputIconSize.Xxs,
+                tint = primaryContent,
             )
             Spacer(Modifier.width(LikeCountGap))
             Text(
                 text = layout.likeCount.toString(),
                 style = minputMiniTextStyle(),
-                color = secondaryContent,
+                color = primaryContent,
                 maxLines = 1,
             )
         }
@@ -578,10 +585,11 @@ private fun LayoutCard(
             )
             if (installed) {
                 Spacer(Modifier.width(MinputGlyphLabelGap))
-                Icon(
+                // Ink-measured: the glyph's own margin used to hold it 2.5dp off the end.
+                MinputIcon(
                     Icons.Filled.Download,
                     contentDescription = "Installed",
-                    modifier = Modifier.size(InstalledIconSize),
+                    size = InstalledIconSize,
                     tint = secondaryContent,
                 )
             }
@@ -613,7 +621,7 @@ private fun NewLayoutCard(onClick: () -> Unit) {
         Icon(
             Lucide.Plus,
             contentDescription = null,
-            modifier = Modifier.size(MinputPillIconSize),
+            modifier = Modifier.size(MinputSize.Standard.iconSize),
             tint = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
@@ -709,14 +717,24 @@ internal val DrawerControlGap = 6.dp
 /** Interior padding of a drawer list row. */
 internal val CardPadding = 8.dp
 
-/** The like heart, sized to the mini text line beside it. */
-private val LikeIconSize = 12.dp
 
 /** The installed (download) marker under the like count — shared with the application rows. */
-internal val InstalledIconSize = 12.dp
+internal val InstalledIconSize = MinputIconSize.Xs
 
 /** Fixed gap between the heart and the count's first digit. */
 private val LikeCountGap = 4.dp
+
+/**
+ * The air between the search field and the sort button — set so the sort glyph reads CENTRED
+ * between the field and the drawer's lit edge (Dylan, 2026-10-06: it read further from the
+ * field than from the edge, and measured so — 11.5dp against 10.5dp).
+ *
+ * Two corrections off the control rhythm: the drawer's END edge is its lit line, which sits a
+ * stroke inside the pane, so the edge side was a stroke short; and the field's end is a full
+ * pill arc, whose visual mass sits inboard of its geometric edge — the library's round-end rule
+ * ([com.mappo.ui.minput.minputRoundEndBias]) — so the gap beside it reads wider than it measures.
+ */
+private val SearchSortGap = DrawerControlGap - MinputBoxStroke - MinputRoundEndBias / 2
 
 /** Gap between a layout row's two lines. */
 private val RowLineGap = 2.dp

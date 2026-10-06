@@ -39,7 +39,7 @@ import androidx.compose.ui.unit.Dp
  * of hand-rolling their own Surface + bevel + clickable.
  *
  * [text] is optional: with a [leadingIcon] and no text the button renders as a SQUARE icon
- * button ([MinputPillHeight] a side — a perfect circle at the default [corner]) wearing the
+ * button ([size]'s height a side — a perfect circle at the default [corner]) wearing the
  * same container variants as the labelled form — pass a [contentDescription] since no label
  * carries the semantics.
  *
@@ -68,12 +68,12 @@ import androidx.compose.ui.unit.Dp
  * content color" instead — an icon-only button has no text to carry the variant's color,
  * so the glyph must (fixed-color art in icon-only form isn't a real case yet).
  *
- * [height] is the button's fixed height — [MinputPillHeight] at the resting scale, or
- * [MinputPillTallHeight] for the one-step-up form (the home frame's Mappo button). It also
- * drives the icon-only square's side, so a tall icon-only button stays a circle.
+ * [size] is the button's variant on the library's ONE control scale ([MinputSize]: Small /
+ * Standard / Large) — its height, its content inset and its glyph size together. It also
+ * drives the icon-only square's side, so an icon-only button stays a circle at every size.
  *
  * [corner] is an ABSOLUTE radius (never a percentage — that would stretch a tall button into
- * a capsule). The default is half [height]: a pill at whatever scale the button is.
+ * a capsule). The default is half the height: a pill at whatever scale the button is.
  *
  * [trailingIcon] renders a glyph at the button's END — dropdown arrows and their kin. It
  * always follows the button's content color (trailing glyphs are concept icons; there is
@@ -96,11 +96,12 @@ fun MinputButton(
     leadingIconTint: Color = Color.Unspecified,
     trailingIcon: Painter? = null,
     alignStart: Boolean = false,
-    height: Dp = MinputPillHeight,
-    corner: Dp = height / 2,
+    size: MinputSize = MinputSize.Standard,
+    corner: Dp = size.corner,
     contentDescription: String? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
+    val height = size.height
     // Label strength (2026-08-30, Dylan): a chromed button's label reads at onSurface — the
     // same weight as the controls view's input legend and [MinputGroupButton]'s unselected
     // segments, which were already onSurface while these were the dimmer onSurfaceVariant.
@@ -159,7 +160,7 @@ fun MinputButton(
                     // glyph floating in an invisible target reads right, but fills a
                     // visible 24dp circle to bursting.
                     modifier = Modifier.size(
-                        if (bare) MinputIconButtonIconSize else MinputPillIconSize,
+                        if (bare) MinputIconButtonIconSize else size.iconSize,
                     ),
                     tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                 )
@@ -178,18 +179,18 @@ fun MinputButton(
                     // trailing side).
                     .padding(
                         start = if (leadingIcon != null) {
-                            MinputPillContentPadding - MinputPillIconSideBias
-                        } else MinputPillContentPadding,
+                            size.contentPadding - MinputPillIconSideBias
+                        } else size.contentPadding,
                         end = if (trailingIcon != null) {
-                            MinputPillContentPadding - MinputPillIconSideBias
-                        } else MinputPillContentPadding,
+                            size.contentPadding - MinputPillIconSideBias
+                        } else size.contentPadding,
                     ),
             ) {
                 if (leadingIcon != null) {
                     Icon(
                         leadingIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(MinputPillIconSize),
+                        modifier = Modifier.size(size.iconSize),
                         tint = leadingIconTint,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))
@@ -209,7 +210,7 @@ fun MinputButton(
                     Icon(
                         trailingIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(MinputPillIconSize),
+                        modifier = Modifier.size(size.iconSize),
                         tint = content,
                     )
                 }

@@ -136,7 +136,7 @@ import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputBoxStroke
-import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputScrollbarThickness
 import com.mappo.ui.minput.minputBevelBorder
@@ -493,7 +493,7 @@ private fun PressTypeDialog(
                     Icon(
                         Icons.Filled.Check,
                         contentDescription = "Current",
-                        modifier = Modifier.size(MinputPillIconSize),
+                        modifier = Modifier.size(MinputSize.Standard.iconSize),
                         tint = colors.icon,
                     )
                 }
@@ -1673,26 +1673,26 @@ private val EdgeScrollStep = 6.dp
 private val RowTileWidth = 88.dp
 
 /**
- * A row tile's height and the gaps around it, **in PHYSICAL pixels** — Dylan's own measurement
- * off the device (2026-09-23), converted at runtime exactly as the layouts drawer's width is.
- * A dp figure would have been his number divided by whatever density he was measuring at.
+ * The gap between a group's tiles, **in PHYSICAL pixels** — Dylan's own measurement off the
+ * device (2026-09-23), converted at runtime exactly as the layouts drawer's width is. It is the
+ * air between two buttons of one group, horizontally between tiles and vertically between rows
+ * alike.
  *
- * "42 high, stroke inclusive": the tile's bevel is an INNER stroke, so this is the whole thing.
- * The gap is the air between two buttons of one group, horizontally between tiles and
- * vertically between rows alike.
+ * The tile HEIGHT was measured the same way (42px, stroke inclusive) and has since become the
+ * library's [MinputSize.Small] variant (Dylan, 2026-10-05: the tiles ARE the small controls) —
+ * a dp value like every other control size, equal to those 42px at the test device's density.
  */
-private const val RowTileHeightPx = 42
 private const val RowTileGapPx = 6
 
-/** [RowTileHeightPx] in dp on this device. The row height of BOTH modes — see [rowTileLook]. */
-@Composable
-internal fun rowTileHeight(): Dp = with(LocalDensity.current) { RowTileHeightPx.toDp() }
+/** The row height of BOTH modes — the [MinputSize.Small] control height. See [rowTileLook]. */
+internal fun rowTileHeight(): Dp = MinputSize.Small.height
 
 /** [RowTileGapPx] in dp on this device: between tiles on a row, and between a group's rows. */
 @Composable
 internal fun rowTileGap(): Dp = with(LocalDensity.current) { RowTileGapPx.toDp() }
 
-/** A row tile's text inset. Tighter than the table's: less tile to inset into. */
+/** A row tile's text inset. Tighter than a Small button's [MinputSize.contentPadding]: a tile is
+ *  a fixed-width cell that centres its label, so this is only the ellipsis margin, not a frame. */
 private val RowTileContentPadding = 6.dp
 
 /** The "+" on a row tile, scaled to it the way [EmptyTilePlusSize] is to the table's. */

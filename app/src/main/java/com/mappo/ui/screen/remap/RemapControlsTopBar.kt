@@ -53,8 +53,10 @@ import com.mappo.ui.minput.MinputEdge
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
 import com.mappo.ui.minput.MinputIconButtonIconSize
-import com.mappo.ui.minput.MinputPillIconSize
+import com.mappo.ui.minput.MinputSize
+import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconButton
+import com.mappo.ui.minput.MinputDropdownArrowSize
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -188,26 +190,29 @@ private fun BarSlots(
  *
  * Two mounts, deliberately the SAME component (2026-09-28): the top bar's identity (ACTIVE
  * LAYOUT over the layout's name — toggles the layouts drawer) and the layouts drawer's own
- * header (APPLICATION over the application's name — toggles applications mode). The drawer's
- * header row sits level with the bar, on the same plane, so the two read as one strip with two
- * widgets on it; letting them drift apart would break that.
+ * header (the application's name alone, as the overline, with a dropdown arrow — toggles
+ * applications mode; 2026-10-05, Dylan: no "Application" label, and a smaller launcher icon
+ * matching the application rows). The drawer's header row sits level with the bar, on the
+ * same plane, so the two read as one strip with two widgets on it.
  *
  * Chrome-less by design — the bars carry no pills now — so the OPEN state is read off the text
  * and glyph going accent rather than off a highlight plate. [dropdownArrow] adds the standard
- * dropdown triangle at the end, flipping while [highlighted] (the exposed-dropdown
- * convention). The value is user-typed (or a launcher label), so it goes through
+ * dropdown triangle at the end, in the overline's colour, flipping while [highlighted] (the
+ * exposed-dropdown convention). Names are user-typed or launcher labels, so they go through
  * [NameableText] (never a bare `Text` in chrome).
  */
 @Composable
 internal fun BarStackButton(
     appPackage: String?,
     overline: String,
-    value: String,
+    /** The second line; null = the overline alone (then it is a NAME, and ellipsizes). */
+    value: String?,
     highlighted: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     dropdownArrow: Boolean = false,
     valueMaxWidth: Dp = IdentityNameMaxWidth,
+    iconSize: Dp = MinputBarWidgetIconSize,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val accent = MaterialTheme.colorScheme.primary
@@ -228,14 +233,14 @@ internal fun BarStackButton(
     ) {
         val icon = rememberAppIconPainter(appPackage)
         if (icon != null) {
-            AppIconImage(icon, size = MinputBarWidgetIconSize)
+            AppIconImage(icon, size = iconSize)
         } else {
             // No application in view (or no launcher icon for it): the generic apps glyph
             // keeps the widget's shape, so the stack beside it doesn't shift about.
             Icon(
                 Icons.Filled.Apps,
                 contentDescription = null,
-                modifier = Modifier.size(MinputBarWidgetIconSize),
+                modifier = Modifier.size(iconSize),
                 tint = overlineColor,
             )
         }
@@ -245,29 +250,41 @@ internal fun BarStackButton(
             // Never fill: the stack wraps its text, but gives way before the arrow does.
             modifier = Modifier.weight(1f, fill = false),
         ) {
-            Text(
-                text = overline.uppercase(),
-                style = minputOverlineTextStyle(),
-                color = overlineColor,
-                maxLines = 1,
-            )
-            NameableText(
-                text = value,
-                style = minputMiniTextStyle(),
-                color = nameColor,
-                maxWidth = valueMaxWidth,
-            )
+            if (value == null) {
+                NameableText(
+                    text = overline.uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = overlineColor,
+                    maxWidth = valueMaxWidth,
+                )
+            } else {
+                Text(
+                    text = overline.uppercase(),
+                    style = minputOverlineTextStyle(),
+                    color = overlineColor,
+                    maxLines = 1,
+                )
+                NameableText(
+                    text = value,
+                    style = minputMiniTextStyle(),
+                    color = nameColor,
+                    maxWidth = valueMaxWidth,
+                )
+            }
         }
         if (dropdownArrow) {
             val flip by animateFloatAsState(
                 targetValue = if (highlighted) 180f else 0f,
                 label = "dropdownArrow",
             )
-            Icon(
+            // Ink-measured, so the gap is the whole gap — the glyph brings no margin of its own.
+            Spacer(Modifier.width(MinputGlyphLabelGap))
+            MinputIcon(
                 Icons.Filled.ArrowDropDown,
                 contentDescription = null,
-                modifier = Modifier.size(MinputBarWidgetIconSize).rotate(flip),
-                tint = nameColor,
+                size = MinputDropdownArrowSize,
+                tint = overlineColor,
+                modifier = Modifier.rotate(flip),
             )
         }
     }
@@ -395,7 +412,7 @@ private enum class EditorKind(
  * the filled silhouette and the stroke mark do not read alike at one size.
  */
 private val EditorGlyphSizeSolid = MinputIconButtonIconSize + 1.dp
-private val EditorGlyphSizeStroke = MinputPillIconSize + 1.dp
+private val EditorGlyphSizeStroke = MinputSize.Standard.iconSize + 1.dp
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */
 private val SlotGap = 8.dp

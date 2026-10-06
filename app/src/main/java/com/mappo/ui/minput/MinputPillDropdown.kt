@@ -61,6 +61,8 @@ fun <T> MinputPillDropdown(
     elevated: Boolean = false,
     fixedWidth: Dp? = null,
     onClickLabel: String? = null,
+    /** The variant on the library's control scale — see [MinputSize]. */
+    size: MinputSize = MinputSize.Standard,
 ) {
     var open by remember { mutableStateOf(false) }
     val container = if (elevated) MinputElevatedContainer else minputBoxContainer()
@@ -73,10 +75,10 @@ fun <T> MinputPillDropdown(
         Surface(
             shape = RoundedCornerShape(50),
             color = container,
-            border = minputBevelBorder(container, MinputPillHeight / 2),
+            border = minputBevelBorder(container, size.corner),
             modifier = modifier
                 .minputInteractiveMotion(interaction)
-                .heightIn(min = MinputPillHeight)
+                .heightIn(min = size.height)
                 .then(
                     if (fixedWidth != null) Modifier.width(fixedWidth)
                     else Modifier.widthIn(min = MinputPillMinWidth),
@@ -95,15 +97,15 @@ fun <T> MinputPillDropdown(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.padding(
-                    start = MinputPillContentPadding - iconBias / 2,
-                    end = MinputPillContentPadding + iconBias / 2,
+                    start = size.contentPadding - iconBias / 2,
+                    end = size.contentPadding + iconBias / 2,
                 ),
             ) {
                 if (pillIcon != null) {
                     Icon(
                         pillIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(MinputPillIconSize),
+                        modifier = Modifier.size(size.iconSize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))

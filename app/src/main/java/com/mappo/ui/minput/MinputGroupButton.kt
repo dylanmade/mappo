@@ -91,11 +91,13 @@ fun <T> MinputGroupButton(
     enabled: Boolean = true,
     equalWidths: Boolean = false,
     container: Color = MinputElevatedContainer,
+    /** The variant on the library's control scale — see [MinputSize]. */
+    size: MinputSize = MinputSize.Standard,
 ) {
-    val outerCorner = MinputPillHeight / 2
+    val outerCorner = size.corner
     Row(
         modifier = modifier
-            .height(MinputPillHeight)
+            .height(size.height)
             .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(GroupSegmentGap),
     ) {
@@ -112,11 +114,11 @@ fun <T> MinputGroupButton(
             // arc (see [minputRoundEndBias]). An end segment of a group has exactly that shape.
             val startBias = minputRoundEndBias(
                 corner = if (i == 0) outerCorner else GroupInnerCorner,
-                height = MinputPillHeight,
+                height = size.height,
             )
             val endBias = minputRoundEndBias(
                 corner = if (i == lastRoundedIndex) outerCorner else GroupInnerCorner,
-                height = MinputPillHeight,
+                height = size.height,
             )
             val isSelected = option == selected
             val fill by animateColorAsState(
@@ -170,7 +172,7 @@ fun <T> MinputGroupButton(
                             if (label.isBlank() && icon != null) {
                                 Modifier.width(
                                     minputRoundEndWidth(
-                                        height = MinputPillHeight,
+                                        height = size.height,
                                         startCorner = if (i == 0) outerCorner else GroupInnerCorner,
                                         endCorner = if (i == lastRoundedIndex) {
                                             outerCorner
@@ -182,10 +184,10 @@ fun <T> MinputGroupButton(
                         .padding(
                             start = if (label.isBlank() && icon != null) {
                                 startBias
-                            } else MinputPillContentPadding + startBias,
+                            } else size.contentPadding + startBias,
                             end = if (label.isBlank() && icon != null) {
                                 endBias
-                            } else MinputPillContentPadding + endBias,
+                            } else size.contentPadding + endBias,
                         ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
@@ -200,7 +202,7 @@ fun <T> MinputGroupButton(
                             // size (Dylan, 2026-09-27 — the editor switch's gamepad needed a
                             // step up and its layers mark did not).
                             modifier = Modifier.size(
-                                optionIconSize?.invoke(option) ?: MinputPillIconSize,
+                                optionIconSize?.invoke(option) ?: size.iconSize,
                             ),
                             tint = content,
                         )

@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.Dp
  * [height] rests at [MinputPodHeight] — a pill control plus [MinputPodPadding] above and
  * below — but is a FLOOR, not a cap: taller content (a two-line stack, a whole card list)
  * grows the plate. Pass [MinputPodTallHeight] for the one-step-up scale (the home frame's
- * Mappo pod), matching [MinputButton]'s `height`.
+ * Mappo pod), matching a [MinputSize.Large] button's height.
  *
  * **[corner] is an absolute radius, never a percentage** (2026-08-30): the default is exactly
  * half [height], so a pod at either pill scale is a true pill — but a pod GROWN by its

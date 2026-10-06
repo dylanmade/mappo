@@ -1246,9 +1246,10 @@ class RemapControlsScreenTest {
         composeRule.waitForIdle()
 
         // Applications mode: cards are name-only (2026-08-26: the active-layout
-        // subtitle retired). "Alpha Game" appears twice — its app row AND the
-        // application dropdown itself, which still shows the viewed application.
-        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(2)
+        // subtitle retired). The application dropdown still shows the viewed application —
+        // as its overline, so uppercased — beside the app row itself.
+        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(1)
+        composeRule.onNodeWithText("ALPHA GAME", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
 
         // Picking the unbound app repoints the VIEWING context (no activation) and

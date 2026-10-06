@@ -42,7 +42,7 @@ import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputPanelDividerContentGap
-import com.mappo.ui.minput.MinputPillContentPadding
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputPillDropdown
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
@@ -289,7 +289,7 @@ private fun LayoutTileRow(
             value = "You",
             modifier = Modifier.widthIn(max = TileAuthorMaxWidth),
         )
-        Spacer(Modifier.width(MinputPillContentPadding))
+        Spacer(Modifier.width(MinputSize.Standard.contentPadding))
         TileMetaColumn(label = "Likes", value = layoutLikes(layout).toString())
     }
 }

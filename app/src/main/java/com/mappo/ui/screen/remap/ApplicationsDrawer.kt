@@ -28,6 +28,7 @@ import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.minputMicroTextStyle
+import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
@@ -164,10 +165,10 @@ private fun ApplicationCard(
         )
         if (installed) {
             Spacer(Modifier.width(MinputGlyphLabelGap))
-            Icon(
+            MinputIcon(
                 Icons.Filled.Download,
                 contentDescription = "Installed",
-                modifier = Modifier.size(InstalledIconSize),
+                size = InstalledIconSize,
                 tint = secondaryContent,
             )
         }
@@ -193,7 +194,7 @@ private const val AppCardKeyPrefix = "application:"
 
 /** Launcher-icon edge on an application card — sized to the single name line
  *  (2026-08-26: the active-layout subtitle retired; name-only cards). */
-private val AppCardIconSize = 16.dp
+internal val AppCardIconSize = 16.dp
 
 /** Gap between the launcher icon and the card's text stack. */
 private val AppCardIconTextGap = 6.dp

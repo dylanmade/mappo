@@ -74,9 +74,8 @@ import com.mappo.ui.minput.MinputPanelDividerInset
 import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
 import com.mappo.ui.minput.MinputButton
-import com.mappo.ui.minput.MinputPillContentPadding
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputPillDropdown
-import com.mappo.ui.minput.MinputPillIconSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
@@ -245,14 +244,14 @@ internal fun PanelHeader(
             Icon(
                 painterResource(glyphRes),
                 contentDescription = null,
-                modifier = Modifier.size(MinputPillIconSize),
+                modifier = Modifier.size(MinputSize.Standard.iconSize),
                 tint = Color.Unspecified,
             )
         } else if (icon != null) {
             Icon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(MinputPillIconSize),
+                modifier = Modifier.size(MinputSize.Standard.iconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -310,7 +309,7 @@ internal fun PanelRow(
             .clip(shape)
             .then(if (active) Modifier.background(MinputElevatedContainer) else Modifier)
             .clickable(onClick = onClick)
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         content()
     }
@@ -330,7 +329,7 @@ internal fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
             .height(PanelPowerRowHeight)
             .clip(RoundedCornerShape(6.dp))
             .clickable { onPowerChange(!powerOn) }
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         // Deliberate fixed LED green — a power LED is green regardless of theme.
         val led by animateColorAsState(
@@ -385,7 +384,7 @@ internal fun MoveCommitRow(current: MoveCommitGesture, onPick: (MoveCommitGestur
         modifier = Modifier
             .fillMaxWidth()
             .height(PanelPowerRowHeight)
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         Icon(
             Icons.Filled.OpenWith,
@@ -424,7 +423,7 @@ internal fun TileRevealRow(current: TileReveal, onPick: (TileReveal) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(PanelPowerRowHeight)
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         Icon(
             Icons.Filled.GridView,
@@ -461,7 +460,7 @@ internal fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(PanelPowerRowHeight)
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         Icon(
             Icons.Filled.FormatSize,
@@ -501,7 +500,7 @@ internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) 
             .height(PanelPowerRowHeight)
             .clip(RoundedCornerShape(6.dp))
             .clickable { onEnabledChange(!enabled) }
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         Icon(
             Lucide.Type,
@@ -548,7 +547,7 @@ internal fun AutoDetectRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit)
             .height(PanelPowerRowHeight)
             .clip(RoundedCornerShape(6.dp))
             .clickable { onEnabledChange(!enabled) }
-            .padding(horizontal = MinputPillContentPadding),
+            .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
         Icon(
             // Radar — the app-watching sweep. (The bar form carried no glyph at all, just an

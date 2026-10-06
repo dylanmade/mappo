@@ -403,21 +403,42 @@ const val MinputMorphExpandMillis = 300
 const val MinputMorphCollapseMillis = 240
 val MinputMorphCorner = 8.dp
 
-/** Height of the pill controls (buttons, dropdowns). */
-val MinputPillHeight = 24.dp
+/**
+ * **The control size variants** (Dylan, 2026-10-05) — ONE scale for every minput control that
+ * has a pill frame: [MinputButton] (labelled and icon-only), [MinputGroupButton],
+ * [MinputPillDropdown], [MinputTextField] and its inline well, and the remap view's command
+ * tiles. Pass the variant; never set a control's height, inset or glyph size by hand.
+ *
+ *  - [Small] — the command tiles' scale (the remap view's rows and edit-mode tiles): dense
+ *    content controls that come in grids.
+ *  - [Standard] — the default; the scale of the top bar's layout-set switch and editor switch,
+ *    the drawer's search field, and every ordinary button.
+ *  - [Large] — one step up, for a control that earns extra presence (no current call site;
+ *    the home frame's Mappo button used it until the bars went chrome-less).
+ *
+ * Each variant carries its [height] (the corner of a pill is always half of it — [corner]),
+ * its horizontal [contentPadding] (between the frame and its label/glyph — ONE value per
+ * variant, so a button and a field beside it measure alike), and its [iconSize] (a leading or
+ * trailing glyph's box; also an icon-only chromed button's glyph). The text style is the mini
+ * style at every size — the variants scale the frame around the text, not the text.
+ *
+ * Small's height is the tile height Dylan measured off the device on 2026-09-23 (42 physical
+ * px at the test device's density of 2.0) — the tiles used to convert those pixels at
+ * runtime; as a variant it is a dp value like the others.
+ */
+enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: Dp) {
+    Small(height = 21.dp, contentPadding = 10.dp, iconSize = 11.dp),
+    Standard(height = 24.dp, contentPadding = 12.dp, iconSize = 13.dp),
+    Large(height = 30.dp, contentPadding = 12.dp, iconSize = 13.dp);
+
+    /** A pill at this scale: half the height. */
+    val corner: Dp get() = height / 2
+}
 
 /** Width floor for pill dropdowns so short values ("None") don't collapse into a tiny chip. */
 val MinputPillMinWidth = 62.dp
 
-/** Icon edge inside the pills. */
-val MinputPillIconSize = 13.dp
 
-/** Horizontal content inset shared by every pill control (buttons, dropdowns, label fields).
- *  Widened 10dp → 12dp (Dylan, 2026-08-29): the family read pinched, labels crowding their
- *  own chrome. Deliberately ONE value across the family — a button and the dropdown beside
- *  it must measure alike. Icon-ONLY buttons never consult it (they pin to a perfect
- *  [MinputPillHeight] circle), so they are unaffected. */
-val MinputPillContentPadding = 12.dp
 
 /** Gap between a leading glyph and its label (pills, headers, captions). */
 val MinputGlyphLabelGap = 5.dp
@@ -490,8 +511,9 @@ val MinputSwitchTallWidth = 32.dp
 /** How far the on-handle mark sits inside the thumb. */
 val MinputSwitchIconInset = 2.dp
 
-/** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows). */
-val MinputIconButtonSize = 24.dp
+/** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows) —
+ *  an icon-only button is a [MinputSize.Standard] square. */
+val MinputIconButtonSize = MinputSize.Standard.height
 
 /** Icon edge inside [MinputIconButton]. */
 val MinputIconButtonIconSize = 16.dp
@@ -546,7 +568,7 @@ val MinputPodPadding = 4.dp
 
 /** Resting height of a pod: a pill control plus [MinputPodPadding] above and below. A floor,
  *  not a cap — taller content grows the plate. */
-val MinputPodHeight = MinputPillHeight + MinputPodPadding * 2
+val MinputPodHeight = MinputSize.Standard.height + MinputPodPadding * 2
 
 /** Gap between controls riding the SAME pod. */
 val MinputPodItemGap = 4.dp
@@ -554,14 +576,8 @@ val MinputPodItemGap = 4.dp
 /** Gap between adjacent pods. */
 val MinputPodGap = 6.dp
 
-/** The TALL pod/button pair (2026-08-30): one step up from the resting scale, for chrome that
- *  should carry more presence than a bar pill. Pass these as `height` to [MinputPod] /
- *  [MinputButton]; both derive their pill corner from it. Its call site — the home frame's
- *  Mappo button — gave it up on 2026-09-26 when the bars became filled strips and their
- *  buttons went chrome-less ([MinputBar]); the scale is kept for the next control that earns
- *  extra presence. */
-val MinputPillTallHeight = 30.dp
-val MinputPodTallHeight = MinputPillTallHeight + MinputPodPadding * 2
+/** The pod for [MinputSize.Large] contents — one step up from the resting scale. */
+val MinputPodTallHeight = MinputSize.Large.height + MinputPodPadding * 2
 
 /** Corner radius for a pod acting as a PLATE rather than a capsule — a large one holding a
  *  list or a whole content band (the layouts drawer's list plate; the controls view's input

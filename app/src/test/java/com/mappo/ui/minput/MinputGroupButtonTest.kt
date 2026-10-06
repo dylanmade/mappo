@@ -91,7 +91,7 @@ class MinputGroupButtonTest {
         // of pill height plus its own arc's allowance.
         val group = composeRule.onNodeWithTag("switch", useUnmergedTree = true)
             .fetchSemanticsNode().size.width
-        val pillPx = with(composeRule.density) { MinputPillHeight.roundToPx() }
+        val pillPx = with(composeRule.density) { MinputSize.Standard.height.roundToPx() }
         assert(group > pillPx * 2) { "icon-only segments should be wider than bare squares: $group" }
     }
 

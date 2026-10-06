@@ -35,7 +35,7 @@ import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputCheckbox
 import com.mappo.ui.minput.MinputDialog
 import com.mappo.ui.minput.MinputGlyphLabelGap
-import com.mappo.ui.minput.MinputPillHeight
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputSwitch
 import com.mappo.ui.minput.MinputSwitchTallHeight
 import com.mappo.ui.minput.MinputSwitchTallWidth
@@ -119,7 +119,7 @@ internal fun CommandLabelDialog(
             // The name itself, not a placeholder and not in a well: there is nothing to type
             // here, and dressing it as an empty field would say there is.
             Box(
-                modifier = Modifier.fillMaxWidth().heightIn(min = MinputPillHeight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = MinputSize.Standard.height),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 AutoCommandName(outputs = outputs, config = config, icons = icons, initials = initials)

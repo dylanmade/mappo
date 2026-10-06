@@ -84,10 +84,10 @@ import com.mappo.ui.mappoKeyboardOptions
  *   ([minputInputFieldOutline]), rendered like the button outlines — an inner stroke of
  *   [MinputBoxStroke] width — so outlined and plain primitives measure identically. The
  *   fill stays flat (an outline is not a bevel; a well is still not a button).
- * @param bevel EXPERIMENTAL (2026-08-27, Dylan): the button family's full bevel border —
- *   outline plus top/bottom highlights ([minputBevelBorder]) — on the well, for judging
- *   whether input fields join the raised look. Wins over [outlined]; while the inline
- *   well is focused, the focus ring replaces it.
+ *
+ * No bevel option: a bevel-on-fields trial ran on the layouts drawer's search field from
+ * 2026-08-27 and was dropped 2026-10-06 (Dylan) — its light ring blended into the plane
+ * behind and made the field read a size smaller than the buttons beside it. A well is flat.
  */
 @Composable
 fun MinputTextField(
@@ -102,7 +102,9 @@ fun MinputTextField(
     inlineEdit: Boolean = false,
     light: Boolean = false,
     outlined: Boolean = false,
-    bevel: Boolean = false,
+    /** The variant on the library's control scale — see [MinputSize]. A field takes the same
+     *  variants as the buttons, so a field and a button beside it measure alike. */
+    size: MinputSize = MinputSize.Standard,
 ) {
     var editing by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
@@ -119,7 +121,7 @@ fun MinputTextField(
             clearable = clearable,
             container = container,
             outlined = outlined,
-            bevel = bevel,
+            size = size,
             onDone = { editing = false },
             modifier = modifier,
         )
@@ -129,14 +131,10 @@ fun MinputTextField(
     Surface(
         shape = shape,
         color = container,
-        border = when {
-            bevel -> minputBevelBorder(container, MinputPillHeight / 2)
-            outlined -> BorderStroke(MinputBoxStroke, minputInputFieldOutline(container))
-            else -> null
-        },
+        border = if (outlined) BorderStroke(MinputBoxStroke, minputInputFieldOutline(container)) else null,
         modifier = modifier
             .minputInteractiveMotion(interaction)
-            .height(MinputPillHeight)
+            .height(size.height)
             .then(
                 if (enabled) {
                     Modifier.clip(shape).clickable(
@@ -150,13 +148,13 @@ fun MinputTextField(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = MinputPillContentPadding),
+            modifier = Modifier.padding(horizontal = size.contentPadding),
         ) {
             if (leadingIcon != null) {
                 Icon(
                     leadingIcon,
                     contentDescription = null,
-                    modifier = Modifier.size(MinputPillIconSize),
+                    modifier = Modifier.size(size.iconSize),
                     // The glyph tracks the text slot's dimming: matched to the
                     // placeholder while empty, secondary once the field holds text —
                     // icon and placeholder read as one assembly (a device report had
@@ -189,7 +187,7 @@ fun MinputTextField(
                     contentDescription = "Clear text",
                     tint = colors.onSurfaceVariant,
                     modifier = Modifier
-                        .size(MinputPillIconSize)
+                        .size(size.iconSize)
                         .clip(CircleShape)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -229,7 +227,7 @@ private fun MinputTextFieldInlineWell(
     clearable: Boolean,
     container: Color,
     outlined: Boolean,
-    bevel: Boolean,
+    size: MinputSize,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -252,7 +250,7 @@ private fun MinputTextFieldInlineWell(
         } else null,
         container = container,
         outlined = outlined,
-        bevel = bevel,
+        size = size,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         interactionSource = interaction,
@@ -345,9 +343,6 @@ fun MinputTextEditDialog(
  *   inline-edit swap keeps the resting field's coloration.
  * @param outlined mirrors the display pill's outline: the same fill-derived ring, sharing
  *   the focus ring's border slot (the focus color simply wins while focused).
- * @param bevel mirrors the display pill's experimental bevel border. A brush can't ride
- *   the animated focus-ring color, so the bevel renders on the Surface border slot at
- *   rest and hands over to the (animated) focus ring while focused.
  */
 @Composable
 internal fun MinputTextWell(
@@ -360,16 +355,16 @@ internal fun MinputTextWell(
     onClear: (() -> Unit)? = null,
     container: Color = minputInputFieldContainer(),
     outlined: Boolean = false,
-    bevel: Boolean = false,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     focusRequester: FocusRequester? = null,
+    size: MinputSize = MinputSize.Standard,
 ) {
     val colors = MaterialTheme.colorScheme
     val focused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(50)
-    val restingRing = if (outlined && !bevel) minputInputFieldOutline(container) else Color.Transparent
+    val restingRing = if (outlined) minputInputFieldOutline(container) else Color.Transparent
     // The minput translation of M3's focused-border state; doubles as the outline's slot so
     // an outlined well never wears two strokes.
     val focusRing by animateColorAsState(
@@ -381,13 +376,8 @@ internal fun MinputTextWell(
     Surface(
         shape = shape,
         color = container,
-        // The experimental bevel rests here (the modifier ring can't hold a brush) and
-        // yields to the focus ring the moment focus lands.
-        border = if (bevel && !(focused && enabled)) {
-            minputBevelBorder(container, MinputPillHeight / 2)
-        } else null,
         modifier = modifier
-            .height(MinputPillHeight)
+            .height(size.height)
             .border(MinputBoxStroke, focusRing, shape)
             .then(if (enabled) Modifier else Modifier.alpha(0.6f)),
     ) {
@@ -412,13 +402,13 @@ internal fun MinputTextWell(
             decorationBox = { innerTextField ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = MinputPillContentPadding),
+                    modifier = Modifier.padding(horizontal = size.contentPadding),
                 ) {
                     if (leadingIcon != null) {
                         Icon(
                             leadingIcon,
                             contentDescription = null,
-                            modifier = Modifier.size(MinputPillIconSize),
+                            modifier = Modifier.size(size.iconSize),
                             // Matches the display pill: the glyph dims with the
                             // placeholder so the empty field reads as one assembly.
                             tint = if (value.isEmpty()) {
@@ -447,7 +437,7 @@ internal fun MinputTextWell(
                             contentDescription = "Clear text",
                             tint = colors.onSurfaceVariant,
                             modifier = Modifier
-                                .size(MinputPillIconSize)
+                                .size(size.iconSize)
                                 .clip(CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },

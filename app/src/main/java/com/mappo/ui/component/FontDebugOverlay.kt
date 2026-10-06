@@ -56,8 +56,7 @@ import com.composables.icons.lucide.Star
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputMorphCorner
 import com.mappo.ui.minput.MinputButton
-import com.mappo.ui.minput.MinputPillContentPadding
-import com.mappo.ui.minput.MinputPillHeight
+import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputBevelBorder
 import com.mappo.ui.minput.minputBoxContainer
@@ -310,18 +309,18 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .minputInteractiveMotion(interaction)
-                .softDropShadow(cornerRadius = MinputPillHeight / 2, offsetY = 0.dp)
+                .softDropShadow(cornerRadius = MinputSize.Standard.corner, offsetY = 0.dp)
                 .clip(RoundedCornerShape(50))
                 .background(chipContainer)
-                .border(minputBevelBorder(chipContainer, MinputPillHeight / 2), RoundedCornerShape(50))
+                .border(minputBevelBorder(chipContainer, MinputSize.Standard.corner), RoundedCornerShape(50))
                 .clickable(
                     interactionSource = interaction,
                     indication = minputIndication(),
                     onClickLabel = if (expanded) "Collapse font debug" else "Expand font debug",
                     onClick = { expanded = !expanded },
                 )
-                .height(MinputPillHeight)
-                .padding(horizontal = MinputPillContentPadding),
+                .height(MinputSize.Standard.height)
+                .padding(horizontal = MinputSize.Standard.contentPadding),
         ) {
             Text(
                 text = "Aa",
