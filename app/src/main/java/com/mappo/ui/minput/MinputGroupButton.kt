@@ -98,7 +98,7 @@ fun <T> MinputGroupButton(
         modifier = modifier
             .height(size.height)
             .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(GroupSegmentGap),
+        horizontalArrangement = Arrangement.spacedBy(MinputSegmentGap),
     ) {
         val lastRoundedIndex = options.lastIndex
         options.forEachIndexed { i, option ->
@@ -226,9 +226,6 @@ fun <T> MinputGroupButton(
         }
     }
 }
-
-/** Gap between segments — the M3 button-group side of this component's M2/M3 mix. */
-private val GroupSegmentGap = 4.dp
 
 /** Segment inner corners: perfectly square (outer ends stay full pill) — the M2 side. */
 private val GroupInnerCorner = 2.dp

@@ -188,6 +188,43 @@ private fun cropToInk(source: ImageVector): ImageVector? {
     return builder.build()
 }
 
+private val mirrorCache = HashMap<Triple<ImageVector, Boolean, Boolean>, ImageVector>()
+
+/**
+ * The same vector mirrored [horizontal]ly and/or [vertical]ly about its viewport's centre — for
+ * a glyph whose orientation carries meaning (the bar-position mark, one corner glyph standing in
+ * for all four). Still a pure vector: a scale group around the original drawing, which
+ * [MinputIcon]'s ink measurement flattens like any other group transform. Cached, so a mirrored
+ * glyph keeps one identity across recompositions (and one entry in the ink cache).
+ */
+fun ImageVector.minputMirrored(horizontal: Boolean, vertical: Boolean): ImageVector {
+    if (!horizontal && !vertical) return this
+    return synchronized(mirrorCache) {
+        mirrorCache.getOrPut(Triple(this, horizontal, vertical)) {
+            val builder = ImageVector.Builder(
+                name = name + ":mirror" + (if (horizontal) "H" else "") + (if (vertical) "V" else ""),
+                defaultWidth = defaultWidth,
+                defaultHeight = defaultHeight,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                tintColor = tintColor,
+                tintBlendMode = tintBlendMode,
+                autoMirror = autoMirror,
+            )
+            builder.addGroup(
+                name = "mirror",
+                pivotX = viewportWidth / 2f,
+                pivotY = viewportHeight / 2f,
+                scaleX = if (horizontal) -1f else 1f,
+                scaleY = if (vertical) -1f else 1f,
+            )
+            copyGroup(builder, root)
+            builder.clearGroup()
+            builder.build()
+        }
+    }
+}
+
 /** Copy [group] (its own transform included) into [builder] — the paths stay exactly as authored. */
 private fun copyGroup(builder: ImageVector.Builder, group: VectorGroup) {
     builder.addGroup(

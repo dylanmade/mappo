@@ -32,10 +32,9 @@ import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.minputMiniTextStyle
 
 /**
- * The applications list (2026-08-27) — the layouts drawer's APPLICATIONS MODE content.
- * (The standalone right-side applications drawer this file used to host is retired: the
- * drawer's application dropdown now radiates this list into the same pane —
- * see [LayoutsDrawerPane].)
+ * The applications list (2026-08-27) — the hierarchy bar's Application crumb drops it down
+ * ([RemapHierarchyBar], 2026-10-07; before that it was the layouts drawer's applications mode,
+ * and before THAT a right-side drawer of its own).
  *
  * Focusing (d-pad) or tapping an application card previews that application's ACTIVE
  * layout in the controls view (via [onPreviewApplication] — the caller resolves the
@@ -48,6 +47,9 @@ import com.mappo.ui.minput.minputMiniTextStyle
  * Tapping a card SELECTS the application as the viewing context — a preview-equivalent
  * move (no activation, no auto-detection change); the drawer transitions back to layouts
  * mode scoped to it.
+ *
+ * (Since 2026-10-07 tapping commits the application as the viewing context and closes the
+ * panel; the Layout crumb then lists its layouts.)
  */
 @Composable
 internal fun ApplicationsList(
@@ -66,7 +68,7 @@ internal fun ApplicationsList(
     val community = emptyList<InstalledApp>()
 
     // Preview triggers are DELIBERATE only (2026-08-26): card focus or tap —
-    // scroll-position-driven preview retired (see the layouts drawer's note).
+    // scroll-position-driven preview retired (see [LayoutsList]'s note).
     val listState = rememberLazyListState()
 
     LazyColumn(

@@ -474,6 +474,10 @@ val MinputPillMinWidth = 62.dp
 
 
 
+/** Gap between the segments of a grouped control — the M3 button-group gap, shared by
+ *  [MinputGroupButton] and [MinputBreadcrumbSegment] rows so the two families space alike. */
+val MinputSegmentGap = 4.dp
+
 /** Gap between a leading glyph and its label (pills, headers, captions). */
 val MinputGlyphLabelGap = 5.dp
 

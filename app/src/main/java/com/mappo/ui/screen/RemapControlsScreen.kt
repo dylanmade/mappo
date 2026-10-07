@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,13 +38,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,6 +77,8 @@ import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputDialog
+import com.mappo.ui.minput.MinputBarEdgePadding
+import com.mappo.ui.minput.MinputBarHeight
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputModal
 import com.mappo.ui.minput.MinputMorphCorner
@@ -90,14 +91,17 @@ import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.remap.AddLayoutModalContent
 import com.mappo.ui.screen.remap.AddLayoutModalHeight
-import com.mappo.ui.screen.remap.LayoutsDrawerPane
+import com.mappo.ui.screen.remap.EditorKind
+import com.mappo.ui.screen.remap.HierarchyCrumb
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
 import com.mappo.ui.screen.remap.RemapOptionEntry
 import com.mappo.ui.screen.remap.RemapPanel
 import com.mappo.ui.screen.remap.RemapPanelOverlay
 import com.mappo.ui.screen.remap.RemapSections
 import com.mappo.ui.screen.remap.RemapSimpleView
-import com.mappo.ui.screen.remap.RemapControlsTopBar
+import com.mappo.ui.screen.remap.RemapHierarchyBar
+import com.mappo.data.settings.BarPin
+import com.mappo.data.settings.BarPinSettings
 import com.mappo.ui.screen.remap.settings.SourceModeSettingsSchema
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -266,6 +270,9 @@ fun RemapControlsScreen(
     // ── Active application (2026-08-26: first-class, layout-independent — an app with
     // no layouts can be the current application, its home = the no-layout state) ───
     activeAppPackage: String? = null,
+    // ── The hierarchy bar's pinned spot (2026-10-07; global, see BarPinSettings) ──
+    barPin: BarPin = BarPinSettings.Default,
+    onBarPinChange: (BarPin) -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -300,14 +307,16 @@ fun RemapControlsScreen(
     // content resets on close by design (see AddLayoutModalContent).
     var addLayoutOpen by remember { mutableStateOf(false) }
     val addModalCloseFocus = remember { FocusRequester() }
-    // The layouts drawer (the bar's corner button). Survives the sub-editor round-trips.
-    // (2026-08-27: the right-side applications drawer retired — application selection is
-    // the layouts drawer's APPLICATIONS MODE, see LayoutsDrawerPane.)
-    var layoutsDrawerOpen by rememberSaveable { mutableStateOf(false) }
-    // The application the user is browsing via the drawer's applications mode —
-    // overrides the viewed layout's own application for the drawer's Applications
-    // button, the layouts scope, and new-layout association. Cleared when the drawer
-    // finishes closing.
+    // Which of the hierarchy bar's crumbs has its dropdown open (2026-10-07: the bar replaced
+    // the layouts drawer, its applications mode, the set switch and the editor switch). Plain
+    // remember — a dropdown is a popup window, and nothing should reopen one after a
+    // navigation round-trip.
+    var openCrumb by remember { mutableStateOf<HierarchyCrumb?>(null) }
+    // The application chosen in the bar's Application crumb — overrides the viewed layout's own
+    // application for the bar's crumbs, the Layout crumb's list, and new-layout association.
+    // Unlike the drawer's browsing context it PERSISTS once committed (a tap on an application):
+    // the hierarchy is application › layout, so picking one has to hold while its layouts are
+    // chosen in the next crumb. Cleared when a layout is activated.
     var viewingAppOverride by rememberSaveable { mutableStateOf<String?>(null) }
     // Home (viewing the active layout) shows the ACTIVE APPLICATION — which may have no
     // layouts at all; a previewed layout shows its own parent application.
@@ -334,20 +343,6 @@ fun RemapControlsScreen(
     val effectiveAppLabel = installedApps
         .firstOrNull { it.packageName == effectiveAppPackage }?.label
         ?: effectiveAppPackage
-    // Revert fires when the drawer's close animation completes (the guard covers a
-    // reopen racing the animation): the viewing context returns to the active
-    // application — which also resets the drawer's Applications button for next open.
-    val onDrawerFullyClosed = {
-        if (!layoutsDrawerOpen) {
-            viewingAppOverride = null
-            onDrawersClosed()
-        }
-    }
-    // Back dismisses the drawer whole — apps mode and all (registered after the screen's
-    // base BackHandler, before the group editor/panels, which compose later and win).
-    BackHandler(enabled = layoutsDrawerOpen) {
-        layoutsDrawerOpen = false
-    }
     // The device app list loads at entry — the bar's application widget needs labels
     // (and the applications drawer its cards) from the first frame.
     LaunchedEffect(Unit) { onLoadInstalledApps() }
@@ -387,6 +382,45 @@ fun RemapControlsScreen(
             ?: cfg.activeActionSet
     }
     val viewingLayer = viewingSet?.layers?.firstOrNull { it.layer.id == viewingLayerId }
+
+    // ── The hierarchy bar's open / dismiss / commit ──────────────────────────────────────────
+    // A crumb's rows PREVIEW on focus (the controls view behind follows the d-pad), so opening
+    // one snapshots the viewing context, and closing it WITHOUT a choice (back, outside tap,
+    // the crumb again, gamepad B) puts the snapshot back. A tap COMMITS: the panel closes and
+    // the preview stays. The same deal the drawer offered, scoped to one crumb at a time.
+    var crumbSnapshot by remember { mutableStateOf<CrumbSnapshot?>(null) }
+    val commitCrumb = {
+        openCrumb = null
+        crumbSnapshot = null
+    }
+    val dismissCrumb = {
+        crumbSnapshot?.let { snap ->
+            viewingAppOverride = snap.appOverride
+            when {
+                snap.previewLayoutId != viewedLayoutId || snap.followsActive != isActiveLayout -> {
+                    // null = back to following the active layout.
+                    if (snap.followsActive) onDrawersClosed()
+                    else snap.previewLayoutId?.let(onPreviewLayout)
+                }
+            }
+            if (snap.setId != null && snap.setId != viewingSet?.actionSet?.id) {
+                onSelectActionSet(snap.setId)
+                onSelectLayer(null)
+            }
+        }
+        commitCrumb()
+    }
+    val openCrumbAt: (HierarchyCrumb) -> Unit = { crumb ->
+        // Switching crumbs: the one being left closes WITHOUT a choice.
+        if (openCrumb != null) dismissCrumb()
+        crumbSnapshot = CrumbSnapshot(
+            appOverride = viewingAppOverride,
+            previewLayoutId = viewedLayoutId,
+            followsActive = isActiveLayout,
+            setId = viewingSet?.actionSet?.id,
+        )
+        openCrumb = crumb
+    }
 
     // Inline editor: which command (Binding) is awaiting a picker result. Survives the
     // full-screen picker round-trip.
@@ -487,10 +521,6 @@ fun RemapControlsScreen(
                             // navigating away underneath it.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> close panel")
                             openPanel = null
-                        } else if (layoutsDrawerOpen) {
-                            // Mirrors back: one press dismisses the drawer whole.
-                            Log.d(REMAP_SCREEN_TAG, "key: Select -> close drawer")
-                            layoutsDrawerOpen = false
                         } else {
                             // "Leave Mappo" on the home.
                             Log.d(REMAP_SCREEN_TAG, "key: Select -> back")
@@ -514,15 +544,80 @@ fun RemapControlsScreen(
                 }
             },
     ) {
-        // The layouts drawer is the frame's LEFT EDGE (2026-09-28): it runs from the top of the
-        // screen down to the frame's bottom bar and PUSHES the top bar and the controls content
-        // together (its Row neighbour) rather than opening under the bar. The bottom bar,
-        // outside this screen, keeps its full width — the Mappo button stays in its corner.
-        Row(
+        // The hierarchy bar (2026-10-07) — application › layout › set › buttons, plus the pin
+        // button — floating in its slot at the pinned edge rather than banding across it: a
+        // compact group on the content's own plane, aligned start / middle / end. The slot is
+        // the old bar's height, so the controls view below keeps the room it had.
+        val hierarchyBar: @Composable () -> Unit = {
+            Box(
+                contentAlignment = when (barPin.horizontal) {
+                    BarPin.Horizontal.START -> Alignment.CenterStart
+                    BarPin.Horizontal.CENTER -> Alignment.Center
+                    BarPin.Horizontal.END -> Alignment.CenterEnd
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(MinputBarHeight)
+                    .padding(horizontal = MinputBarEdgePadding),
+            ) {
+                RemapHierarchyBar(
+                    openCrumb = openCrumb,
+                    onOpenCrumb = openCrumbAt,
+                    onDismissCrumb = dismissCrumb,
+                    onCommitCrumb = commitCrumb,
+                    appPackage = effectiveAppPackage,
+                    appLabel = effectiveAppLabel,
+                    apps = installedApps,
+                    activeAppPackage = detectedAppPackage,
+                    // Focus-preview and tap-select are VIEWING moves only (2026-08-27): they
+                    // repoint the browsing context (and the controls view behind), never the
+                    // active application — auto detection only turns off when a non-active
+                    // app's LAYOUT is actually activated (requestActivate above).
+                    onPreviewApplication = { pkg ->
+                        viewingAppOverride = pkg
+                        onPreviewApplication(pkg)
+                    },
+                    // The layout being viewed; an application with no layout reads "None" —
+                    // not the stale name of another app's layout (2026-08-26 audit).
+                    layoutTitle = if (showNoLayoutState) "None" else layoutName ?: "Layout",
+                    previewing = !isActiveLayout && !showNoLayoutState,
+                    layouts = layouts,
+                    activeLayoutId = activeLayoutId,
+                    onPreviewLayout = onPreviewLayout,
+                    onActivateLayout = { layout ->
+                        commitCrumb()
+                        requestActivate(layout.packageName) {
+                            onActivateLayoutCard(layout)
+                            // The activated layout IS the active one now: back to following it.
+                            viewingAppOverride = null
+                            onDrawersClosed()
+                        }
+                    },
+                    onNewLayout = {
+                        commitCrumb()
+                        addLayoutOpen = true
+                    },
+                    config = config,
+                    viewingSet = viewingSet,
+                    onSelectSet = { id ->
+                        onSelectActionSet(id)
+                        onSelectLayer(null)
+                    },
+                    onAddSet = { dialog = ActionSetDialogState.Add },
+                    // This screen IS the physical editor; the virtual one is the overlay editor,
+                    // its own activity over the game.
+                    editor = EditorKind.PHYSICAL,
+                    onSelectEditor = { kind -> if (kind == EditorKind.VIRTUAL) onEditOverlay() },
+                    pin = barPin,
+                    onPinChange = onBarPinChange,
+                )
+            }
+        }
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 // While a panel is up it behaves modally: directional focus must not
-                // wander into the screen underneath it (bar, drawer, and content alike)
+                // wander into the screen underneath it (bar and content alike)
                 // — refuse entry into this whole subtree (the editor's containment
                 // pattern). Gated on INTENT so the block lifts the moment a close starts
                 // and the summoning pill can take the return focus.
@@ -534,67 +629,14 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
         ) {
-            LayoutsDrawerPane(
-                open = layoutsDrawerOpen,
-                appPackage = effectiveAppPackage,
-                apps = installedApps,
-                activeAppPackage = detectedAppPackage,
-                layouts = layouts,
-                activeLayoutId = activeLayoutId,
-                onPreviewLayout = onPreviewLayout,
-                onActivateLayout = { layout ->
-                    requestActivate(layout.packageName) { onActivateLayoutCard(layout) }
-                },
-                onNewLayout = { addLayoutOpen = true },
-                // Both focus-preview and tap-select in applications mode are VIEWING
-                // moves only (2026-08-27): they repoint the browsing context (and the
-                // controls view behind), never the active application — auto
-                // detection only turns off when a non-active app's LAYOUT is
-                // actually activated (requestActivate above).
-                onPreviewApplication = { pkg ->
-                    viewingAppOverride = pkg
-                    onPreviewApplication(pkg)
-                },
-                onSelectApplication = { app ->
-                    viewingAppOverride = app.packageName
-                    onPreviewApplication(app.packageName)
-                },
-                onFullyClosed = onDrawerFullyClosed,
-            )
             Scaffold(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                // The view sits on the LOWEST plane, which is what the bars (on the bar
-                // plane one step up — see MinputBar) read as raised above. The Scaffold's
-                // default `background` role would band its own colour behind them.
+                modifier = Modifier.fillMaxSize(),
+                // The view sits on the LOWEST plane — the bar's crumbs ride it as surface-1
+                // controls. The Scaffold's default `background` role would band its own colour
+                // behind them.
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                topBar = {
-                    // The 2026-09-26 bar: a real strip with a lit bottom edge (see
-                    // RemapControlsTopBar) carrying the identity widget (the layouts drawer's
-                    // summon) at the start, the action-set switcher centred, and the
-                    // physical/virtual EDITOR switch at the end — the latter being where
-                    // "Edit overlay" went. Auto-detect left the bar 2026-08-30 for the Mappo
-                    // drawer — it is a global setting, not a layout property.
-                    RemapControlsTopBar(
-                        // The layout being viewed; an application with no layout reads "None" —
-                        // not the stale name of another app's layout (2026-08-26 audit). Whether
-                        // it is the ACTIVE layout or one being previewed is the identity stack's
-                        // overline now (2026-09-26), where the name used to carry a "(Preview)"
-                        // suffix; the application itself is the leading launcher icon.
-                        layoutName = if (showNoLayoutState) "None" else layoutName ?: "Layout",
-                        previewing = !isActiveLayout,
-                        appPackage = effectiveAppPackage,
-                        identityHighlighted = layoutsDrawerOpen,
-                        onIdentityClick = { layoutsDrawerOpen = !layoutsDrawerOpen },
-                        config = config,
-                        viewingSet = viewingSet,
-                        onSelectActionSet = { id ->
-                            onSelectActionSet(id)
-                            onSelectLayer(null)
-                        },
-                        onAddSet = { dialog = ActionSetDialogState.Add },
-                        onEditOverlay = onEditOverlay,
-                    )
-                },
+                topBar = { if (barPin.top) hierarchyBar() },
+                bottomBar = { if (!barPin.top) hierarchyBar() },
             ) { innerPadding ->
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
@@ -603,17 +645,16 @@ fun RemapControlsScreen(
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 ) {
                     // The viewed application has no layout — the ACTIVE app fresh from
-                    // detection (the core flow: shortcut-open Mappo over a new game), an
-                    // apps-drawer preview/pick of an unbound app, or one whose bound
-                    // layout was deleted: the content plane shows the no-layout state
-                    // instead of another app's controls — tiles route into layout
-                    // creation and the layouts drawer (which holds the Community section
-                    // once sharing lands).
+                    // detection (the core flow: shortcut-open Mappo over a new game), a
+                    // bar pick of an unbound app, or one whose bound layout was deleted: the
+                    // content plane shows the no-layout state instead of another app's
+                    // controls — tiles route into layout creation and the bar's Layout crumb
+                    // (which holds the Community section once sharing lands).
                     if (showNoLayoutState) {
                         NoLayoutAssignedView(
                             appLabel = effectiveAppLabel,
                             onCreateLayout = { addLayoutOpen = true },
-                            onBrowseLayouts = { layoutsDrawerOpen = true },
+                            onBrowseLayouts = { openCrumbAt(HierarchyCrumb.LAYOUT) },
                         )
                     } else Column(modifier = Modifier.fillMaxSize()) {
                         if (hasAnalogModeInConfig && !shizukuReady) {
@@ -624,10 +665,10 @@ fun RemapControlsScreen(
                             viewingLayer = viewingLayer,
                             config = config,
                             editorCallbacks = editorCallbacks,
-                            // While the drawer is open, controller focus lives on its
-                            // cards; browsing can remount this view (no-layout ↔ controls
-                            // flip), and an ungated entry-seat stole focus from the drawer.
-                            focusSeatEnabled = !layoutsDrawerOpen,
+                            // While a crumb's dropdown is open, controller focus lives in it;
+                            // browsing can remount this view (no-layout ↔ controls flip), and
+                            // an ungated entry-seat would steal focus from the dropdown.
+                            focusSeatEnabled = openCrumb == null,
                             seatCommand = seatCommandId,
                             onSeatCommand = { seatCommandId = it },
                             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -1184,3 +1225,13 @@ private const val WarningCheckboxScale = 0.75f
 
 /** Scale for the bar's halo-stripped Auto switch (M3's 52×32 shrunk well under the bar
  *  height — Dylan sized it down from 0.8, 2026-08-26). */
+
+/** The viewing context as a hierarchy-bar crumb opened — what closing it without a choice
+ *  restores. [followsActive] = the viewing pointer was following the active layout (null),
+ *  which is distinct from pointing AT the active layout's id. */
+private data class CrumbSnapshot(
+    val appOverride: String?,
+    val previewLayoutId: Long?,
+    val followsActive: Boolean,
+    val setId: Long?,
+)

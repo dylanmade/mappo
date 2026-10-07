@@ -892,7 +892,9 @@ class RemapControlsScreenTest {
             }
         }
 
-        // Every set renders as a top-bar tab; tapping one selects it.
+        // Every set is a row in the Set crumb's dropdown; tapping one selects it.
+        composeRule.onNodeWithTag("bar:set").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Menu", ignoreCase = true, useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Menu", ignoreCase = true, useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
@@ -955,17 +957,15 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     /**
-     * **The bar's three clusters never overlap** (2026-09-26). The centre cluster is centred in
-     * the BAR, which a Box of three alignments also does — and which lets a long layout name run
-     * straight under it, because nothing measures the two against each other. The bar's own
-     * layout gives each flank only the room beside the centre (see `BarSlots`), so a name too
-     * long for its side ellipsizes instead.
+     * **The hierarchy bar reads application › layout › set › buttons, then the pin button**
+     * (2026-10-07) — four crumbs in one row, none running under the next, even with a long layout
+     * name (titles cap and ellipsize).
      */
     @Test
-    fun topBar_clustersNeverOverlap_evenWithALongLayoutName() {
+    fun hierarchyBar_crumbsReadInOrder_evenWithALongLayoutName() {
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(420.dp, 500.dp)) {
+                Surface(modifier = androidx.compose.ui.Modifier.size(900.dp, 500.dp)) {
                     RemapControlsScreen(
                         config = twoSetConfig(
                             setAButtonA = BindingOutput.Unbound,
@@ -984,68 +984,77 @@ class RemapControlsScreenTest {
 
         fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val identity = bounds("bar:identity")
-        val editors = bounds("bar:editors")
-        // The cluster's end is its kebab now — the "+" action segment retired 2026-09-27.
-        val sets = bounds("bar:sets-menu")
-
-        assert(identity.right <= sets.left) {
-            "the identity widget ran under the action sets: $identity vs $sets"
-        }
-        assert(editors.left >= sets.right) {
-            "the editor switch ran under the action sets: $editors vs $sets"
+        val order = listOf("bar:application", "bar:layout", "bar:set", "bar:buttons", "bar:pin")
+            .map { it to bounds(it) }
+        order.zipWithNext().forEach { (left, right) ->
+            assert(left.second.right <= right.second.left) {
+                "${left.first} ran under ${right.first}: ${left.second} vs ${right.second}"
+            }
         }
     }
 
     /**
-     * **The bar centres the SETS SWITCH, not the switch plus its kebab** (Dylan, 2026-09-27).
-     *
-     * The two used to be one Row measured into the centre slot, so what sat in the middle of the
-     * screen was the pair and the switch itself was half a kebab to the left of it. The switch is
-     * the control the eye lines up on — and the one that lines up with the controller image below —
-     * so the kebab hangs off its end instead (`BarSlots`' `centreTrailing`).
+     * **The pin button moves the bar** (2026-10-07): pinned to the bottom end, the bar sits at the
+     * screen's bottom edge with the pin button against its end.
      */
     @Test
-    fun topBar_centresTheSetsSwitch_withItsKebabHungOffTheEnd() {
+    fun hierarchyBar_pinnedBottomEnd_sitsInTheBottomEndCorner() {
         composeRule.setContent {
             MaterialTheme {
-                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 800.dp)) {
                     RemapControlsScreen(
-                        config = twoSetConfig(
-                            setAButtonA = BindingOutput.Unbound,
-                            setBButtonA = BindingOutput.Unbound,
-                        ),
-                        viewingActionSetId = 1L,
-                        onSelectActionSet = {},
+                        config = seedShapedConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
+                        barPin = com.mappo.data.settings.BarPin.BOTTOM_END,
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
                 }
             }
         }
 
-        fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+        val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val pin = composeRule.onNodeWithTag("bar:pin", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val bar = bounds("bar:identity").let { composeRule.onRoot().fetchSemanticsNode().boundsInRoot }
-        val switch = bounds("bar:sets")
-        val kebab = bounds("bar:sets-menu")
+        val app = composeRule.onNodeWithTag("bar:application", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(root.bottom - pin.bottom < 60f) { "the bar should sit at the bottom: $pin in $root" }
+        assert(root.right - pin.right < 40f) { "the pin button should close the bar at the end: $pin" }
+        assert(app.left > root.width / 2) { "the bar should be end-aligned: $app" }
+    }
 
-        assert(kotlin.math.abs(switch.center.x - bar.center.x) <= 1.5f) {
-            "the sets switch should be centred in the bar: ${switch.center.x} vs ${bar.center.x}"
+    @Test
+    fun hierarchyBar_pinMenu_offersTheSixSpots() {
+        var picked: com.mappo.data.settings.BarPin? = null
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        onBarPinChange = { picked = it },
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
         }
-        assert(kebab.left >= switch.right) {
-            "the kebab should hang off the switch's end: $kebab vs $switch"
+
+        composeRule.onNodeWithTag("bar:pin").performClick()
+        composeRule.waitForIdle()
+        com.mappo.data.settings.BarPin.entries.forEach {
+            composeRule.onNodeWithText(it.label, useUnmergedTree = true).assertExists()
         }
+        clickMenuItem("Bottom middle")
+        assert(picked == com.mappo.data.settings.BarPin.BOTTOM_CENTER) { "got $picked" }
     }
 
     /**
-     * **The editor switch** (Dylan, 2026-09-26) — this screen IS the physical-buttons editor, so
-     * its half is the live one, and picking the other half opens the virtual-buttons (overlay)
-     * editor. It replaced the "Edit overlay" button.
+     * **The Buttons crumb** — this screen IS the physical-buttons editor, so Physical is the live
+     * one, and picking Virtual opens the virtual-buttons (overlay) editor.
      */
     @Test
-    fun topBar_editorSwitch_offersBothEditors_andOpensTheVirtualOne() {
+    fun hierarchyBar_buttonsCrumb_offersBothEditors_andOpensTheVirtualOne() {
         var opened = 0
         composeRule.setContent {
             MaterialTheme {
@@ -1061,19 +1070,12 @@ class RemapControlsScreenTest {
             }
         }
 
-        // Glyphs, no words — the semantics are the descriptions.
-        composeRule.onNodeWithContentDescription("Physical buttons editor", useUnmergedTree = true)
-            .assertExists()
+        composeRule.onNodeWithText("BUTTONS", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Physical", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Edit overlay").assertCountEquals(0)
-        // The click lives on the SEGMENT; the glyph inside it carries the description (the same
-        // split MinputMenuRow has — see clickMenuItem).
-        composeRule.onNode(
-            androidx.compose.ui.test.hasClickAction() and
-                androidx.compose.ui.test.hasAnyDescendant(
-                    hasContentDescription("Virtual buttons editor"),
-                ),
-            useUnmergedTree = true,
-        ).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithTag("bar:buttons").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Virtual", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
         assert(opened == 1) { "the virtual editor should have been opened once, got $opened" }
     }
@@ -1108,17 +1110,17 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         // The identity widget (the drawer summon since 2026-08-27, ArrowLeftRight pill
         // deleted; the two-line app-icon + overline + name stack is back as of 2026-09-26).
-        composeRule.onNodeWithTag("bar:identity").assertExists()
-        composeRule.onNodeWithText("PREVIEWING LAYOUT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("bar:layout").assertExists()
+        // The Layout crumb's overline says the layout on screen is only a preview (2026-10-07).
+        composeRule.onNodeWithText("LAYOUT · PREVIEW", useUnmergedTree = true).assertExists()
         // No layout name in this setup — the name line falls back to "Layout".
         composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        // Adding a set is the sets KEBAB's menu now, not a "+" segment closing the group
-        // (2026-09-27): a group button is single-choice, and a verb in it reads as a peer.
+        // Adding a set heads the Set crumb's dropdown (2026-10-07 — it was the set switch's
+        // kebab).
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(0)
-        composeRule.onNodeWithTag("bar:sets-menu").assertExists()
-        composeRule.onNodeWithTag("bar:sets-menu").performClick()
+        composeRule.onNodeWithTag("bar:set").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New layout set", useUnmergedTree = true).assertExists()
     }
@@ -1150,18 +1152,18 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("AUTO").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Back").assertCountEquals(0)
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
-        composeRule.onNodeWithTag("bar:identity").assertExists()
+        composeRule.onNodeWithTag("bar:layout").assertExists()
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        // The home state's overline says the layout on screen is the ACTIVE one.
-        composeRule.onNodeWithText("ACTIVE LAYOUT", useUnmergedTree = true).assertExists()
-        composeRule.onAllNodesWithText("PREVIEWING LAYOUT", useUnmergedTree = true)
+        // The home state's Layout crumb is plain — no preview marking.
+        composeRule.onNodeWithText("LAYOUT", useUnmergedTree = true).assertExists()
+        composeRule.onAllNodesWithText("LAYOUT · PREVIEW", useUnmergedTree = true)
             .assertCountEquals(0)
         composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
     }
 
     @Test
-    fun changeButton_opensLayoutsDrawer_withSectionsAndCards() {
-        // The change button slides in the layouts drawer: the permanent "New layout"
+    fun layoutCrumb_dropsTheLayoutsList_withSectionsAndCards() {
+        // The Layout crumb drops the layouts list (2026-10-07 — the drawer's body): the permanent "New layout"
         // card, then a card per layout of the viewed application. Headerless since
         // 2026-08-30 — the INSTALLED/COMMUNITY overlines retired in favour of a
         // per-card download marker.
@@ -1183,7 +1185,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag("bar:identity").performClick()
+        composeRule.onNodeWithTag("bar:layout").performClick()
         composeRule.waitForIdle()
 
         composeRule.onAllNodesWithText("INSTALLED LAYOUTS", useUnmergedTree = true)
@@ -1200,11 +1202,9 @@ class RemapControlsScreenTest {
     }
 
     @Test
-    fun applicationsButton_entersApplicationsMode_withAppCards() {
-        // The layouts drawer's application dropdown — its header row (2026-08-27: the
-        // retired right-side applications drawer folded into the layouts drawer) radiates
-        // the pane into applications mode: a card per detected app under the same category
-        // headers. Picking an app transitions back to layouts mode scoped to it.
+    fun applicationCrumb_listsApps_andPickingOneRepointsTheView() {
+        // The Application crumb (2026-10-07 — the layouts drawer's applications mode before
+        // it) drops a row per detected app. Picking one commits it as the viewing context.
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
@@ -1237,24 +1237,18 @@ class RemapControlsScreenTest {
             }
         }
 
-        // The layouts drawer first — the application dropdown heads it, wearing the
-        // viewed application's identity ("Alpha Game": the active layout's app).
-        composeRule.onNodeWithTag("bar:identity").performClick()
+        // The crumb names the viewed application ("Alpha Game": the active layout's app).
+        composeRule.onNodeWithText("Alpha Game", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("bar:application").performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("drawer:application").performClick()
-        composeRule.waitForIdle()
-
-        // Applications mode: cards are name-only (2026-08-26: the active-layout
-        // subtitle retired). The application dropdown still shows the viewed application —
-        // as its overline, so uppercased — beside the app row itself.
-        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(1)
-        composeRule.onNodeWithText("ALPHA GAME", useUnmergedTree = true).assertExists()
+        // The crumb's title plus the app's own row; rows are name-only.
+        composeRule.onAllNodesWithText("Alpha Game", useUnmergedTree = true).assertCountEquals(2)
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).assertExists()
 
-        // Picking the unbound app repoints the VIEWING context (no activation) and
-        // transitions back to layouts mode: the content plane swaps to the no-layout
-        // state with the two route tiles.
+        // Picking the unbound app repoints the VIEWING context (no activation) and closes
+        // the dropdown: the content plane swaps to the no-layout state with the two route
+        // tiles.
         composeRule.onNodeWithText("Beta Game", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("No layout assigned for Beta Game", useUnmergedTree = true)
@@ -1307,8 +1301,12 @@ class RemapControlsScreenTest {
             }
         }
 
+        // The sets live in the Set crumb's dropdown (2026-10-07).
+        composeRule.onNodeWithTag("bar:set").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Gameplay", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("Menu", useUnmergedTree = true).assertExists()
+        // The viewed set twice: the crumb's title and its own (highlighted) row.
+        composeRule.onAllNodesWithText("Menu", useUnmergedTree = true).assertCountEquals(2)
     }
 
     @Test
@@ -1335,6 +1333,9 @@ class RemapControlsScreenTest {
             }
         }
 
+        // The sets live in the Set crumb's dropdown (2026-10-07).
+        composeRule.onNodeWithTag("bar:set").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Menu", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
 

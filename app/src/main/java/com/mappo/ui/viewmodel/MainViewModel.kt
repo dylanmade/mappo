@@ -110,6 +110,7 @@ class MainViewModel @Inject constructor(
     private val textSizeSettings: TextSizeSettings,
     private val moveSettings: com.mappo.data.settings.MoveSettings,
     private val tileRevealSettings: com.mappo.data.settings.TileRevealSettings,
+    private val barPinSettings: com.mappo.data.settings.BarPinSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ApplicationAutoSwitcher,
@@ -228,6 +229,9 @@ class MainViewModel @Inject constructor(
         tileRevealSettings.reveal
 
     val textSize: StateFlow<TextSize> = textSizeSettings.size
+
+    /** Where the editors' hierarchy bar is pinned. See BarPinSettings. */
+    val barPin: StateFlow<com.mappo.data.settings.BarPin> = barPinSettings.pin
 
     val appLayoutBindings: StateFlow<ImmutableList<AppLayoutBinding>> =
         appLayoutBindingRepository.getAll()
@@ -628,6 +632,8 @@ class MainViewModel @Inject constructor(
 
     fun setTileReveal(reveal: com.mappo.data.settings.TileReveal) =
         tileRevealSettings.setReveal(reveal)
+
+    fun setBarPin(pin: com.mappo.data.settings.BarPin) = barPinSettings.setPin(pin)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

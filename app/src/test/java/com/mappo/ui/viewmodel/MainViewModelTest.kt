@@ -169,6 +169,9 @@ class MainViewModelTest {
             tileRevealSettings = mockk(relaxed = true) {
                 every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
             },
+            barPinSettings = mockk(relaxed = true) {
+                every { pin } returns MutableStateFlow(com.mappo.data.settings.BarPinSettings.Default)
+            },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
             autoSwitcher = autoSwitcher,
@@ -512,6 +515,9 @@ class MainViewModelTest {
             },
             tileRevealSettings = mockk(relaxed = true) {
                 every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
+            },
+            barPinSettings = mockk(relaxed = true) {
+                every { pin } returns MutableStateFlow(com.mappo.data.settings.BarPinSettings.Default)
             },
             shizukuRequiredPreferences = shizukuRequiredPrefs,
             shizukuConnection = shizukuConnection,
@@ -931,6 +937,9 @@ class MainViewModelTest {
         },
         tileRevealSettings = mockk(relaxed = true) {
             every { reveal } returns MutableStateFlow(TileRevealSettings.Default)
+        },
+        barPinSettings = mockk(relaxed = true) {
+            every { pin } returns MutableStateFlow(com.mappo.data.settings.BarPinSettings.Default)
         },
         shizukuRequiredPreferences = shizukuRequiredPrefs,
         shizukuConnection = shizukuConnection,

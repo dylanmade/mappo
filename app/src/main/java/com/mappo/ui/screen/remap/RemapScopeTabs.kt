@@ -49,8 +49,8 @@ import com.mappo.ui.minput.minputOverlineTextStyle
  * right-aligned trailing [actions] (Add/Tune on layouts, Layout settings on controls).
  * A surfaceContainer strip over a divider on the shared [MinputBarEdgePadding] anatomy.
  *
- * The CONTROLS view left this bar on 2026-08-29 for its own transparent, pod-based
- * [RemapControlsTopBar]; what remains here serves the (dormant) browse chain, so the
+ * The CONTROLS view left this bar on 2026-08-29 for its own (a transparent, pod-based one
+ * then; [RemapHierarchyBar] since 2026-10-07); what remains here serves the (dormant) browse chain, so the
  * identity-button experiment and its taller strip retired with the move.
  */
 @Composable

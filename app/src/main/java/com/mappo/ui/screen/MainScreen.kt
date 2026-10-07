@@ -255,6 +255,7 @@ fun MainScreen(
     val textSize by viewModel.textSize.collectAsStateWithLifecycle()
     val moveCommitGesture by viewModel.moveCommitGesture.collectAsStateWithLifecycle()
     val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
+    val barPin by viewModel.barPin.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -537,6 +538,9 @@ fun MainScreen(
                     onCreateLayout = viewModel::createLayout,
                     // ── Active application (first-class, 2026-08-26) ──
                     activeAppPackage = activeAppPackage,
+                    // ── The hierarchy bar's pinned spot (2026-10-07) ──
+                    barPin = barPin,
+                    onBarPinChange = viewModel::setBarPin,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->
