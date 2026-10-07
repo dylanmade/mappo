@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +22,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -266,10 +266,10 @@ private fun LayoutTileRow(
         // Leading slot keeps labels aligned whether or not the check shows.
         Box(Modifier.size(PanelRowIconSize), contentAlignment = Alignment.Center) {
             if (active) {
-                Icon(
+                MinputIcon(
                     Icons.Filled.Check,
                     contentDescription = "Active layout",
-                    modifier = Modifier.size(PanelRowIconSize),
+                    size = PanelRowGlyphSize,
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

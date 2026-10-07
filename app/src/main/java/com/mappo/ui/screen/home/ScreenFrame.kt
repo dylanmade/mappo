@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.mappo.ui.minput.MinputBar
 import com.mappo.ui.minput.MinputButton
 import com.mappo.ui.minput.MinputEdge
@@ -220,9 +219,7 @@ private fun FrameBottomBar(
         MinputButton(
             onClick = onToggleExpanded,
             bare = true,
-            leadingIcon = rememberVectorPainter(
-                if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
-            ),
+            leadingIcon = if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
             contentDescription = if (expanded) "Compact screen" else "Expand screen",
             modifier = Modifier.align(Alignment.CenterEnd),
         )

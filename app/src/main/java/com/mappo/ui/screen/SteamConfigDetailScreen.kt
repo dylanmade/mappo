@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
@@ -18,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -65,9 +66,10 @@ fun SteamConfigDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
+                        MinputIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.steam_back),
+                            size = MinputIconSize.L,
                         )
                     }
                 },

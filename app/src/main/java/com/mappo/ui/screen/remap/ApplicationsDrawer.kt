@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,7 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -147,10 +147,10 @@ private fun ApplicationCard(
         if (icon != null) {
             AppIconImage(icon, size = AppCardIconSize)
         } else {
-            Icon(
+            MinputIcon(
                 Lucide.LayoutGrid,
                 contentDescription = null,
-                modifier = Modifier.size(AppCardIconSize),
+                size = MinputIconSize.M,
                 tint = secondaryContent,
             )
         }

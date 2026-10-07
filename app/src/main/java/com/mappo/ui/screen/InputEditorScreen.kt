@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,7 +26,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
@@ -128,7 +129,11 @@ fun InputEditorScreen(
                 title = { Text(inputLabel) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
             )
@@ -273,13 +278,21 @@ internal fun ActivatorRow(
                 modifier = Modifier.weight(1f),
             )
             IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.Settings, contentDescription = "Activator settings")
+                MinputIcon(
+                    Icons.Filled.Settings,
+                    contentDescription = "Activator settings",
+                    size = MinputIconSize.Xl,
+                )
             }
             IconButton(
                 onClick = onRemoveActivator,
                 enabled = canRemoveActivator,
             ) {
-                Icon(Icons.Filled.Close, contentDescription = "Remove activator")
+                MinputIcon(
+                    Icons.Filled.Close,
+                    contentDescription = "Remove activator",
+                    size = MinputIconSize.M,
+                )
             }
         }
 
@@ -303,7 +316,7 @@ internal fun ActivatorRow(
             enabled = !unimplemented,
             modifier = Modifier.padding(start = 4.dp),
         ) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            MinputIcon(Icons.Filled.Add, contentDescription = null, size = MinputIconSize.Xs)
             Spacer(Modifier.size(8.dp))
             Text("Add Command", style = MaterialTheme.typography.labelLarge)
         }
@@ -352,10 +365,10 @@ private fun CommandRow(
                     onClick = onRemove,
                     modifier = Modifier.size(IconButtonDefaults.smallContainerSize()),
                 ) {
-                    Icon(
+                    MinputIcon(
                         Icons.Filled.Close,
                         contentDescription = "Remove command",
-                        modifier = Modifier.size(IconButtonDefaults.smallIconSize),
+                        size = MinputIconSize.S,
                     )
                 }
             }
@@ -392,10 +405,10 @@ private fun ActivatorTypeDropdown(
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
-            Icon(
-                imageVector = Icons.Filled.ArrowDropDown,
+            MinputIcon(
+                Icons.Filled.ArrowDropDown,
                 contentDescription = "Pick activator type",
-                modifier = Modifier.size(20.dp),
+                size = MinputIconSize.Xxs,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -435,7 +448,7 @@ internal fun AddActivatorButton(
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         FilledTonalButton(onClick = { expanded = true }) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            MinputIcon(Icons.Filled.Add, contentDescription = null, size = MinputIconSize.Xs)
             Spacer(Modifier.size(8.dp))
             Text("Add Activator", style = MaterialTheme.typography.labelLarge)
         }

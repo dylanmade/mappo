@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -141,7 +143,11 @@ fun ConfigureButtonScreen(
                 title = { Text("Configure Button") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
             )
@@ -532,7 +538,12 @@ internal fun RegionRowItem(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 if (iconVec != null) {
-                    Icon(iconVec, contentDescription = null, modifier = Modifier.size(14.dp))
+                    MinputIcon(
+                        iconVec,
+                        contentDescription = null,
+                        size = MinputIconSize.S,
+                        slot = true,
+                    )
                 }
                 Text(
                     text = labelPreview.ifEmpty { "—" },
@@ -596,7 +607,7 @@ private fun ResetButton(label: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
     ) {
-        Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+        MinputIcon(Icons.Filled.RestartAlt, contentDescription = null, size = MinputIconSize.S)
         Spacer(Modifier.width(8.dp))
         Text(label, style = MaterialTheme.typography.labelLarge)
     }
@@ -645,7 +656,12 @@ internal fun RegionEditDialog(
                     )
                     val vec = MappoIcons.resolve(region.icon)
                     if (vec != null) {
-                        Icon(vec, contentDescription = null, modifier = Modifier.size(20.dp))
+                        MinputIcon(
+                            vec,
+                            contentDescription = null,
+                            size = MinputIconSize.L,
+                            slot = true,
+                        )
                     } else {
                         Box(
                             modifier = Modifier

@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,7 +51,7 @@ import com.mappo.ui.minput.MinputBarWidgetIconSize
 import com.mappo.ui.minput.MinputEdge
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputGroupButton
-import com.mappo.ui.minput.MinputIconButtonIconSize
+import com.mappo.ui.minput.MinputIconSize
 import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconButton
@@ -237,10 +236,10 @@ internal fun BarStackButton(
         } else {
             // No application in view (or no launcher icon for it): the generic apps glyph
             // keeps the widget's shape, so the stack beside it doesn't shift about.
-            Icon(
+            MinputIcon(
                 Icons.Filled.Apps,
                 contentDescription = null,
-                modifier = Modifier.size(iconSize),
+                size = if (iconSize >= MinputBarWidgetIconSize) MinputIconSize.M else MinputIconSize.S,
                 tint = overlineColor,
             )
         }
@@ -400,19 +399,19 @@ private fun EditorSwitcher(
 private enum class EditorKind(
     val icon: ImageVector,
     val description: String,
-    val iconSize: Dp,
+    val iconSize: MinputIconSize,
 ) {
     PHYSICAL(Icons.Filled.SportsEsports, "Physical buttons editor", EditorGlyphSizeSolid),
     VIRTUAL(Icons.Outlined.Layers, "Virtual buttons editor", EditorGlyphSizeStroke),
 }
 
 /**
- * The editor switch's glyph sizes: the family's utility and pill scales, each a dp up (Dylan,
- * 2026-09-27 — "just the tiniest bit bigger"). The pair keeps its own step between them, because
- * the filled silhouette and the stroke mark do not read alike at one size.
+ * The editor switch's glyph sizes, one step apart on the icon scale: the filled silhouette and
+ * the stroke mark do not read alike at one size (Dylan, 2026-09-27). Ink sizes since the
+ * MinputIcon migration (2026-10-06) — the same visible sizes the tuned 17dp / 14dp boxes drew.
  */
-private val EditorGlyphSizeSolid = MinputIconButtonIconSize + 1.dp
-private val EditorGlyphSizeStroke = MinputSize.Standard.iconSize + 1.dp
+private val EditorGlyphSizeSolid = MinputIconSize.M
+private val EditorGlyphSizeStroke = MinputIconSize.S
 
 /** Air between the bar's centre cluster and either flank — see [BarSlots]. */
 private val SlotGap = 8.dp

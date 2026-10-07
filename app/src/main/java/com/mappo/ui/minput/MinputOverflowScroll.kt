@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -207,13 +206,12 @@ private fun Modifier.overflowFade(
 
 @Composable
 private fun OverflowChevron(icon: ImageVector, tint: Color, alpha: () -> Float, modifier: Modifier) {
-    Icon(
-        imageVector = icon,
+    MinputIcon(
+        icon,
         contentDescription = null,
+        size = MinputOverflowChevronSize,
         tint = tint,
-        modifier = modifier
-            .size(MinputOverflowChevronSize)
-            .graphicsLayer { this.alpha = alpha() },
+        modifier = modifier .graphicsLayer { this.alpha = alpha() },
     )
 }
 
@@ -221,7 +219,7 @@ private fun OverflowChevron(icon: ImageVector, tint: Color, alpha: () -> Float, 
 val MinputOverflowFadeWidth = 28.dp
 
 /** The "more this way" chevron over a faded edge. */
-val MinputOverflowChevronSize = 14.dp
+val MinputOverflowChevronSize = MinputIconSize.Xxs
 
 /** Fade + chevron in/out as a scroll end is reached or left. */
 private const val MinputOverflowCueMillis = 150

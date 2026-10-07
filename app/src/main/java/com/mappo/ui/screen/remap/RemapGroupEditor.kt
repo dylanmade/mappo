@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
@@ -57,7 +59,6 @@ import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -98,7 +99,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
@@ -471,7 +471,12 @@ private fun PressTypeDialog(
                     contentAlignment = Alignment.Center,
                 ) {
                     type.pressIcon()?.let { icon ->
-                        Icon(icon, contentDescription = null, tint = colors.icon)
+                        MinputIcon(
+                            icon,
+                            contentDescription = null,
+                            size = MinputIconSize.S,
+                            tint = colors.icon,
+                        )
                     }
                 }
                 Spacer(Modifier.width(MinputGlyphLabelGap))
@@ -491,10 +496,10 @@ private fun PressTypeDialog(
                     )
                 }
                 if (selected) {
-                    Icon(
+                    MinputIcon(
                         Icons.Filled.Check,
                         contentDescription = "Current",
-                        modifier = Modifier.size(MinputSize.Standard.iconSize),
+                        size = MinputSize.Standard.iconSize,
                         tint = colors.icon,
                     )
                 }
@@ -1157,10 +1162,10 @@ internal fun TileChrome(
         contentAlignment = Alignment.Center,
     ) {
         if (!defined) {
-            Icon(
+            MinputIcon(
                 Icons.Filled.Add,
                 contentDescription = null,
-                modifier = Modifier.size(RowTilePlusSize),
+                size = RowTilePlusSize,
                 tint = colors.plus,
             )
         }
@@ -1215,10 +1220,10 @@ private fun TileContent(
 ) {
     if (output == null) {
         // The row's create affordance. A plus and nothing else: it is a slot, not a command.
-        Icon(
+        MinputIcon(
             Icons.Filled.Add,
             contentDescription = null,
-            modifier = Modifier.size(RowTilePlusSize),
+            size = RowTilePlusSize,
             // Alpha rides in the palette color itself — no extra .alpha() here, or the
             // value in Theme.kt would stop being what renders.
             tint = colors.plus,
@@ -1270,12 +1275,13 @@ private fun RowTileContent(
         horizontalArrangement = Arrangement.Center,
     ) {
         if (label == null && showDeviceIcon) {
-            InputGlyphs.outputPainter(output)?.let { painter ->
-                Icon(
-                    painter,
+            InputGlyphs.outputIcon(output)?.let { glyph ->
+                MinputIcon(
+                    glyph,
                     contentDescription = null,
-                    modifier = Modifier.size(TileOutputGlyphSize),
+                    size = TileOutputGlyphSize,
                     tint = content,
+                    slot = true,
                 )
                 Spacer(Modifier.width(MinputGlyphLabelGap))
             }
@@ -1617,7 +1623,7 @@ internal fun ActivatorType.pressIcon(): ImageVector? = when (this) {
 
 // ── Table metrics ────────────────────────────────────────────────────────────────────────────
 
-private val TileOutputGlyphSize = 14.dp
+private val TileOutputGlyphSize = MinputIconSize.Xs
 
 /** The PRESS-TYPE glyph leading a tile. Larger than the output's device glyph (Dylan,
  *  2026-09-20): it identifies the tile, where the device glyph only qualifies its name. */
@@ -1699,7 +1705,7 @@ internal fun rowTileGap(): Dp = with(LocalDensity.current) { RowTileGapPx.toDp()
 private val RowTileContentPadding = 6.dp
 
 /** The "+" on a row tile, scaled to it the way [EmptyTilePlusSize] is to the table's. */
-private val RowTilePlusSize = 14.dp
+private val RowTilePlusSize = MinputIconSize.Xxs
 
 /**
  * The text on a TINTED row tile (Dylan, 2026-09-22).

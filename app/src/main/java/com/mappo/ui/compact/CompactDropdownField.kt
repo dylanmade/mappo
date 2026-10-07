@@ -1,5 +1,7 @@
 package com.mappo.ui.compact
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,7 +18,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -122,9 +123,10 @@ fun CompactDropdownField(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                Icon(
-                    imageVector = Icons.Filled.ArrowDropDown,
+                MinputIcon(
+                    Icons.Filled.ArrowDropDown,
                     contentDescription = null,
+                    size = MinputIconSize.Xs,
                     tint = labelColor,
                     modifier = Modifier.rotate(if (expanded) 180f else 0f),
                 )
@@ -154,7 +156,12 @@ fun CompactDropdownField(
                             if (key != selectedKey) onPick(key)
                         },
                         trailingIcon = if (key == selectedKey) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.padding(start = 8.dp)) }
+                            { MinputIcon(
+                                Icons.Filled.Check,
+                                contentDescription = null,
+                                size = MinputIconSize.L,
+                                modifier = Modifier.padding(start = 8.dp),
+                            ) }
                         } else null,
                     )
                 }

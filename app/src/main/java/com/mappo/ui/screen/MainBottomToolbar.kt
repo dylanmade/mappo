@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,7 +37,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SplitButtonDefaults
@@ -204,10 +205,10 @@ fun MainBottomToolbar(
                                     .focusRequester(firstFocus)
                                     .scaledLayout(switchScale),
                                 thumbContent = {
-                                    Icon(
-                                        imageVector = if (mappoEnabled) Icons.Filled.Check else Icons.Filled.Close,
+                                    MinputIcon(
+                                        if (mappoEnabled) Icons.Filled.Check else Icons.Filled.Close,
                                         contentDescription = if (mappoEnabled) "Mappo features on" else "Mappo features off",
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                        size = MinputIconSize.Xs,
                                     )
                                 },
                             )
@@ -238,10 +239,10 @@ fun MainBottomToolbar(
                                     contentPadding = SplitButtonDefaults.trailingButtonContentPaddingFor(mediumStyle),
                                 ) {
                                     // Edit pencil at rest; open-chevron while the menu is up.
-                                    Icon(
-                                        imageVector = if (menuExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.Edit,
+                                    MinputIcon(
+                                        if (menuExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.Edit,
                                         contentDescription = if (menuExpanded) "Close menu" else "Layout menu",
-                                        modifier = Modifier.size(18.dp),
+                                        size = MinputIconSize.M,
                                     )
                                 }
                             },
@@ -262,7 +263,11 @@ fun MainBottomToolbar(
                         // box equals its 40dp visual, keeping its spacing to the split button symmetric.
                         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                             FilledTonalIconButton(onClick = { moreExpanded = true }) {
-                                Icon(Icons.Filled.Settings, contentDescription = "More options")
+                                MinputIcon(
+                                    Icons.Filled.Settings,
+                                    contentDescription = "More options",
+                                    size = MinputIconSize.Xl,
+                                )
                             }
                         }
                         UpwardMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
@@ -382,7 +387,12 @@ private fun MenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
             .onFocusChanged { focused = it.hasFocus }
             .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = bgAlpha)),
         text = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null) },
+        leadingIcon = { MinputIcon(
+            icon,
+            contentDescription = null,
+            size = MinputIconSize.L,
+            slot = true,
+        ) },
         onClick = onClick,
     )
 }

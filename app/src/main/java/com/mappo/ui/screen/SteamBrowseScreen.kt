@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +17,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -79,9 +80,10 @@ fun SteamBrowseScreen(
                             else -> onBack()
                         }
                     }) {
-                        Icon(
+                        MinputIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.steam_back),
+                            size = MinputIconSize.L,
                         )
                     }
                 },
@@ -135,7 +137,11 @@ private fun GamesList(
             value = state.filter,
             onValueChange = onFilterChange,
             singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            leadingIcon = { MinputIcon(
+                Icons.Default.Search,
+                contentDescription = null,
+                size = MinputIconSize.L,
+            ) },
             placeholder = { Text(stringResource(R.string.steam_browse_filter_hint)) },
             modifier = Modifier
                 .fillMaxWidth()

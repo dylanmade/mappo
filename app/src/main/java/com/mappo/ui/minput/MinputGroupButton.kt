@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -87,7 +86,7 @@ fun <T> MinputGroupButton(
     optionDescription: ((T) -> String?)? = null,
     /** Per-glyph size override, for artwork that needs an optical nudge to read at the same weight
      *  as its neighbour; the family's pill scale when absent. */
-    optionIconSize: ((T) -> Dp)? = null,
+    optionIconSize: ((T) -> MinputIconSize)? = null,
     enabled: Boolean = true,
     equalWidths: Boolean = false,
     container: Color = MinputElevatedContainer,
@@ -196,7 +195,7 @@ fun <T> MinputGroupButton(
                     horizontalArrangement = Arrangement.Center,
                 ) {
                     if (icon != null) {
-                        Icon(
+                        MinputIcon(
                             icon,
                             contentDescription = description,
                             // The family scale unless the caller sizes this glyph itself — optical
@@ -204,9 +203,7 @@ fun <T> MinputGroupButton(
                             // silhouette and a three-stroke outline do not read the same at one
                             // size (Dylan, 2026-09-27 — the editor switch's gamepad needed a
                             // step up and its layers mark did not).
-                            modifier = Modifier.size(
-                                optionIconSize?.invoke(option) ?: size.iconSize,
-                            ),
+                            size = optionIconSize?.invoke(option) ?: size.iconSize,
                             tint = content,
                         )
                         if (label.isNotBlank()) Spacer(Modifier.width(MinputGlyphLabelGap))

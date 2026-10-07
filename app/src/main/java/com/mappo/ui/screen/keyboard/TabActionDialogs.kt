@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.keyboard
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,7 +23,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -114,7 +115,11 @@ fun TabActionDialogHost(
                             )
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
+                        leadingContent = { MinputIcon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            size = MinputIconSize.M,
+                        ) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_save_as_new_template)) }
                     ListItem(
@@ -128,7 +133,11 @@ fun TabActionDialogHost(
                             )
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        leadingContent = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        leadingContent = { MinputIcon(
+                            Icons.Default.Edit,
+                            contentDescription = null,
+                            size = MinputIconSize.L,
+                        ) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_update_existing_template)) }
                 }
@@ -157,7 +166,11 @@ fun TabActionDialogHost(
                         trailingIcon = {
                             if (name.isNotEmpty()) {
                                 IconButton(onClick = { name = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.dialog_clear))
+                                    MinputIcon(
+                                        Icons.Default.Clear,
+                                        contentDescription = stringResource(R.string.dialog_clear),
+                                        size = MinputIconSize.M,
+                                    )
                                 }
                             }
                         }
@@ -202,7 +215,11 @@ fun TabActionDialogHost(
                             trailingIcon = {
                                 if (filter.isNotEmpty()) {
                                     IconButton(onClick = { filter = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.dialog_clear))
+                                        MinputIcon(
+                                            Icons.Default.Clear,
+                                            contentDescription = stringResource(R.string.dialog_clear),
+                                            size = MinputIconSize.M,
+                                        )
                                     }
                                 }
                             },
@@ -351,19 +368,31 @@ fun TabActionDialogHost(
                             onStateChange(null)
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
+                        leadingContent = { MinputIcon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            size = MinputIconSize.M,
+                        ) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_add_blank)) }
                     ListItem(
                         onClick = { onStateChange(TabActionDialog.AddFromTemplate) },
                         modifier = Modifier.fillMaxWidth(),
-                        leadingContent = { Icon(Icons.Default.Bookmark, contentDescription = null) },
+                        leadingContent = { MinputIcon(
+                            Icons.Default.Bookmark,
+                            contentDescription = null,
+                            size = MinputIconSize.L,
+                        ) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_add_from_template)) }
                     ListItem(
                         onClick = { onStateChange(TabActionDialog.AddFromLayout) },
                         modifier = Modifier.fillMaxWidth(),
-                        leadingContent = { Icon(Icons.Default.Person, contentDescription = null) },
+                        leadingContent = { MinputIcon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            size = MinputIconSize.L,
+                        ) },
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                     ) { Text(stringResource(R.string.tab_dialog_add_from_profile)) }
                 }
@@ -397,7 +426,11 @@ fun TabActionDialogHost(
                             trailingIcon = {
                                 if (filter.isNotEmpty()) {
                                     IconButton(onClick = { filter = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.dialog_clear))
+                                        MinputIcon(
+                                            Icons.Default.Clear,
+                                            contentDescription = stringResource(R.string.dialog_clear),
+                                            size = MinputIconSize.M,
+                                        )
                                     }
                                 }
                             },

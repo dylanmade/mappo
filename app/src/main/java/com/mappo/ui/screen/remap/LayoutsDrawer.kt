@@ -617,10 +617,10 @@ private fun NewLayoutCard(onClick: () -> Unit) {
             .drawerRow(active = false, onClickLabel = "New layout", onClick = onClick)
             .height(NewLayoutCardHeight),
     ) {
-        Icon(
+        MinputIcon(
             Lucide.Plus,
             contentDescription = null,
-            modifier = Modifier.size(MinputSize.Standard.iconSize),
+            size = MinputSize.Standard.iconSize,
             tint = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))

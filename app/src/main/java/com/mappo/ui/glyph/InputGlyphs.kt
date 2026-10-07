@@ -7,18 +7,17 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewModule
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import com.mappo.R
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.InputSource
+import com.mappo.ui.minput.MinputIcon
+import com.mappo.ui.minput.MinputIconSize
 
 /**
  * Central glyph mapping for the remap UI, shared everywhere a mode / source / sub-input is shown
@@ -42,28 +41,28 @@ object InputGlyphs {
      *  the usual content color; these are concept glyphs, not hardware prompts. The icon leans
      *  on the mode's OUTPUT concept (mouse, stick, dpad…) since the menu's source is known. */
     @Composable
-    fun modePainter(mode: BindingMode): Painter = when (mode) {
-        BindingMode.DEVICE_DEFAULT -> painterResource(R.drawable.controller_generic)
-        BindingMode.NONE -> painterResource(R.drawable.flair_disabled)
-        BindingMode.SINGLE_BUTTON -> painterResource(R.drawable.generic_button_circle)
-        BindingMode.DPAD -> painterResource(R.drawable.xbox_dpad)
-        BindingMode.BUTTON_PAD -> painterResource(R.drawable.switch_buttons)
-        BindingMode.TRIGGER -> painterResource(R.drawable.generic_button_trigger_a)
+    fun modeIcon(mode: BindingMode): ImageVector = when (mode) {
+        BindingMode.DEVICE_DEFAULT -> ImageVector.vectorResource(R.drawable.controller_generic)
+        BindingMode.NONE -> ImageVector.vectorResource(R.drawable.flair_disabled)
+        BindingMode.SINGLE_BUTTON -> ImageVector.vectorResource(R.drawable.generic_button_circle)
+        BindingMode.DPAD -> ImageVector.vectorResource(R.drawable.xbox_dpad)
+        BindingMode.BUTTON_PAD -> ImageVector.vectorResource(R.drawable.switch_buttons)
+        BindingMode.TRIGGER -> ImageVector.vectorResource(R.drawable.generic_button_trigger_a)
         BindingMode.JOYSTICK_MOVE,
         BindingMode.GYRO_TO_JOYSTICK_CAMERA,
-        BindingMode.GYRO_TO_JOYSTICK_DEFLECTION -> painterResource(R.drawable.generic_stick)
+        BindingMode.GYRO_TO_JOYSTICK_DEFLECTION -> ImageVector.vectorResource(R.drawable.generic_stick)
         BindingMode.JOYSTICK_MOUSE,
-        BindingMode.GYRO_TO_MOUSE -> painterResource(R.drawable.mouse_small)
-        BindingMode.FLICK_STICK -> painterResource(R.drawable.flair_small_rotate)
-        BindingMode.MOUSE_REGION -> painterResource(R.drawable.flair_circle_target_b)
-        BindingMode.SCROLL_WHEEL -> painterResource(R.drawable.mouse_scroll_vertical)
-        BindingMode.DIRECTIONAL_SWIPE -> painterResource(R.drawable.touch_swipe_move)
-        BindingMode.RADIAL_MENU -> painterResource(R.drawable.flair_circle_8)
-        BindingMode.TOUCH_MENU -> painterResource(R.drawable.touch_tap)
+        BindingMode.GYRO_TO_MOUSE -> ImageVector.vectorResource(R.drawable.mouse_small)
+        BindingMode.FLICK_STICK -> ImageVector.vectorResource(R.drawable.flair_small_rotate)
+        BindingMode.MOUSE_REGION -> ImageVector.vectorResource(R.drawable.flair_circle_target_b)
+        BindingMode.SCROLL_WHEEL -> ImageVector.vectorResource(R.drawable.mouse_scroll_vertical)
+        BindingMode.DIRECTIONAL_SWIPE -> ImageVector.vectorResource(R.drawable.touch_swipe_move)
+        BindingMode.RADIAL_MENU -> ImageVector.vectorResource(R.drawable.flair_circle_8)
+        BindingMode.TOUCH_MENU -> ImageVector.vectorResource(R.drawable.touch_tap)
         // No Kenney equivalents for these concepts (link / hotbar row) — Material stays.
-        BindingMode.REFERENCE -> rememberVectorPainter(Icons.Filled.Link)
-        BindingMode.HOTBAR_MENU -> rememberVectorPainter(Icons.Filled.ViewModule)
-        else -> rememberVectorPainter(Icons.Filled.Tune)
+        BindingMode.REFERENCE -> Icons.Filled.Link
+        BindingMode.HOTBAR_MENU -> Icons.Filled.ViewModule
+        else -> Icons.Filled.Tune
     }
 
     /**
@@ -76,37 +75,37 @@ object InputGlyphs {
      * tile renders the empty-slot affordance instead of a glyph + label pair.
      */
     @Composable
-    fun outputPainter(output: BindingOutput): Painter? = when (output) {
+    fun outputIcon(output: BindingOutput): ImageVector? = when (output) {
         BindingOutput.Unbound -> null
-        is BindingOutput.KeyPress -> painterResource(R.drawable.ic_keyboard_overlay)
-        is BindingOutput.XInputButton -> painterResource(R.drawable.controller_generic)
-        is BindingOutput.XInputStick -> painterResource(R.drawable.generic_stick)
-        is BindingOutput.MouseButton -> painterResource(R.drawable.mouse_small)
-        is BindingOutput.MouseWheel -> painterResource(R.drawable.mouse_scroll_vertical)
+        is BindingOutput.KeyPress -> ImageVector.vectorResource(R.drawable.ic_keyboard_overlay)
+        is BindingOutput.XInputButton -> ImageVector.vectorResource(R.drawable.controller_generic)
+        is BindingOutput.XInputStick -> ImageVector.vectorResource(R.drawable.generic_stick)
+        is BindingOutput.MouseButton -> ImageVector.vectorResource(R.drawable.mouse_small)
+        is BindingOutput.MouseWheel -> ImageVector.vectorResource(R.drawable.mouse_scroll_vertical)
         // Action-set / layer verbs and game actions aren't device output at all — they drive
-        // Mappo itself. Material stays here for the same reason it does in [modePainter]:
+        // Mappo itself. Material stays here for the same reason it does in [modeIcon]:
         // Kenney has no "switch configuration" concept glyph.
-        is BindingOutput.GameAction -> rememberVectorPainter(Icons.Filled.Tune)
-        is BindingOutput.ControllerAction -> rememberVectorPainter(Icons.Filled.Layers)
+        is BindingOutput.GameAction -> Icons.Filled.Tune
+        is BindingOutput.ControllerAction -> Icons.Filled.Layers
     }
 
     /** Identity glyph for an input source — editor headers. Side-aware (LT vs RT, L vs R
      *  stick). All current returns are single-color prompts, so callers may tint freely. */
     @Composable
-    fun sourcePainter(source: InputSource?): Painter = when (source) {
-        InputSource.BUTTON_DIAMOND -> painterResource(R.drawable.switch_buttons)
-        InputSource.DPAD -> painterResource(R.drawable.xbox_dpad)
-        InputSource.LEFT_TRIGGER -> painterResource(R.drawable.xbox_lt)
-        InputSource.RIGHT_TRIGGER -> painterResource(R.drawable.xbox_rt)
-        InputSource.LEFT_BUMPER -> painterResource(R.drawable.xbox_lb)
-        InputSource.RIGHT_BUMPER -> painterResource(R.drawable.xbox_rb)
-        InputSource.LEFT_JOYSTICK -> painterResource(R.drawable.xbox_stick_side_l)
-        InputSource.RIGHT_JOYSTICK -> painterResource(R.drawable.xbox_stick_side_r)
-        InputSource.SWITCH_START -> painterResource(R.drawable.xbox_button_menu)
-        InputSource.SWITCH_SELECT -> painterResource(R.drawable.xbox_button_view)
+    fun sourceIcon(source: InputSource?): ImageVector = when (source) {
+        InputSource.BUTTON_DIAMOND -> ImageVector.vectorResource(R.drawable.switch_buttons)
+        InputSource.DPAD -> ImageVector.vectorResource(R.drawable.xbox_dpad)
+        InputSource.LEFT_TRIGGER -> ImageVector.vectorResource(R.drawable.xbox_lt)
+        InputSource.RIGHT_TRIGGER -> ImageVector.vectorResource(R.drawable.xbox_rt)
+        InputSource.LEFT_BUMPER -> ImageVector.vectorResource(R.drawable.xbox_lb)
+        InputSource.RIGHT_BUMPER -> ImageVector.vectorResource(R.drawable.xbox_rb)
+        InputSource.LEFT_JOYSTICK -> ImageVector.vectorResource(R.drawable.xbox_stick_side_l)
+        InputSource.RIGHT_JOYSTICK -> ImageVector.vectorResource(R.drawable.xbox_stick_side_r)
+        InputSource.SWITCH_START -> ImageVector.vectorResource(R.drawable.xbox_button_menu)
+        InputSource.SWITCH_SELECT -> ImageVector.vectorResource(R.drawable.xbox_button_view)
         // Kenney has no gyro/motion glyph — the Lucide rotate-3d the strip caption uses.
-        InputSource.GYRO -> painterResource(R.drawable.lucide_rotate_3d)
-        else -> painterResource(R.drawable.generic_button_circle)
+        InputSource.GYRO -> ImageVector.vectorResource(R.drawable.lucide_rotate_3d)
+        else -> ImageVector.vectorResource(R.drawable.generic_button_circle)
     }
 
     /**
@@ -183,7 +182,7 @@ object InputGlyphs {
     }
 
     /** Default glyph size used in headers and sub-input rows. */
-    val GlyphSize = 20.dp
+    val GlyphSize = MinputIconSize.L
 
     /**
      * Leading glyph for a bindable sub-input row: the Kenney Xbox button prompt when the pair
@@ -193,32 +192,39 @@ object InputGlyphs {
      * hues, dpad accent) that deliberately ignore the theme; only the concept fallbacks tint
      * with [LocalContentColor]. [size] lets callers scale it down for inline contexts (e.g. a
      * menu-item label).
+     *
+     * Always a SLOT ([MinputIcon]'s `slot`): these glyphs form the group boxes' glyph column,
+     * and an LB (wide) beside an A (round) must still leave the labels aligned.
      */
     @Composable
     fun SubInputGlyph(
         source: InputSource,
         subInputKey: String,
         modifier: Modifier = Modifier,
-        size: androidx.compose.ui.unit.Dp = GlyphSize,
+        size: MinputIconSize = GlyphSize,
     ) {
         val promptRes = buttonPromptRes(source, subInputKey) ?: directionPromptRes(subInputKey)
         when {
-            promptRes != null -> Icon(
-                painter = painterResource(promptRes),
+            promptRes != null -> MinputIcon(
+                promptRes,
                 contentDescription = null,
-                modifier = modifier.size(size),
+                modifier = modifier,
+                size = size,
                 tint = androidx.compose.ui.graphics.Color.Unspecified,
+                slot = true,
             )
             else -> {
                 val fallback = conceptFallbackRes(subInputKey)
                 if (fallback != null) {
-                    Icon(
-                        painter = painterResource(fallback),
+                    MinputIcon(
+                        fallback,
                         contentDescription = null,
-                        modifier = modifier.size(size),
+                        modifier = modifier,
+                        size = size,
                         tint = LocalContentColor.current,
+                        slot = true,
                     )
-                } else Spacer(modifier.size(size))
+                } else Spacer(modifier.size(size.dp))
             }
         }
     }

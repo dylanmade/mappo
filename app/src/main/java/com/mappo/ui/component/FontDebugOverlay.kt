@@ -1,5 +1,7 @@
 package com.mappo.ui.component
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -45,7 +47,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -180,7 +181,7 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                         // Back to the list head — where favorites live.
                         MinputButton(
                             onClick = { scope.launch { listState.animateScrollToItem(0) } },
-                            leadingIcon = rememberVectorPainter(Lucide.ArrowUpToLine),
+                            leadingIcon = Lucide.ArrowUpToLine,
                             contentDescription = "Jump to top",
                         )
                     }
@@ -430,11 +431,11 @@ private fun FontOptionRow(
                         onClick = onToggleFavorite,
                     ),
             ) {
-                Icon(
-                    imageVector = if (favorited) FilledStarIcon else Lucide.Star,
+                MinputIcon(
+                    if (favorited) FilledStarIcon else Lucide.Star,
                     contentDescription = null,
+                    size = FavoriteIconSize,
                     tint = starTint,
-                    modifier = Modifier.size(FavoriteIconSize),
                 )
             }
         }
@@ -503,7 +504,7 @@ private val SearchRowGap = 6.dp
 private val FavoriteHitSize = 24.dp
 
 /** Glyph size of a row's favorite star. */
-private val FavoriteIconSize = 14.dp
+private val FavoriteIconSize = MinputIconSize.S
 
 /** Extra breathing room above a section overline. */
 private val SectionHeaderGap = 4.dp

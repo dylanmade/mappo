@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +16,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -248,7 +249,11 @@ private fun InheritFromPicker(
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f),
                     )
-                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Open inherit menu")
+                    MinputIcon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = "Open inherit menu",
+                        size = MinputIconSize.Xs,
+                    )
                 }
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {

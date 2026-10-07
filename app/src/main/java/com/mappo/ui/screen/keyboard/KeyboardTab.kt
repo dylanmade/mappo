@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.keyboard
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ContentCopy
@@ -7,7 +9,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,7 +65,11 @@ fun KeyboardTabBar(
         val id = tab.key.toLong()
         DropdownMenuItem(
             text = { Text("Edit buttons") },
-            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+            leadingIcon = { MinputIcon(
+                Icons.Default.Edit,
+                contentDescription = null,
+                size = MinputIconSize.L,
+            ) },
             onClick = {
                 onCloseMenu()
                 onMenuEditButtons(id)
@@ -72,7 +77,11 @@ fun KeyboardTabBar(
         )
         DropdownMenuItem(
             text = { Text("Configure keyboard") },
-            leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) },
+            leadingIcon = { MinputIcon(
+                Icons.Default.Tune,
+                contentDescription = null,
+                size = MinputIconSize.L,
+            ) },
             onClick = {
                 onCloseMenu()
                 onMenuConfigure(id)
@@ -80,7 +89,11 @@ fun KeyboardTabBar(
         )
         DropdownMenuItem(
             text = { Text("Duplicate keyboard") },
-            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+            leadingIcon = { MinputIcon(
+                Icons.Default.ContentCopy,
+                contentDescription = null,
+                size = MinputIconSize.Xxl,
+            ) },
             onClick = {
                 onCloseMenu()
                 onMenuDuplicate(id)
@@ -94,10 +107,11 @@ fun KeyboardTabBar(
                 )
             },
             leadingIcon = {
-                Icon(
+                MinputIcon(
                     Icons.Default.Delete,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
+                    size = MinputIconSize.L,
+                    tint = MaterialTheme.colorScheme.error,
                 )
             },
             onClick = {
@@ -107,7 +121,11 @@ fun KeyboardTabBar(
         )
         DropdownMenuItem(
             text = { Text("Save as template") },
-            leadingIcon = { Icon(Icons.Default.Bookmark, contentDescription = null) },
+            leadingIcon = { MinputIcon(
+                Icons.Default.Bookmark,
+                contentDescription = null,
+                size = MinputIconSize.L,
+            ) },
             onClick = {
                 onCloseMenu()
                 onMenuSaveTemplate(id)

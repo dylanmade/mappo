@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.home
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -19,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -297,11 +298,11 @@ private fun ChinBand(
                 .padding(end = 6.dp)
                 .size(28.dp),
         ) {
-            Icon(
-                imageVector = if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+            MinputIcon(
+                if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
                 contentDescription = if (expanded) "Contract screen" else "Expand screen",
+                size = MinputIconSize.S,
                 tint = GlassPrintColor,
-                modifier = Modifier.size(20.dp),
             )
         }
     }

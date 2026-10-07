@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +20,6 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -111,7 +112,11 @@ fun ConfigureKeyboardScreen(
                 title = { Text("Configure Keyboard") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
             )
@@ -327,7 +332,11 @@ private fun KeyboardTab(
         trailingIcon = {
             if (nameDraft.isNotEmpty()) {
                 IconButton(onClick = { onNameDraftChange("") }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear")
+                    MinputIcon(
+                        Icons.Default.Clear,
+                        contentDescription = "Clear",
+                        size = MinputIconSize.M,
+                    )
                 }
             }
         },
@@ -390,7 +399,7 @@ private fun KeyboardTab(
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
     ) {
-        Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+        MinputIcon(Icons.Filled.RestartAlt, contentDescription = null, size = MinputIconSize.S)
         Spacer(Modifier.width(8.dp))
         Text("Reset Keyboard", style = MaterialTheme.typography.labelLarge)
     }
@@ -505,7 +514,7 @@ private fun ButtonsTab(
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
     ) {
-        Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+        MinputIcon(Icons.Filled.RestartAlt, contentDescription = null, size = MinputIconSize.S)
         Spacer(Modifier.width(8.dp))
         Text("Reset Button Defaults", style = MaterialTheme.typography.labelLarge)
     }

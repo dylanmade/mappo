@@ -1,5 +1,6 @@
 package com.mappo.ui.compact
 
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -226,11 +227,7 @@ fun CompactIconButton(
     // Glyph at ~55% of the box, matching M3's 24dp-glyph-in-~40dp-layer ratio.
     val glyph = (size.iconButtonSize(density).value * 0.55f).coerceAtLeast(16f).dp
     CompactIconButton(onClick = onClick, modifier = modifier, enabled = enabled, size = size) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(glyph),
-        )
+        MinputIcon(icon, contentDescription = contentDescription, inkSize = glyph * 0.75f)
     }
 }
 
@@ -271,7 +268,7 @@ fun CompactFilledTonalIconButton(
         contentAlignment = Alignment.Center,
     ) {
         CompositionLocalProvider(LocalContentColor provides contentColor) {
-            Icon(imageVector = icon, contentDescription = contentDescription, modifier = Modifier.size(glyph))
+            MinputIcon(icon, contentDescription = contentDescription, inkSize = glyph * 0.75f)
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.mappo.ui.component.colorpicker
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,7 +35,6 @@ import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -431,11 +432,11 @@ private fun Swatch(color: Color, selected: Color, onColor: (Color) -> Unit, size
         Box(Modifier.matchParentSize().background(color))
         if (isSelected) {
             Box(Modifier.matchParentSize().border(2.dp, MaterialTheme.colorScheme.primary, shape))
-            Icon(
+            MinputIcon(
                 Icons.Default.Check,
                 contentDescription = null,
+                size = MinputIconSize.S,
                 tint = if (color.luminance() > 0.5f) Color.Black else Color.White,
-                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -481,10 +482,10 @@ private fun HexField(selected: Color, onColor: (Color) -> Unit, modifier: Modifi
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
+                    MinputIcon(
                         Icons.Default.ContentCopy,
                         contentDescription = "Copy hex",
-                        modifier = Modifier.size(18.dp),
+                        size = MinputIconSize.L,
                     )
                 }
             },

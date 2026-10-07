@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -19,7 +21,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -83,9 +84,10 @@ fun RemapTargetPickerScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = if (isCategoryView) onBack else onCategoryNav) {
-                        Icon(
+                        MinputIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = if (isCategoryView) "Back" else "Back to categories",
+                            size = MinputIconSize.L,
                         )
                     }
                 },
@@ -228,10 +230,19 @@ private fun CategoryRow(
     ListItem(
         onClick = onClick,
         trailingContent = if (showChevron) {
-            { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) }
+            { MinputIcon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                size = MinputIconSize.S,
+            ) }
         } else null,
         leadingContent = if (selected) {
-            { Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary) }
+            { MinputIcon(
+                Icons.Default.Check,
+                contentDescription = "Selected",
+                size = MinputIconSize.L,
+                tint = MaterialTheme.colorScheme.primary,
+            ) }
         } else null,
         colors = ListItemDefaults.colors(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
@@ -318,7 +329,12 @@ private fun InputOptionList(
                 ListItem(
                     onClick = { onSelect(option.target) },
                     leadingContent = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary) }
+                        { MinputIcon(
+                            Icons.Default.Check,
+                            contentDescription = "Selected",
+                            size = MinputIconSize.L,
+                            tint = MaterialTheme.colorScheme.primary,
+                        ) }
                     } else null,
                     colors = ListItemDefaults.colors(
                         containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -373,7 +389,12 @@ private fun SwitchActionSetList(
                 ListItem(
                     onClick = { onSelect(setId) },
                     leadingContent = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary) }
+                        { MinputIcon(
+                            Icons.Default.Check,
+                            contentDescription = "Selected",
+                            size = MinputIconSize.L,
+                            tint = MaterialTheme.colorScheme.primary,
+                        ) }
                     } else null,
                     colors = ListItemDefaults.colors(
                         containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -425,10 +446,19 @@ private fun LayerVerbList(
             ListItem(
                 onClick = { onSelect(verb.verbId) },
                 leadingContent = if (isSelected) {
-                    { Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary) }
+                    { MinputIcon(
+                        Icons.Default.Check,
+                        contentDescription = "Selected",
+                        size = MinputIconSize.L,
+                        tint = MaterialTheme.colorScheme.primary,
+                    ) }
                 } else null,
                 trailingContent = {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                    MinputIcon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        size = MinputIconSize.S,
+                    )
                 },
                 colors = ListItemDefaults.colors(
                     containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -479,7 +509,12 @@ private fun LayerSelectionList(
                 ListItem(
                     onClick = { onSelect(layerId) },
                     leadingContent = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary) }
+                        { MinputIcon(
+                            Icons.Default.Check,
+                            contentDescription = "Selected",
+                            size = MinputIconSize.L,
+                            tint = MaterialTheme.colorScheme.primary,
+                        ) }
                     } else null,
                     colors = ListItemDefaults.colors(
                         containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer

@@ -36,7 +36,7 @@ internal fun ModePillDropdown(
     overline: Boolean = false,
     elevated: Boolean = false,
     fixedWidth: Dp? = null,
-    leadingIcon: androidx.compose.ui.graphics.painter.Painter? = null,
+    leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     modifier: Modifier = Modifier,
 ) {
     // "None" shows bare on the pill — an absence carries no concept glyph there. (The menu
@@ -44,14 +44,14 @@ internal fun ModePillDropdown(
     // claim about current state.) A fixed [leadingIcon] overrides both rules: it's the
     // element's identity, not the mode's.
     val pillIcon = leadingIcon
-        ?: if (currentMode != BindingMode.NONE) InputGlyphs.modePainter(currentMode) else null
+        ?: if (currentMode != BindingMode.NONE) InputGlyphs.modeIcon(currentMode) else null
     MinputPillDropdown(
         current = currentMode,
         options = validModes,
         optionLabel = { it.displayNameFor(source) },
         onPick = onPick,
         enabled = enabled,
-        optionIcon = { InputGlyphs.modePainter(it) },
+        optionIcon = { InputGlyphs.modeIcon(it) },
         pillIcon = pillIcon,
         overline = overline,
         elevated = elevated,

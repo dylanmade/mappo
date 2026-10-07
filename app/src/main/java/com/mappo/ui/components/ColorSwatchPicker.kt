@@ -1,5 +1,7 @@
 package com.mappo.ui.components
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -67,11 +68,11 @@ private fun DefaultSwatch(selected: Boolean, onClick: () -> Unit) {
             .border(if (selected) 2.dp else 1.dp, borderColor, CircleShape)
             .clickable(onClick = onClick)
     ) {
-        Icon(
-            imageVector = Icons.Default.Block,
+        MinputIcon(
+            Icons.Default.Block,
             contentDescription = "Default",
+            size = MinputIconSize.M,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
         )
     }
 }
@@ -90,11 +91,11 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
                 .clickable(onClick = onClick)
         ) {
             if (selected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
+                MinputIcon(
+                    Icons.Default.Check,
                     contentDescription = null,
+                    size = MinputIconSize.M,
                     tint = Color.White,
-                    modifier = Modifier.size(18.dp)
                 )
             }
         }

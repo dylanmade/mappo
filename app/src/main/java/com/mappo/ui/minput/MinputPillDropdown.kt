@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,9 +26,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,8 +54,8 @@ fun <T> MinputPillDropdown(
     onPick: (T) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    optionIcon: (@Composable (T) -> Painter?)? = null,
-    pillIcon: Painter? = null,
+    optionIcon: (@Composable (T) -> ImageVector?)? = null,
+    pillIcon: ImageVector? = null,
     overline: Boolean = false,
     elevated: Boolean = false,
     fixedWidth: Dp? = null,
@@ -67,9 +66,6 @@ fun <T> MinputPillDropdown(
     var open by remember { mutableStateOf(false) }
     val container = if (elevated) MinputElevatedContainer else minputBoxContainer()
     val interaction = remember { MutableInteractionSource() }
-    // Fixed-width pills center their content, which exposes the icon's live-area padding as a
-    // visibly wider left flank — bias the block toward the icon ([MinputPillIconSideBias]).
-    val iconBias = if (fixedWidth != null && pillIcon != null) MinputPillIconSideBias else 0.dp
     Box {
         // Shared box treatment — pill-style dropdown button, no trailing arrow.
         Surface(
@@ -97,16 +93,15 @@ fun <T> MinputPillDropdown(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
                 // The stroke rule: padding starts inside the bevel ring.
-                modifier = Modifier.minputStrokeInset().padding(
-                    start = size.contentPadding - iconBias / 2,
-                    end = size.contentPadding + iconBias / 2,
-                ),
+                // Symmetric: the glyph is ink-measured ([MinputIcon]), so it brings no margin
+                // that a fixed-width pill's centring would expose.
+                modifier = Modifier.minputStrokeInset().padding(horizontal = size.contentPadding),
             ) {
                 if (pillIcon != null) {
-                    Icon(
+                    MinputIcon(
                         pillIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(size.iconSize),
+                        size = size.iconSize,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))

@@ -22,9 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 
@@ -92,9 +90,9 @@ fun MinputButton(
     elevated: Boolean = false,
     highlighted: Boolean = false,
     bare: Boolean = false,
-    leadingIcon: Painter? = null,
+    leadingIcon: ImageVector? = null,
     leadingIconTint: Color = Color.Unspecified,
-    trailingIcon: Painter? = null,
+    trailingIcon: ImageVector? = null,
     alignStart: Boolean = false,
     size: MinputSize = MinputSize.Standard,
     corner: Dp = size.corner,
@@ -153,16 +151,14 @@ fun MinputButton(
                 modifier = Modifier.size(height),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
+                MinputIcon(
                     leadingIcon!!,
                     contentDescription = contentDescription,
                     // Chromed circles are PILLS and use the pill family's icon scale; only
-                    // the bare (chrome-less) form keeps the utility-glyph scale — a 16dp
-                    // glyph floating in an invisible target reads right, but fills a
-                    // visible 24dp circle to bursting.
-                    modifier = Modifier.size(
-                        if (bare) MinputIconButtonIconSize else size.iconSize,
-                    ),
+                    // the bare (chrome-less) form keeps the utility-glyph scale — a glyph
+                    // that size floating in an invisible target reads right, but fills a
+                    // visible circle to bursting.
+                    size = if (bare) MinputIconButtonIconSize else size.iconSize,
                     tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                 )
             }
@@ -174,26 +170,16 @@ fun MinputButton(
                     .height(height)
                     // The stroke rule: the label's padding starts inside the ring.
                     .minputStrokeInset(ringed)
-                    // A leading glyph inks less than its box (Material live area, Lucide
-                    // stroke inset), so with symmetric padding the icon flank reads wider
-                    // than the text flank — pull the start inset in by the family's
-                    // icon-side bias to cancel it (the wrap-width sibling of
-                    // MinputPillIconSideBias's fixed-width treatment; mirrored on the
-                    // trailing side).
-                    .padding(
-                        start = if (leadingIcon != null) {
-                            size.contentPadding - MinputPillIconSideBias
-                        } else size.contentPadding,
-                        end = if (trailingIcon != null) {
-                            size.contentPadding - MinputPillIconSideBias
-                        } else size.contentPadding,
-                    ),
+                    // Symmetric: glyphs are measured by their INK ([MinputIcon]), so an icon
+                    // flank and a text flank are the same padding. (The icon-side bias that
+                    // used to pull the start in only cancelled the glyphs' own margins.)
+                    .padding(horizontal = size.contentPadding),
             ) {
                 if (leadingIcon != null) {
-                    Icon(
+                    MinputIcon(
                         leadingIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(size.iconSize),
+                        size = size.iconSize,
                         tint = leadingIconTint,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))
@@ -210,10 +196,10 @@ fun MinputButton(
                 )
                 if (trailingIcon != null) {
                     Spacer(Modifier.width(MinputGlyphLabelGap))
-                    Icon(
+                    MinputIcon(
                         trailingIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(size.iconSize),
+                        size = size.iconSize,
                         tint = content,
                     )
                 }
@@ -239,6 +225,6 @@ fun MinputIconButton(
     modifier = modifier,
     enabled = enabled,
     bare = true,
-    leadingIcon = rememberVectorPainter(icon),
+    leadingIcon = icon,
     contentDescription = contentDescription,
 )

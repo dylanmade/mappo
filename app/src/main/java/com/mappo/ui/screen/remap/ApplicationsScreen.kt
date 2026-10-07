@@ -1,5 +1,6 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -176,12 +176,15 @@ internal fun AppRow(
         val appIcon = rememberAppIconPainter(packageName)
         when {
             appIcon != null -> AppIconImage(appIcon, size = PanelRowIconSize)
-            vectorIcon != null -> Icon(
-                vectorIcon,
-                contentDescription = null,
-                modifier = Modifier.size(PanelRowIconSize),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // In the bitmap's slot, so a glyph row's label lines up with an app row's.
+            vectorIcon != null -> Box(Modifier.size(PanelRowIconSize), contentAlignment = Alignment.Center) {
+                MinputIcon(
+                    vectorIcon,
+                    contentDescription = null,
+                    size = PanelRowGlyphSize,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             else -> Box(Modifier.size(PanelRowIconSize))
         }
         Spacer(Modifier.width(MinputGlyphLabelGap))

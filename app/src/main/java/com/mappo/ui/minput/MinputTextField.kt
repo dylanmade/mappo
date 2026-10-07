@@ -22,7 +22,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -152,10 +151,10 @@ fun MinputTextField(
             modifier = Modifier.minputStrokeInset(outlined).padding(horizontal = size.contentPadding),
         ) {
             if (leadingIcon != null) {
-                Icon(
+                MinputIcon(
                     leadingIcon,
                     contentDescription = null,
-                    modifier = Modifier.size(size.iconSize),
+                    size = size.iconSize,
                     // The glyph tracks the text slot's dimming: matched to the
                     // placeholder while empty, secondary once the field holds text —
                     // icon and placeholder read as one assembly (a device report had
@@ -183,12 +182,15 @@ fun MinputTextField(
                 // Bare clipped-clickable glyph, no 48dp halo — it has to live inside the
                 // 24dp pill; the family's sub-touch-target trade-off. Nested inside the
                 // pill's own clickable: the × consumes its taps, the rest opens the editor.
-                Icon(
-                    imageVector = Icons.Filled.Close,
+                // A slot, so the tap target stays the full icon square — the × itself only
+                // inks about half of it.
+                MinputIcon(
+                    Icons.Filled.Close,
                     contentDescription = "Clear text",
+                    size = size.iconSize,
                     tint = colors.onSurfaceVariant,
+                    slot = true,
                     modifier = Modifier
-                        .size(size.iconSize)
                         .clip(CircleShape)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -410,10 +412,10 @@ internal fun MinputTextWell(
                         .padding(horizontal = size.contentPadding),
                 ) {
                     if (leadingIcon != null) {
-                        Icon(
+                        MinputIcon(
                             leadingIcon,
                             contentDescription = null,
-                            modifier = Modifier.size(size.iconSize),
+                            size = size.iconSize,
                             // Matches the display pill: the glyph dims with the
                             // placeholder so the empty field reads as one assembly.
                             tint = if (value.isEmpty()) {
@@ -437,12 +439,13 @@ internal fun MinputTextWell(
                         Spacer(Modifier.width(MinputGlyphLabelGap))
                         // Same sub-touch-target × as the display pill's — it has to live
                         // inside the 24dp well.
-                        Icon(
-                            imageVector = Icons.Filled.Close,
+                        MinputIcon(
+                            Icons.Filled.Close,
                             contentDescription = "Clear text",
+                            size = size.iconSize,
                             tint = colors.onSurfaceVariant,
+                            slot = true,
                             modifier = Modifier
-                                .size(size.iconSize)
                                 .clip(CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },

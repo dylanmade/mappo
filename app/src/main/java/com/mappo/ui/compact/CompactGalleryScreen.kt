@@ -1,5 +1,7 @@
 package com.mappo.ui.compact
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,7 +20,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -62,7 +63,11 @@ fun CompactGalleryScreen(onBack: () -> Unit) {
                 title = { Text("Compact component gallery") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
             )
@@ -138,7 +143,11 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                 value = text1,
                 onValueChange = { text1 = it },
                 placeholder = { Text("Outlined, placeholder hint") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                leadingIcon = { MinputIcon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    size = MinputIconSize.L,
+                ) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -205,7 +214,11 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                     CompactListItem(
                         headline = "Two line row",
                         supporting = "Supporting text under the headline",
-                        leading = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        leading = { MinputIcon(
+                            Icons.Default.Settings,
+                            contentDescription = null,
+                            size = MinputIconSize.Xl,
+                        ) },
                         onClick = {},
                     )
                     HorizontalDivider()
@@ -220,7 +233,11 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                         supporting = "This supporting text is intentionally long enough to wrap " +
                             "onto a second line, so the headline-to-support gap and overall row " +
                             "spacing can be checked when the description spans multiple lines.",
-                        leading = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        leading = { MinputIcon(
+                            Icons.Default.Settings,
+                            contentDescription = null,
+                            size = MinputIconSize.Xl,
+                        ) },
                         onClick = {},
                     )
                     HorizontalDivider()
@@ -252,11 +269,12 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                Icon(
+                                MinputIcon(
                                     Icons.Default.Edit,
                                     contentDescription = null,
-                                    modifier = Modifier.padding(start = 8.dp).size(18.dp),
+                                    size = MinputIconSize.M,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 8.dp),
                                 )
                             }
                         },
@@ -285,7 +303,11 @@ fun CompactGalleryBody(modifier: Modifier = Modifier) {
                     CompactDropdownMenuItem(
                         text = label,
                         onClick = { menuOpen = false },
-                        trailingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        trailingIcon = { MinputIcon(
+                            Icons.Default.Settings,
+                            contentDescription = null,
+                            size = MinputIconSize.Xl,
+                        ) },
                     )
                 }
             }

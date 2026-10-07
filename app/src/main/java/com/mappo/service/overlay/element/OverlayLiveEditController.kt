@@ -1,5 +1,7 @@
 package com.mappo.service.overlay.element
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -165,7 +167,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import androidx.compose.ui.res.painterResource
 import com.mappo.MainActivity
 import com.mappo.R
 import com.mappo.data.model.OverlayElement
@@ -1227,14 +1228,14 @@ class OverlayLiveEditController @Inject constructor(
             contentAlignment = Alignment.Center,
         ) {
             // Single filled triangles on the small zones; double (fast-forward style) on the large.
-            PosZone("up", offsetY = -smallOff) { PosIcon(Icons.Default.PlayArrow, -90f, POS_SMALL_ICON_DP, iconTint, "Up 1") }
-            PosZone("down", offsetY = smallOff) { PosIcon(Icons.Default.PlayArrow, 90f, POS_SMALL_ICON_DP, iconTint, "Down 1") }
-            PosZone("left", offsetX = -smallOff) { PosIcon(Icons.Default.PlayArrow, 180f, POS_SMALL_ICON_DP, iconTint, "Left 1") }
-            PosZone("right", offsetX = smallOff) { PosIcon(Icons.Default.PlayArrow, 0f, POS_SMALL_ICON_DP, iconTint, "Right 1") }
-            PosZone("up_big", offsetY = -largeOff) { PosIcon(Icons.Default.FastForward, -90f, POS_LARGE_ICON_DP, iconTint, "Up 10") }
-            PosZone("down_big", offsetY = largeOff) { PosIcon(Icons.Default.FastForward, 90f, POS_LARGE_ICON_DP, iconTint, "Down 10") }
-            PosZone("left_big", offsetX = -largeOff) { PosIcon(Icons.Default.FastRewind, 0f, POS_LARGE_ICON_DP, iconTint, "Left 10") }
-            PosZone("right_big", offsetX = largeOff) { PosIcon(Icons.Default.FastForward, 0f, POS_LARGE_ICON_DP, iconTint, "Right 10") }
+            PosZone("up", offsetY = -smallOff) { PosIcon(Icons.Default.PlayArrow, -90f, POS_SMALL_ICON, iconTint, "Up 1") }
+            PosZone("down", offsetY = smallOff) { PosIcon(Icons.Default.PlayArrow, 90f, POS_SMALL_ICON, iconTint, "Down 1") }
+            PosZone("left", offsetX = -smallOff) { PosIcon(Icons.Default.PlayArrow, 180f, POS_SMALL_ICON, iconTint, "Left 1") }
+            PosZone("right", offsetX = smallOff) { PosIcon(Icons.Default.PlayArrow, 0f, POS_SMALL_ICON, iconTint, "Right 1") }
+            PosZone("up_big", offsetY = -largeOff) { PosIcon(Icons.Default.FastForward, -90f, POS_LARGE_ICON, iconTint, "Up 10") }
+            PosZone("down_big", offsetY = largeOff) { PosIcon(Icons.Default.FastForward, 90f, POS_LARGE_ICON, iconTint, "Down 10") }
+            PosZone("left_big", offsetX = -largeOff) { PosIcon(Icons.Default.FastRewind, 0f, POS_LARGE_ICON, iconTint, "Left 10") }
+            PosZone("right_big", offsetX = largeOff) { PosIcon(Icons.Default.FastForward, 0f, POS_LARGE_ICON, iconTint, "Right 10") }
         }
     }
 
@@ -1263,8 +1264,14 @@ class OverlayLiveEditController @Inject constructor(
     }
 
     @Composable
-    private fun PosIcon(icon: ImageVector, rotation: Float, sizeDp: Int, tint: androidx.compose.ui.graphics.Color, desc: String) {
-        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.rotate(rotation).requiredSize(sizeDp.dp))
+    private fun PosIcon(icon: ImageVector, rotation: Float, size: MinputIconSize, tint: androidx.compose.ui.graphics.Color, desc: String) {
+        MinputIcon(
+            icon,
+            contentDescription = desc,
+            size = size,
+            tint = tint,
+            modifier = Modifier.rotate(rotation),
+        )
     }
 
     /** The press position relative to [key]'s zone (window-local px) — the ripple's origin. */
@@ -2347,7 +2354,13 @@ class OverlayLiveEditController @Inject constructor(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item.leadingIcon?.let {
-                Icon(it, contentDescription = null, tint = contentColor, modifier = Modifier.size(18.dp))
+                MinputIcon(
+                    it,
+                    contentDescription = null,
+                    size = MinputIconSize.M,
+                    tint = contentColor,
+                    slot = true,
+                )
             }
             Text(
                 text = item.label,
@@ -2359,11 +2372,11 @@ class OverlayLiveEditController @Inject constructor(
             )
             // Selected rows get a check (on top of the theme-color label).
             if (item.selected) {
-                Icon(
+                MinputIcon(
                     Icons.Default.Check,
                     contentDescription = "Selected",
+                    size = MinputIconSize.M,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp),
                 )
             }
             when (trailing) {
@@ -2382,25 +2395,20 @@ class OverlayLiveEditController @Inject constructor(
                 val arrow = Icons.AutoMirrored.Filled.ArrowRight
                 if (item.onClick != null) {
                     // Split row: arrow is its own tap target so the body can keep its select action.
-                    Icon(
+                    MinputIcon(
                         arrow,
                         contentDescription = "Open submenu",
+                        size = MinputIconSize.Xs,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable(enabled = item.enabled) {
-                                toggleSubmenu(depth, rowTop, item.label, item.submenuWidthDp ?: MENU_WIDTH_DP, item.submenu!!)
-                            }
-                            .padding(2.dp)
-                            .size(18.dp),
+                        modifier = Modifier.clip(CircleShape) .clickable(enabled = item.enabled) { toggleSubmenu(depth, rowTop, item.label, item.submenuWidthDp ?: MENU_WIDTH_DP, item.submenu!!) } .padding(2.dp),
+                        slot = true,
                     )
                 } else {
-                    Icon(
+                    MinputIcon(
                         arrow,
                         contentDescription = null,
-                        tint = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                        modifier = Modifier.size(18.dp),
+                        size = MinputIconSize.Xxs,
+                        tint = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                     )
                 }
             }
@@ -2768,11 +2776,12 @@ class OverlayLiveEditController @Inject constructor(
                 onClick = { openSub("gesture-$gesture") { GesturePickEntries(el.id, gesture, draft) } },
             )
             // The remap editor's input→output flow marker.
-            Icon(
-                painterResource(R.drawable.lucide_play_filled),
+            MinputIcon(
+                R.drawable.lucide_play_filled,
                 contentDescription = null,
+                size = MinputIconSize.Xxs,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 6.dp).size(10.dp),
+                modifier = Modifier.padding(horizontal = 6.dp),
             )
             MinputButton(
                 text = outputLabel(target),
@@ -3505,7 +3514,13 @@ class OverlayLiveEditController @Inject constructor(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item.leadingIcon?.let {
-                Icon(it, contentDescription = null, tint = contentColor, modifier = Modifier.size(18.dp))
+                MinputIcon(
+                    it,
+                    contentDescription = null,
+                    size = MinputIconSize.M,
+                    tint = contentColor,
+                    slot = true,
+                )
             }
             Text(
                 text = item.label,
@@ -3516,11 +3531,11 @@ class OverlayLiveEditController @Inject constructor(
                 color = contentColor,
             )
             if (item.submenu != null) {
-                Icon(
+                MinputIcon(
                     Icons.AutoMirrored.Filled.ArrowRight,
                     contentDescription = null,
+                    size = MinputIconSize.Xxs,
                     tint = contentColor,
-                    modifier = Modifier.size(18.dp),
                 )
             }
         }
@@ -3552,7 +3567,12 @@ class OverlayLiveEditController @Inject constructor(
             contentAlignment = Alignment.Center,
         ) {
             item.leadingIcon?.let {
-                Icon(it, contentDescription = item.label, tint = tint, modifier = Modifier.size(22.dp))
+                MinputIcon(
+                    it,
+                    contentDescription = item.label,
+                    size = MinputIconSize.L,
+                    tint = tint,
+                )
             }
         }
     }
@@ -3921,7 +3941,7 @@ class OverlayLiveEditController @Inject constructor(
         private const val POS_BTN_HALF_F = 0.176f   // each icon's square hit/ripple zone is 2·this
         private const val POS_GAP_F = 0.04f         // gap between adjacent zones (close↔small↔large)
         private const val POS_BG_HALF_F = 0.21f     // plus-background bar half-width (fully rounded ends)
-        private const val POS_SMALL_ICON_DP = 18    // single-arrow legend (small / 1px move)
-        private const val POS_LARGE_ICON_DP = 22    // double-arrow legend (large / 10px move)
+        private val POS_SMALL_ICON = MinputIconSize.Xs    // single-arrow legend (small / 1px move)
+        private val POS_LARGE_ICON = MinputIconSize.L     // double-arrow legend (large / 10px move)
     }
 }

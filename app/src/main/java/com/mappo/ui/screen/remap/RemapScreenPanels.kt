@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,7 +33,6 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -51,7 +52,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -195,11 +195,12 @@ private fun LayoutSettingsPanelContent(
 @Composable
 internal fun OptionEntryRow(entry: RemapOptionEntry, onClose: () -> Unit) {
     PanelRow(onClick = { onClose(); entry.onClick() }) {
-        Icon(
+        MinputIcon(
             entry.icon,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -241,17 +242,17 @@ internal fun PanelHeader(
         // buttons, whose glyphs sit inside an invisible circular tap target.
         Spacer(Modifier.width(MinputPanelTitleInset))
         if (glyphRes != null) {
-            Icon(
-                painterResource(glyphRes),
+            MinputIcon(
+                glyphRes,
                 contentDescription = null,
-                modifier = Modifier.size(MinputSize.Standard.iconSize),
+                size = MinputSize.Standard.iconSize,
                 tint = Color.Unspecified,
             )
         } else if (icon != null) {
-            Icon(
+            MinputIcon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(MinputSize.Standard.iconSize),
+                size = MinputSize.Standard.iconSize,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -358,10 +359,10 @@ internal fun PowerRow(powerOn: Boolean, onPowerChange: (Boolean) -> Unit) {
                 onCheckedChange = onPowerChange,
                 modifier = Modifier.scaledLayout(0.8f),
                 thumbContent = {
-                    Icon(
-                        imageVector = if (powerOn) Icons.Filled.Check else Icons.Filled.Close,
+                    MinputIcon(
+                        if (powerOn) Icons.Filled.Check else Icons.Filled.Close,
                         contentDescription = if (powerOn) "Mappo features on" else "Mappo features off",
-                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                        size = MinputIconSize.Xs,
                     )
                 },
             )
@@ -386,11 +387,12 @@ internal fun MoveCommitRow(current: MoveCommitGesture, onPick: (MoveCommitGestur
             .height(PanelPowerRowHeight)
             .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
-        Icon(
+        MinputIcon(
             Icons.Filled.OpenWith,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -425,11 +427,12 @@ internal fun TileRevealRow(current: TileReveal, onPick: (TileReveal) -> Unit) {
             .height(PanelPowerRowHeight)
             .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
-        Icon(
+        MinputIcon(
             Icons.Filled.GridView,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -462,11 +465,12 @@ internal fun TextSizeRow(current: TextSize, onPick: (TextSize) -> Unit) {
             .height(PanelPowerRowHeight)
             .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
-        Icon(
+        MinputIcon(
             Icons.Filled.FormatSize,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -502,11 +506,12 @@ internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) 
             .clickable { onEnabledChange(!enabled) }
             .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
-        Icon(
+        MinputIcon(
             Lucide.Type,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -549,13 +554,14 @@ internal fun AutoDetectRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit)
             .clickable { onEnabledChange(!enabled) }
             .padding(horizontal = MinputSize.Standard.contentPadding),
     ) {
-        Icon(
+        MinputIcon(
             // Radar — the app-watching sweep. (The bar form carried no glyph at all, just an
             // "AUTO" overline; a settings row needs one to sit with its siblings.)
             Lucide.Radar,
             contentDescription = null,
-            modifier = Modifier.size(PanelRowIconSize),
+            size = PanelRowGlyphSize,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
         )
         Spacer(Modifier.width(MinputGlyphLabelGap))
         Text(
@@ -688,8 +694,13 @@ internal val PanelRowHeight = 32.dp
 /** The power row runs slightly taller so the scaled switch keeps breathing room. */
 private val PanelPowerRowHeight = 36.dp
 
-/** Leading glyph edge inside panel rows. */
+/** The leading SLOT of a panel row — the width an app icon (a bitmap) takes, and the spacer
+ *  standing in for a missing glyph, so every row's label starts at the same x. */
 internal val PanelRowIconSize = 16.dp
+
+/** A panel row's leading glyph, on the icon scale (ink). Drawn as a slot ([MinputIcon]'s
+ *  `slot`) so differently-shaped glyphs still leave the labels aligned. */
+internal val PanelRowGlyphSize = MinputIconSize.M
 
 /** Target height of the new-layout modal: header + name field + apps row + footer. */
 internal val AddLayoutModalHeight = 172.dp

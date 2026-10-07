@@ -1,5 +1,7 @@
 package com.mappo.ui.component
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -116,10 +117,10 @@ fun ColorSlotGroup(
                 headlineContent = { Text("Reset to default") },
                 supportingContent = { Text(resetDescription) },
                 trailingContent = {
-                    Icon(
+                    MinputIcon(
                         Icons.Filled.RestartAlt,
                         contentDescription = null,
-                        modifier = Modifier.size(24.dp),
+                        size = MinputIconSize.Xl,
                     )
                 },
                 modifier = Modifier

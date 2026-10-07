@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap.settings
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +26,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -100,7 +101,11 @@ fun ModeSettingsScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
                 actions = {
@@ -254,10 +259,10 @@ private fun InputPickerSettingRow(
                     Text(prettyInputLabel(token), style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = { onChange(selected - token) }, modifier = Modifier.size(28.dp)) {
-                        Icon(
+                        MinputIcon(
                             Icons.Filled.Close,
                             contentDescription = "Remove",
-                            modifier = Modifier.size(16.dp),
+                            size = MinputIconSize.Xs,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -276,7 +281,7 @@ private fun InputPickerSettingRow(
             }
         } else {
             TextButton(onClick = { capturing = true }) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                MinputIcon(Icons.Filled.Add, contentDescription = null, size = MinputIconSize.Xs)
                 Spacer(Modifier.width(4.dp))
                 Text(if (selected.isEmpty()) "Add button" else "Add another")
             }
@@ -340,10 +345,10 @@ private fun DropdownSettingRow(
             ) {
                 Text(selected.label, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.width(4.dp))
-                Icon(
+                MinputIcon(
                     Icons.Filled.ArrowDropDown,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp),
+                    size = MinputIconSize.Xxs,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

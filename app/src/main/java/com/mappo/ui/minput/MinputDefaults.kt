@@ -452,17 +452,18 @@ val MinputMorphCorner = 8.dp
  * Each variant carries its [height] (the corner of a pill is always half of it — [corner]),
  * its horizontal [contentPadding] (between the frame and its label/glyph — ONE value per
  * variant, so a button and a field beside it measure alike), and its [iconSize] (a leading or
- * trailing glyph's box; also an icon-only chromed button's glyph). The text style is the mini
+ * trailing glyph's INK size on the [MinputIconSize] scale; also an icon-only chromed button's
+ * glyph). The text style is the mini
  * style at every size — the variants scale the frame around the text, not the text.
  *
  * Small's height is the tile height Dylan measured off the device on 2026-09-23 (42 physical
  * px at the test device's density of 2.0) — the tiles used to convert those pixels at
  * runtime; as a variant it is a dp value like the others.
  */
-enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: Dp) {
-    Small(height = 21.dp, contentPadding = 10.dp, iconSize = 11.dp),
-    Standard(height = 24.dp, contentPadding = 12.dp, iconSize = 13.dp),
-    Large(height = 30.dp, contentPadding = 12.dp, iconSize = 13.dp);
+enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: MinputIconSize) {
+    Small(height = 21.dp, contentPadding = 10.dp, iconSize = MinputIconSize.Xs),
+    Standard(height = 24.dp, contentPadding = 12.dp, iconSize = MinputIconSize.S),
+    Large(height = 30.dp, contentPadding = 12.dp, iconSize = MinputIconSize.S);
 
     /** A pill at this scale: half the height. */
     val corner: Dp get() = height / 2
@@ -479,15 +480,6 @@ val MinputGlyphLabelGap = 5.dp
 /** Width cap for a pill dropdown's label before it ellipsizes. */
 val MinputPillLabelMaxWidth = 156.dp
 
-/** Optical-centering bias for FIXED-WIDTH, center-arranged pills with a leading icon: total
- *  extra END padding vs START, shifting the icon+label block bias/2 toward the icon. Cancels
- *  the leading icon's built-in live-area padding — Material/Lucide glyphs only ink ~10-11dp
- *  of their 13dp box, so with symmetric padding the left flank measures ~2dp wider than the
- *  right (device screenshot audit, 2026-07-13). Wrap-width pills don't need this: their
- *  flanks are pure padding with no centering slack to compare. M3 precedent for biasing
- *  padding toward the icon side: ButtonDefaults.ButtonWithIconContentPadding (16dp icon side
- *  vs 24dp text side). NOT glyph scaling — layout-only, tune freely. */
-val MinputPillIconSideBias = 2.dp
 
 /**
  * **Optical centring for an element whose two ends round DIFFERENTLY** — the library-wide rule
@@ -541,15 +533,16 @@ val MinputSwitchThumbInset = 2.dp
 val MinputSwitchTallHeight = 18.dp
 val MinputSwitchTallWidth = 32.dp
 
-/** How far the on-handle mark sits inside the thumb. */
-val MinputSwitchIconInset = 2.dp
+/** How far the on-handle mark's INK sits inside the thumb (2026-10-06: measured to the ink
+ *  now, so it absorbs the glyph margin the old 2dp box inset relied on). */
+val MinputSwitchIconInset = 3.dp
 
 /** Outer tap-target edge of [MinputIconButton] (also its footprint spacer in editor rows) —
  *  an icon-only button is a [MinputSize.Standard] square. */
 val MinputIconButtonSize = MinputSize.Standard.height
 
-/** Icon edge inside [MinputIconButton]. */
-val MinputIconButtonIconSize = 16.dp
+/** Ink size of the glyph inside a bare [MinputIconButton]. */
+val MinputIconButtonIconSize = MinputIconSize.M
 
 // ── Panel anatomy: header + divider + content ────────────────────────────────────────────
 // The shared skeleton of the full-screen panel surfaces (the remap layout/options panels,
@@ -569,7 +562,7 @@ val MinputPanelDividerContentGap = 6.dp
  *  trailing [MinputIconButton]s read this much inward of their edge (their glyph sits
  *  (button − glyph)/2 inside an invisible circular tap target), so a bare title at the same
  *  padding looks flush-left by comparison — this nudge optically matches the two sides. */
-val MinputPanelTitleInset = (MinputIconButtonSize - MinputIconButtonIconSize) / 2
+val MinputPanelTitleInset = (MinputIconButtonSize - MinputIconButtonIconSize.dp) / 2
 
 // ── App-bar anatomy ──────────────────────────────────────────────────────────────────────
 // The fixed edge bars of the screen chrome (the remap top bar, the home frame's bottom bar):

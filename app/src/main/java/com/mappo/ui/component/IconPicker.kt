@@ -1,5 +1,7 @@
 package com.mappo.ui.component
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -109,7 +111,12 @@ fun IconPickerDialog(
                                 .clickable { onSelect(name) }
                                 .padding(8.dp),
                         ) {
-                            Icon(vec, contentDescription = name, modifier = Modifier.size(24.dp))
+                            MinputIcon(
+                                vec,
+                                contentDescription = name,
+                                size = MinputIconSize.Xl,
+                                slot = true,
+                            )
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 name,

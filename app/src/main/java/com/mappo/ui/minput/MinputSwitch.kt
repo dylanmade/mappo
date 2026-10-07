@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -114,11 +113,12 @@ fun MinputSwitch(
             if (stateIcons) {
                 // Drawn ON the thumb, so the mark travels with it and always reads against the
                 // thumb's own fill rather than the track's.
-                Icon(
-                    imageVector = if (checked) Lucide.Check else Lucide.X,
+                // A computed size (the thumb's own geometry), hence the ink overload.
+                MinputIcon(
+                    if (checked) Lucide.Check else Lucide.X,
                     contentDescription = null,
+                    inkSize = thumbSize - MinputSwitchIconInset * 2,
                     tint = if (checked) colors.primary else colors.surfaceContainerHighest,
-                    modifier = Modifier.size(thumbSize - MinputSwitchIconInset * 2),
                 )
             }
         }

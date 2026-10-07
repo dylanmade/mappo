@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,6 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -67,9 +68,10 @@ fun ShizukuSetupScreen(
                 title = { Text(stringResource(R.string.shizuku_screen_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
+                        MinputIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.shizuku_back),
+                            size = MinputIconSize.L,
                         )
                     }
                 },
@@ -182,11 +184,12 @@ private fun SetupStepRow(
 ) {
     ListItem(
         leadingContent = {
-            Icon(
-                imageVector = status.icon(),
+            MinputIcon(
+                status.icon(),
                 contentDescription = stringResource(status.contentDescriptionRes()),
+                size = MinputIconSize.Xl,
                 tint = status.tint(),
-                modifier = Modifier.size(24.dp),
+                slot = true,
             )
         },
         headlineContent = {
@@ -231,11 +234,11 @@ private fun StepRowTrailing(status: StepStatus, ctaRes: Int, onCta: () -> Unit) 
 private fun TroubleshootingRow(text: String) {
     ListItem(
         leadingContent = {
-            Icon(
-                imageVector = Icons.Default.Lightbulb,
+            MinputIcon(
+                Icons.Default.Lightbulb,
                 contentDescription = null,
+                size = MinputIconSize.L,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
             )
         },
         headlineContent = {

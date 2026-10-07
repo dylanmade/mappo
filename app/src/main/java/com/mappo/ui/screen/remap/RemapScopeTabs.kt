@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,7 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -125,10 +126,10 @@ private fun BarIdentityStack(
             if (icon != null) {
                 AppIconImage(icon, size = iconSize)
             } else {
-                Icon(
+                MinputIcon(
                     Icons.Filled.Apps,
                     contentDescription = null,
-                    modifier = Modifier.size(iconSize),
+                    size = MinputIconSize.M,
                     tint = overlineColor,
                 )
             }

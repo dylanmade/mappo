@@ -2,11 +2,13 @@ package com.mappo.ui.minput
 
 import android.graphics.Matrix
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -61,17 +63,50 @@ fun MinputIcon(
     size: MinputIconSize = MinputIconSize.S,
     /** [Color.Unspecified] draws the vector's own colours (multi-colour artwork). */
     tint: Color = LocalContentColor.current,
+    /**
+     * Reserve a SQUARE of [size] and centre the glyph in it. Only for glyphs that form a
+     * COLUMN — menu rows, list rows, a glyph gutter — where labels beside differently-shaped
+     * glyphs must still line up. Everywhere else the box is the ink and nothing more.
+     */
+    slot: Boolean = false,
+) = MinputIcon(icon, contentDescription, inkSize = size.dp, modifier = modifier, tint = tint, slot = slot)
+
+/**
+ * **The escape hatch: an ink size that isn't on the scale.** Only for sizes that are COMPUTED
+ * rather than chosen — a glyph sized from its control's own geometry (a checkbox's tick, a
+ * switch thumb's mark) or from user data (a keyboard key's configured text size, an overlay
+ * element's size). A designed size always picks a [MinputIconSize].
+ */
+@Composable
+fun MinputIcon(
+    icon: ImageVector,
+    contentDescription: String?,
+    inkSize: Dp,
+    modifier: Modifier = Modifier,
+    tint: Color = LocalContentColor.current,
+    slot: Boolean = false,
 ) {
     val inked = remember(icon) { icon.croppedToInk() }
     val longer = max(inked.viewportWidth, inked.viewportHeight)
-    val width = size.dp * (inked.viewportWidth / longer)
-    val height = size.dp * (inked.viewportHeight / longer)
-    Icon(
-        painter = rememberVectorPainter(inked),
-        contentDescription = contentDescription,
-        tint = tint,
-        modifier = modifier.size(width, height),
-    )
+    val width = inkSize * (inked.viewportWidth / longer)
+    val height = inkSize * (inked.viewportHeight / longer)
+    if (slot) {
+        Box(modifier.size(inkSize), contentAlignment = Alignment.Center) {
+            Icon(
+                painter = rememberVectorPainter(inked),
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(width, height),
+            )
+        }
+    } else {
+        Icon(
+            painter = rememberVectorPainter(inked),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = modifier.size(width, height),
+        )
+    }
 }
 
 /** A vector drawable resource, through the same ink measurement. (PNG resources aren't
@@ -83,7 +118,8 @@ fun MinputIcon(
     modifier: Modifier = Modifier,
     size: MinputIconSize = MinputIconSize.S,
     tint: Color = LocalContentColor.current,
-) = MinputIcon(ImageVector.vectorResource(id), contentDescription, modifier, size, tint)
+    slot: Boolean = false,
+) = MinputIcon(ImageVector.vectorResource(id), contentDescription, modifier, size, tint, slot)
 
 /**
  * **The icon scale** — the glyph's longer inked side. One scale for every icon in the app, so
@@ -94,15 +130,17 @@ fun MinputIcon(
  * inked about 11, the old 16dp icon-button box about 14.
  */
 enum class MinputIconSize(val dp: Dp) {
-    /** Trailing markers riding a line of mini text (a layout row's like heart). */
+    /** Trailing markers riding a line of mini text (a layout row's like heart); dropdown arrows. */
     Xxs(8.dp),
-    /** Markers that need a little more room to read (the download tray + arrow). */
+    /** Markers that need a little more room to read (the download tray + arrow); Small controls. */
     Xs(10.dp),
-    /** A pill's leading glyph; text-line companions. */
+    /** A Standard control's glyph; text-line companions; tile glyphs. */
     S(12.dp),
+    /** Utility glyphs: bare icon buttons, menu rows, panel rows. */
     M(14.dp),
-    /** Utility glyphs in a bare icon button. */
+    /** Toolbar and dense-list glyphs. */
     L(16.dp),
+    /** App-bar actions and navigation (M3's 24dp icon box). */
     Xl(20.dp),
     Xxl(24.dp),
 }

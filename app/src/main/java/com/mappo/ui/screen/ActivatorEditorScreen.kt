@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +21,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -86,7 +87,11 @@ fun ActivatorEditorScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        MinputIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            size = MinputIconSize.L,
+                        )
                     }
                 },
                 actions = {
@@ -475,10 +480,10 @@ private fun HapticIntensityRow(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(hapticLabel(selected), style = MaterialTheme.typography.bodyMedium)
-                        Icon(
+                        MinputIcon(
                             Icons.Filled.ArrowDropDown,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                            size = MinputIconSize.Xxs,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

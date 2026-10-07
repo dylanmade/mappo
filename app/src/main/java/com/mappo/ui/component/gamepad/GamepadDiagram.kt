@@ -1,5 +1,7 @@
 package com.mappo.ui.component.gamepad
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +21,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -232,7 +233,12 @@ private fun DPadArm(
     onClick: () -> Unit,
 ) {
     GamepadControl(token, selected, RoundedCornerShape(6.dp), modifier, onClick) { contentColor ->
-        Icon(icon, contentDescription = contentDescription, tint = contentColor)
+        MinputIcon(
+            icon,
+            contentDescription = contentDescription,
+            size = MinputIconSize.Xl,
+            tint = contentColor,
+        )
     }
 }
 

@@ -1,5 +1,7 @@
 package com.mappo.ui.component
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -27,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -164,10 +165,10 @@ fun ReorderableTabBar(
             enabled = listState.canScrollBackward,
             modifier = Modifier.size(if (dense) 26.dp else 32.dp),
         ) {
-            Icon(
+            MinputIcon(
                 Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                 contentDescription = "Scroll tabs left",
-                modifier = Modifier.size(if (dense) 16.dp else 18.dp),
+                size = MinputIconSize.Xxs,
             )
         }
         LazyRow(
@@ -368,10 +369,10 @@ fun ReorderableTabBar(
             enabled = listState.canScrollForward,
             modifier = Modifier.size(if (dense) 26.dp else 32.dp),
         ) {
-            Icon(
+            MinputIcon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = "Scroll tabs right",
-                modifier = Modifier.size(if (dense) 16.dp else 18.dp),
+                size = MinputIconSize.Xxs,
             )
         }
     }
@@ -420,11 +421,11 @@ private fun TabSurface(
             ),
     ) {
         if (leadingIcon != null) {
-            Icon(
+            MinputIcon(
                 leadingIcon,
                 contentDescription = null,
+                size = if (dense) MinputIconSize.Xs else MinputIconSize.S,
                 tint = labelColor,
-                modifier = Modifier.size(if (dense) 12.dp else 14.dp),
             )
             Spacer(Modifier.width(if (dense) 5.dp else 6.dp))
         }

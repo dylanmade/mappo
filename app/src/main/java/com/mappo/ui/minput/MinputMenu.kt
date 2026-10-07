@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.LocalContentColor
@@ -30,13 +29,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
@@ -264,8 +263,8 @@ private fun rememberMinputMenuWidth(
     return remember(labels, hasLeadingIcon, hasTrailingIcon, style, density) {
         val widestLabelPx = labels.maxOfOrNull { measurer.measure(it, style).size.width } ?: 0
         val decor = MinputMenuItemPadding * 2 +
-            (if (hasLeadingIcon) MinputMenuIconSize + MinputMenuItemPadding else 0.dp) +
-            (if (hasTrailingIcon) MinputMenuIconSize + MinputMenuItemPadding else 0.dp)
+            (if (hasLeadingIcon) MinputMenuIconSize.dp + MinputMenuItemPadding else 0.dp) +
+            (if (hasTrailingIcon) MinputMenuIconSize.dp + MinputMenuItemPadding else 0.dp)
         val label = with(density) { widestLabelPx.toDp() }
         (decor + label + MinputMenuWidthSlack)
             .coerceIn(MinputMenuMinWidth, MinputMenuMaxWidth)
@@ -509,11 +508,7 @@ fun BoxScope.MinputActionMenu(
                 enabled = action.enabled,
                 colors = colors,
                 leadingIcon = {
-                    Icon(
-                        action.icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(MinputMenuIconSize),
-                    )
+                    MinputIcon(action.icon, contentDescription = null, size = MinputMenuIconSize, slot = true)
                 },
                 onClick = { onDismissRequest(); action.onClick() },
             )
@@ -542,7 +537,7 @@ fun <T> BoxScope.MinputDropdownMenu(
     options: List<T>,
     optionLabel: (T) -> String,
     onPick: (T) -> Unit,
-    optionIcon: (@Composable (T) -> Painter?)? = null,
+    optionIcon: (@Composable (T) -> ImageVector?)? = null,
     modifier: Modifier = Modifier,
     placement: MinputMenuPlacement = MinputMenuPlacement.Below,
     caret: Boolean = false,
@@ -569,20 +564,12 @@ fun <T> BoxScope.MinputDropdownMenu(
                 enabled = true,
                 leadingIcon = menuIcon?.let {
                     {
-                        Icon(
-                            it,
-                            contentDescription = null,
-                            modifier = Modifier.size(MinputMenuIconSize),
-                        )
+                        MinputIcon(it, contentDescription = null, size = MinputMenuIconSize, slot = true)
                     }
                 },
                 trailingIcon = if (option == current) {
                     {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(MinputMenuIconSize),
-                        )
+                        MinputIcon(Icons.Filled.Check, contentDescription = null, size = MinputMenuIconSize, slot = true)
                     }
                 } else null,
                 onClick = { onDismissRequest(); if (option != current) onPick(option) },
@@ -606,7 +593,7 @@ private val MinputMenuMaxWidth = 280.dp
  *  menu type scale; the SLOT stays M3's width (so labels still align down the column) and only
  *  the glyph inside it is scaled back. Sizing the glyph is chrome — minput's job; changing the
  *  slot or the row metrics is M3's, and left alone. */
-internal val MinputMenuIconSize = 16.dp
+internal val MinputMenuIconSize = MinputIconSize.M
 
 /** Row height. Below M3's 48dp touch-target container — deliberately; see [MinputMenuRow]. */
 internal val MinputMenuItemHeight = 34.dp

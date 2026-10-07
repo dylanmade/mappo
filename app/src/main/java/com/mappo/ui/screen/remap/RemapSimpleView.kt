@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -12,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -1129,12 +1130,13 @@ private fun MorphingCellText(
 private fun AssignmentCellRow(cell: AssignmentCell, color: Color, style: TextStyle) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         cell.glyph?.let { output ->
-            InputGlyphs.outputPainter(output)?.let { painter ->
-                Icon(
-                    painter,
+            InputGlyphs.outputIcon(output)?.let { glyph ->
+                MinputIcon(
+                    glyph,
                     contentDescription = null,
-                    modifier = Modifier.size(AssignmentOutputGlyphSize),
+                    size = AssignmentOutputGlyphSize,
                     tint = color,
+                    slot = true,
                 )
                 Spacer(Modifier.width(MinputGlyphLabelGap))
             }
@@ -1332,7 +1334,7 @@ private fun AssignmentTable(
     val density = LocalDensity.current
     val restSpans = remember(rows, measurer, cellStyle, density) {
         val glyphRun = with(density) {
-            (AssignmentOutputGlyphSize + MinputGlyphLabelGap).roundToPx()
+            (AssignmentOutputGlyphSize.dp + MinputGlyphLabelGap).roundToPx()
         }
         rows.map { row ->
             IntArray(row.slotCount) { column ->
@@ -1390,7 +1392,7 @@ private fun AssignmentTable(
         },
         content = {
             rows.forEachIndexed { rowIndex, row ->
-                Box(Modifier.layoutId(GlyphSlot(rowIndex))) {
+                Box(Modifier.layoutId(GlyphSlot(rowIndex)), contentAlignment = Alignment.Center) {
                     InputGlyphs.SubInputGlyph(row.spec.source, row.spec.subInputKey, size = SummaryGlyphSize)
                 }
                 for (column in 0 until row.slotCount) {
@@ -1600,7 +1602,7 @@ private fun Density.tableMetrics(rowHeight: Dp, rowGap: Dp, tileWidth: Dp): Tabl
     return TableMetrics(
         rowHeight = height,
         rowGap = rowGap.roundToPx(),
-        glyph = SummaryGlyphSize.roundToPx(),
+        glyph = SummaryGlyphSlot.roundToPx(),
         glyphGap = AssignmentGlyphGap.roundToPx(),
         dividerWidth = dividerWidth,
         dividerHeight = AssignmentDividerHeight.roundToPx().coerceAtMost(height),
@@ -1677,13 +1679,20 @@ private data class DividerSlot(val row: Int, val column: Int)
 // which are specified in device pixels and shared by both modes.
 
 /** The input glyph that anchors every row — the SAME size in both modes (Dylan, 2026-09-23).
- *  Raised from 14dp on 2026-09-22 to sit with the taller tiles; the resting view gets it too,
- *  because the glyph is the row's only identity in either mode. */
-private val SummaryGlyphSize = 18.dp
+ *  Raised on 2026-09-22 to sit with the taller tiles; the resting view gets it too, because the
+ *  glyph is the row's only identity in either mode. An INK size since the MinputIcon migration
+ *  (2026-10-06): the Kenney prompts ink 3/4 of their box, so the old 18dp box drew ~14dp. */
+private val SummaryGlyphSize = MinputIconSize.M
+
+/** The COLUMN the row glyph sits in — a layout metric, separate from the glyph's ink since the
+ *  MinputIcon migration (2026-10-06). It stays the 18dp the glyph box always was: the group boxes'
+ *  widths, and edit mode's camera built around them, are measured from it (shrinking it to the
+ *  ink's 14dp tripped a camera edge case — `scrollRangeIsTheContent_1x1small_oneGroup_*`). */
+private val SummaryGlyphSlot = 18.dp
 
 /** The DEVICE glyph leading one command's text — the advanced tile's scale
  *  (TileOutputGlyphSize), since the two views print the same command. */
-private val AssignmentOutputGlyphSize = 14.dp
+private val AssignmentOutputGlyphSize = MinputIconSize.Xs
 
 /** Gap between the glyph and its first assignment column. */
 private val AssignmentGlyphGap = 5.dp

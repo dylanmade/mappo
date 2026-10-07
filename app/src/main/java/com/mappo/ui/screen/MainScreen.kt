@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -1236,7 +1238,11 @@ internal fun KeyboardTopBar(
         modifier = Modifier.height(40.dp)
     ) {
         IconButton(onClick = onOpenDrawer, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Default.Menu, contentDescription = "Open menu", modifier = Modifier.size(20.dp))
+            MinputIcon(
+                Icons.Default.Menu,
+                contentDescription = "Open menu",
+                size = MinputIconSize.M,
+            )
         }
         KeyboardTabBar(
             layouts = layouts,
@@ -1254,20 +1260,20 @@ internal fun KeyboardTopBar(
             modifier = Modifier.weight(1f)
         )
         IconButton(onClick = onAddKeyboard, modifier = Modifier.size(40.dp)) {
-            Icon(
+            MinputIcon(
                 Icons.Default.Add,
                 contentDescription = "Add keyboard",
-                modifier = Modifier.size(20.dp)
+                size = MinputIconSize.S,
             )
         }
         // Edit / done toggle. Outside edit mode this is the only way besides the per-tab
         // long-press menu to enter edit mode; inside it, this is the only top-level exit
         // that doesn't navigate away (tab-switch and drawer-open also exit).
         IconButton(onClick = onToggleEditMode, modifier = Modifier.size(40.dp)) {
-            Icon(
+            MinputIcon(
                 if (isEditMode) Icons.Default.Check else Icons.Default.Edit,
                 contentDescription = if (isEditMode) "Exit edit mode" else "Edit buttons",
-                modifier = Modifier.size(20.dp)
+                size = MinputIconSize.M,
             )
         }
     }
@@ -1400,13 +1406,11 @@ internal fun KeyGrid(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
+                        MinputIcon(
                             Icons.Default.Add,
                             contentDescription = if (canInteract) "Add button at $c, $r" else null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = if (interactionBlocked) 0.2f else 0.4f
-                            )
+                            size = MinputIconSize.Xs,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy( alpha = if (interactionBlocked) 0.2f else 0.4f ),
                         )
                     }
                 }
@@ -1915,7 +1919,11 @@ internal fun KeyGrid(
                     ) {
                         DropdownMenuItem(
                             text = { Text("Configure button") },
-                            leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) },
+                            leadingIcon = { MinputIcon(
+                                Icons.Default.Tune,
+                                contentDescription = null,
+                                size = MinputIconSize.L,
+                            ) },
                             onClick = {
                                 buttonContextMenuFor = null
                                 onConfigureButton(currentButton.id)
@@ -1923,7 +1931,11 @@ internal fun KeyGrid(
                         )
                         DropdownMenuItem(
                             text = { Text("Duplicate button") },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                            leadingIcon = { MinputIcon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                size = MinputIconSize.Xxl,
+                            ) },
                             onClick = {
                                 buttonContextMenuFor = null
                                 onDuplicateButton(currentButton.id)
@@ -1937,10 +1949,11 @@ internal fun KeyGrid(
                                 )
                             },
                             leadingIcon = {
-                                Icon(
+                                MinputIcon(
                                     Icons.Default.Delete,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error
+                                    size = MinputIconSize.L,
+                                    tint = MaterialTheme.colorScheme.error,
                                 )
                             },
                             onClick = {
@@ -2348,11 +2361,11 @@ private fun RegionView(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (iconVec != null) {
-            Icon(
+            MinputIcon(
                 iconVec,
                 contentDescription = null,
+                inkSize = region.sizeSp.dp,
                 tint = iconColor,
-                modifier = Modifier.size((region.sizeSp * 1.2f).dp),
             )
         }
         if (text.isNotEmpty()) {
@@ -2402,12 +2415,11 @@ internal fun BottomBar(
             Text(leftActionLabel, style = MaterialTheme.typography.labelLarge)
         }
         Spacer(modifier = Modifier.weight(1f))
-        Icon(
+        MinputIcon(
             Icons.Default.SportsEsports,
             contentDescription = if (remapEnabled) "Remapping enabled" else "Remapping disabled",
-            modifier = Modifier.size(20.dp),
-            tint = if (remapEnabled) MaterialTheme.colorScheme.primary
-                   else MaterialTheme.colorScheme.onSurfaceVariant
+            size = MinputIconSize.L,
+            tint = if (remapEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.width(8.dp))
         Switch(

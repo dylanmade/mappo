@@ -1,5 +1,7 @@
 package com.mappo.ui.screen.remap
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -188,12 +189,13 @@ private fun AutoCommandName(
                 )
             }
             if (icons) {
-                InputGlyphs.outputPainter(output)?.let { painter ->
-                    Icon(
-                        painter,
+                InputGlyphs.outputIcon(output)?.let { glyph ->
+                    MinputIcon(
+                        glyph,
                         contentDescription = null,
-                        modifier = Modifier.size(AutoNameGlyphSize),
+                        size = AutoNameGlyphSize,
                         tint = color,
+                        slot = true,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))
                 }
@@ -210,7 +212,7 @@ private fun AutoCommandName(
 }
 
 /** Device glyph scale in the auto name — the tile's, since this previews the tile. */
-private val AutoNameGlyphSize = 14.dp
+private val AutoNameGlyphSize = MinputIconSize.Xs
 
 /** Air under the title row, and above the footer. */
 private val LabelDialogTitleGap = 10.dp

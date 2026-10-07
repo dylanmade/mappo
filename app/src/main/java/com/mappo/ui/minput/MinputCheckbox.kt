@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -99,12 +98,13 @@ fun MinputCheckbox(
                 .minputStrokeInset(),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
+            // A computed size (the box's own geometry), hence the ink overload.
+            MinputIcon(
                 Lucide.Check,
                 contentDescription = null,
+                inkSize = size - (MinputCheckboxTickInset + MinputBoxStroke) * 2,
                 tint = colors.onPrimary,
                 modifier = Modifier
-                    .size(size - (MinputCheckboxTickInset + MinputBoxStroke) * 2)
                     .graphicsLayer {
                         alpha = tick
                         scaleX = tick
@@ -129,8 +129,9 @@ val MinputCheckboxSize = MinputSwitchHeight
 /** Air between the box and its label. */
 val MinputCheckboxLabelGap = 5.dp
 
-/** How far the tick sits inside the box. */
-private val MinputCheckboxTickInset = 1.dp
+/** How far the tick's INK sits inside the box's outline (2026-10-06: measured to the ink now —
+ *  the old 1dp box inset left the same ~2dp of air once the glyph's own margin was counted). */
+private val MinputCheckboxTickInset = 2.dp
 
 /** Box rounding — a square with the corners knocked off, not a pill. */
 private val MinputCheckboxCorner = 3.dp

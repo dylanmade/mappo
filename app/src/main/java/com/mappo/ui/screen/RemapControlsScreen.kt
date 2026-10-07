@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputIcon
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -25,7 +27,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -926,7 +927,11 @@ private fun TriggerInputPickerSheet(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                    MinputIcon(
+                        Icons.Default.Close,
+                        contentDescription = "Close",
+                        size = MinputIconSize.M,
+                    )
                 }
             }
             HorizontalDivider()
@@ -972,9 +977,10 @@ private fun ShizukuUnavailableBanner(onOpenSetup: () -> Unit) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = Icons.Default.Warning,
+            MinputIcon(
+                Icons.Default.Warning,
                 contentDescription = null,
+                size = MinputIconSize.Xxl,
                 tint = MaterialTheme.colorScheme.onErrorContainer,
             )
             Spacer(Modifier.width(12.dp))
@@ -1072,10 +1078,10 @@ private fun NoLayoutTile(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.size(NoLayoutTileWidth, NoLayoutTileHeight),
         ) {
-            Icon(
+            MinputIcon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(NoLayoutTileIconSize),
+                size = NoLayoutTileIconSize,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(MinputGlyphLabelGap))
@@ -1165,7 +1171,7 @@ private val NoLayoutTileHeight = 76.dp
 private val NoLayoutTileGap = 8.dp
 
 /** No-layout state: glyph edge inside a route tile. */
-private val NoLayoutTileIconSize = 16.dp
+private val NoLayoutTileIconSize = MinputIconSize.M
 
 /** No-layout state: air between the message line and the tile row. */
 private val NoLayoutMessageTileGap = 12.dp
