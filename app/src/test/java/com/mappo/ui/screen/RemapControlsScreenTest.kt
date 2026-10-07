@@ -1,5 +1,8 @@
 package com.mappo.ui.screen
 
+import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
+import com.mappo.ui.minput.MinputBreadcrumbSize
+import com.mappo.ui.minput.recessDepth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
@@ -986,8 +989,13 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().boundsInRoot
         val order = listOf("bar:application", "bar:layout", "bar:set", "bar:buttons", "bar:pin")
             .map { it to bounds(it) }
+        // Joined crumbs overlap their BOXES by up to the recess depth (the recess is cut out of
+        // the box; see MinputBreadcrumbRow) — never by more.
+        val tolerance = with(composeRule.density) {
+            MinputBreadcrumbJoinDefault.recessDepth(MinputBreadcrumbSize.height).toPx()
+        }
         order.zipWithNext().forEach { (left, right) ->
-            assert(left.second.right <= right.second.left) {
+            assert(left.second.right - tolerance <= right.second.left + 0.5f) {
                 "${left.first} ran under ${right.first}: ${left.second} vs ${right.second}"
             }
         }
