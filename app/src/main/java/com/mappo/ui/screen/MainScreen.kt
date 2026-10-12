@@ -541,6 +541,9 @@ fun MainScreen(
                     // ── The hierarchy bar's pinned spot (2026-10-07) ──
                     barPin = barPin,
                     onBarPinChange = viewModel::setBarPin,
+                    // TEMPORARY: the no-overline / Standard-size bar under the real one, for a
+                    // side-by-side comparison on the device (2026-10-07).
+                    showBarComparison = true,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId ->

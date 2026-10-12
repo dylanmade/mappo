@@ -463,7 +463,12 @@ val MinputMorphCorner = 8.dp
 enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: MinputIconSize) {
     Small(height = 21.dp, contentPadding = 10.dp, iconSize = MinputIconSize.Xs),
     Standard(height = 24.dp, contentPadding = 12.dp, iconSize = MinputIconSize.S),
-    Large(height = 30.dp, contentPadding = 12.dp, iconSize = MinputIconSize.S);
+    Large(height = 30.dp, contentPadding = 12.dp, iconSize = MinputIconSize.S),
+
+    /** Two-line controls — an overline over a title (the hierarchy bar's crumbs, 2026-10-07).
+     *  Large held the ~23dp stack with too little air above and below it; this gives it ~6.5dp
+     *  each side. The glyph scales with the frame: 20 in 36 is the same proportion as 12 in 24. */
+    ExtraLarge(height = 36.dp, contentPadding = 12.dp, iconSize = MinputIconSize.Xl);
 
     /** A pill at this scale: half the height. */
     val corner: Dp get() = height / 2

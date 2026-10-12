@@ -1028,7 +1028,8 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().boundsInRoot
         assert(root.bottom - pin.bottom < 60f) { "the bar should sit at the bottom: $pin in $root" }
         assert(root.right - pin.right < 40f) { "the pin button should close the bar at the end: $pin" }
-        assert(app.left > root.width / 2) { "the bar should be end-aligned: $app" }
+        // End-aligned, not start: the first crumb sits well in from the start edge.
+        assert(app.left > root.width / 4) { "the bar should be end-aligned: $app" }
     }
 
     @Test

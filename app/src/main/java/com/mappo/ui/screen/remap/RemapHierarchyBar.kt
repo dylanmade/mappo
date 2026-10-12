@@ -12,12 +12,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.BorderBottom
 import androidx.compose.material.icons.filled.BorderStyle
 import androidx.compose.material.icons.filled.BorderTop
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,7 +33,12 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.AppWindow
 import com.composables.icons.lucide.ArrowUpDown
+import com.composables.icons.lucide.Gamepad2
+import com.composables.icons.lucide.Layers
+import com.composables.icons.lucide.LayoutTemplate
+import com.composables.icons.lucide.SquareStack
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -47,6 +49,9 @@ import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.BarPin
 import com.mappo.ui.component.AppIconImage
 import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.minput.MinputBreadcrumbJoin
+import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
+import com.mappo.ui.minput.MinputBreadcrumbMode
 import com.mappo.ui.minput.MinputBreadcrumbPosition
 import com.mappo.ui.minput.MinputBreadcrumbRow
 import com.mappo.ui.minput.MinputBreadcrumbSegment
@@ -121,6 +126,13 @@ internal fun RemapHierarchyBar(
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
     modifier: Modifier = Modifier,
+    // ── Presentation (2026-10-07: tunable while the design settles) ──
+    /** The crumbs' and pin button's control variant. */
+    size: MinputSize = MinputBreadcrumbSize,
+    /** Whether the crumbs carry their small-caps level labels over the titles. */
+    showOverlines: Boolean = true,
+    mode: MinputBreadcrumbMode = MinputBreadcrumbMode.Expanded,
+    join: MinputBreadcrumbJoin = MinputBreadcrumbJoinDefault,
 ) {
     val crumbs = HierarchyCrumb.entries
     fun toggle(crumb: HierarchyCrumb) {
@@ -131,7 +143,7 @@ internal fun RemapHierarchyBar(
         horizontalArrangement = Arrangement.spacedBy(MinputSegmentGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MinputBreadcrumbRow {
+        MinputBreadcrumbRow(size = size, join = join, mode = mode) {
             crumbs.forEachIndexed { index, crumb ->
                 val position = MinputBreadcrumbPosition.of(index, crumbs.size)
                 // Each crumb is its panel's anchor, so the two share a Box.
@@ -140,12 +152,12 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.APPLICATION -> {
                             MinputBreadcrumbSegment(
                                 position = position,
-                                overline = "Application",
+                                overline = "Application".takeIf { showOverlines },
                                 title = appLabel ?: "None",
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
                                 onClickLabel = "Choose application",
-                                leading = { CrumbAppIcon(appPackage) },
+                                icon = { iconSize -> CrumbAppIcon(appPackage, iconSize) },
                                 modifier = Modifier.testTag("bar:application"),
                             )
                             MinputDropdownPanel(
@@ -167,8 +179,10 @@ internal fun RemapHierarchyBar(
                             MinputBreadcrumbSegment(
                                 position = position,
                                 // A non-active layout on screen says so where it is named.
-                                overline = if (previewing) "Layout · preview" else "Layout",
+                                overline = (if (previewing) "Layout · preview" else "Layout")
+                                    .takeIf { showOverlines },
                                 title = layoutTitle,
+                                icon = { iconSize -> CrumbIcon(Lucide.LayoutTemplate, iconSize) },
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
                                 onClickLabel = "Choose layout",
@@ -191,7 +205,8 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.SET -> {
                             MinputBreadcrumbSegment(
                                 position = position,
-                                overline = "Set",
+                                overline = "Set".takeIf { showOverlines },
+                                icon = { iconSize -> CrumbIcon(Lucide.SquareStack, iconSize) },
                                 title = viewingSet?.actionSet?.title
                                     ?: config?.actionSets?.firstOrNull()?.actionSet?.title
                                     ?: "None",
@@ -223,8 +238,9 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.BUTTONS -> {
                             MinputBreadcrumbSegment(
                                 position = position,
-                                overline = "Buttons",
+                                overline = "Buttons".takeIf { showOverlines },
                                 title = editor.label,
+                                icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
                                 onClickLabel = "Choose editor",
@@ -248,31 +264,36 @@ internal fun RemapHierarchyBar(
                 }
             }
         }
-        BarPinButton(pin = pin, onPinChange = onPinChange)
+        BarPinButton(pin = pin, onPinChange = onPinChange, size = size)
     }
 }
 
 /** The bar's crumbs, in hierarchy order — the order they read in the bar. */
 internal enum class HierarchyCrumb { APPLICATION, LAYOUT, SET, BUTTONS }
 
-/** The two editors the Buttons crumb switches between. */
-internal enum class EditorKind(val label: String, val icon: ImageVector, val iconSize: MinputIconSize) {
-    // The filled gamepad a size up, the stroked layers mark at the control scale — a hollow
-    // gamepad is a cage of strokes at this size, and a filled or enlarged layers mark a blob
-    // (the editor switch's tuning, 2026-09-27).
-    PHYSICAL("Physical", Icons.Filled.SportsEsports, MinputIconSize.M),
-    VIRTUAL("Virtual", Icons.Outlined.Layers, MinputIconSize.S),
+/** The two editors the Buttons crumb switches between. Lucide glyphs (2026-10-07): every crumb
+ *  wears one icon size now, so the Material pair's per-glyph size tuning had nowhere to go, and
+ *  Lucide's stroke set reads evenly at one size. */
+internal enum class EditorKind(val label: String, val icon: ImageVector) {
+    PHYSICAL("Physical", Lucide.Gamepad2),
+    VIRTUAL("Virtual", Lucide.Layers),
 }
 
-/** The viewed application's launcher icon at the drawer rows' size, or the generic apps glyph
- *  when there is no application (or no icon), so the crumb keeps its shape. */
+/** A crumb's concept glyph at the size the crumb hands it (the variant's glyph size). */
 @Composable
-private fun CrumbAppIcon(appPackage: String?) {
+private fun CrumbIcon(icon: ImageVector, size: MinputIconSize) {
+    MinputIcon(icon, contentDescription = null, size = size)
+}
+
+/** The viewed application's launcher icon at the crumb's glyph size — the same edge the other
+ *  crumbs' glyphs ink to — or a generic app glyph when there is no application or no icon. */
+@Composable
+private fun CrumbAppIcon(appPackage: String?, size: MinputIconSize) {
     val icon = rememberAppIconPainter(appPackage)
     if (icon != null) {
-        AppIconImage(icon, size = AppCardIconSize)
+        AppIconImage(icon, size = size.dp)
     } else {
-        MinputIcon(Icons.Filled.Apps, contentDescription = null, size = MinputIconSize.M)
+        CrumbIcon(Lucide.AppWindow, size)
     }
 }
 
@@ -451,7 +472,6 @@ private fun EditorPanel(
             PanelChoiceRow(
                 label = kind.label,
                 icon = kind.icon,
-                iconSize = kind.iconSize,
                 active = kind == current,
                 onClick = { onSelect(kind) },
                 modifier = if (kind == current) Modifier.focusRequester(seat) else Modifier,
@@ -540,14 +560,14 @@ private fun rememberControllerFocusSeat(): FocusRequester {
  * convention for a control that is not part of the group's one silhouette.
  */
 @Composable
-private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit) {
+private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit, size: MinputSize) {
     var open by remember { mutableStateOf(false) }
     Box {
         MinputButton(
             leadingIcon = pin.icon(),
             contentDescription = "Bar position: ${pin.label}",
             highlighted = open,
-            size = MinputBreadcrumbSize,
+            size = size,
             onClick = { open = !open },
             modifier = Modifier.testTag("bar:pin"),
         )
