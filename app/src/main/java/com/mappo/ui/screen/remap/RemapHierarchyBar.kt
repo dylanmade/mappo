@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.AppWindow
 import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.Gamepad2
-import com.composables.icons.lucide.SendToBack
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -73,17 +72,16 @@ import kotlinx.collections.immutable.ImmutableList
  * physical/virtual editor switch with ONE compact group that floats at a pinned spot on the
  * screen.
  *
- * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of four joined crumbs reading the
- * hierarchy left to right — **Application › Layout › Buttons › Button set** (2026-10-12: the set
- * moved under the buttons when physical and virtual buttons got sets of their own — see
- * [ActionSetKind]) — each an overline over the current value; then, as its own circular button,
- * the PIN button choosing which of six spots the bar sits in ([BarPin]). Every crumb drops a
- * [MinputDropdownPanel] holding that level's picker:
+ * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of three joined crumbs reading the
+ * hierarchy left to right — **Application › Layout › Buttons** — each an overline over the
+ * current value; then, as its own circular button, the PIN button choosing which of six spots the
+ * bar sits in ([BarPin]). Every crumb drops a [MinputDropdownPanel] holding that level's picker:
  *  - Application — search · sort over the applications list (was the drawer's applications mode);
  *  - Layout — search · sort over the layouts list with "+ New layout" (was the drawer's body);
- *  - Buttons — Physical / Virtual (was the editor switch);
- *  - Button set — "+ New button set" over the [editor]'s kind of sets (was the group-button
- *    switch + kebab).
+ *  - Buttons — the button SET being edited, both kinds in one list: the physical sets, a divider,
+ *    the virtual sets, each kind headed by its own "+ New … set" (2026-10-14: folded the separate
+ *    Buttons (editor switch) and Button set crumbs into one — picking a set of the other kind IS
+ *    the editor switch; see [ActionSetKind]).
  *
  * The crumb whose panel is open wears the highlight plane. Which crumb is open is the CALLER's
  * state ([openCrumb]) because closing one is not a single thing: [onDismissCrumb] is a close with
@@ -114,14 +112,17 @@ internal fun RemapHierarchyBar(
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
-    // ── Buttons ──
+    // ── Buttons — the button set, either kind ──
+    /** The editor hosting the bar: its kind of sets preview on focus; the other kind's are
+     *  tap-only, because picking one switches editors (leaves the screen). */
     editor: EditorKind,
-    onSelectEditor: (EditorKind) -> Unit,
-    // ── Button set — the [editor]'s kind ──
     config: ControllerConfig?,
     viewingSet: ActionSetGraph?,
-    onSelectSet: (Long) -> Unit,
-    onAddSet: () -> Unit,
+    /** Focus-preview of a set of the [editor]'s own kind. */
+    onPreviewSet: (Long) -> Unit,
+    /** A tapped set, either kind — the caller switches editors when the kind isn't [editor]'s. */
+    onSelectSet: (id: Long, kind: ActionSetKind) -> Unit,
+    onAddSet: (ActionSetKind) -> Unit,
     // ── Pin ──
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
@@ -202,60 +203,36 @@ internal fun RemapHierarchyBar(
                                 )
                             }
                         }
-                        HierarchyCrumb.SET -> {
+                        HierarchyCrumb.BUTTONS -> {
                             MinputBreadcrumbSegment(
                                 position = position,
-                                overline = "Button set".takeIf { showOverlines },
-                                icon = { iconSize -> CrumbIcon(Lucide.SendToBack, iconSize) },
+                                overline = "Buttons".takeIf { showOverlines },
+                                icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
                                 title = viewingSet?.actionSet?.title
                                     ?: config?.setsOf(editor.setKind)?.firstOrNull()?.actionSet?.title
                                     ?: "None",
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
                                 onClickLabel = "Choose button set",
-                                modifier = Modifier.testTag("bar:set"),
-                            )
-                            MinputDropdownPanel(
-                                expanded = openCrumb == crumb,
-                                onDismissRequest = onDismissCrumb,
-                                width = NarrowPanelWidth,
-                            ) {
-                                SetPanel(
-                                    sets = config?.setsOf(editor.setKind),
-                                    viewingSet = viewingSet,
-                                    onPreviewSet = onSelectSet,
-                                    onSelectSet = { id ->
-                                        onSelectSet(id)
-                                        onCommitCrumb()
-                                    },
-                                    onAddSet = {
-                                        onCommitCrumb()
-                                        onAddSet()
-                                    },
-                                )
-                            }
-                        }
-                        HierarchyCrumb.BUTTONS -> {
-                            MinputBreadcrumbSegment(
-                                position = position,
-                                overline = "Buttons".takeIf { showOverlines },
-                                title = editor.label,
-                                icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
-                                selected = openCrumb == crumb,
-                                onClick = { toggle(crumb) },
-                                onClickLabel = "Choose editor",
                                 modifier = Modifier.testTag("bar:buttons"),
                             )
                             MinputDropdownPanel(
                                 expanded = openCrumb == crumb,
                                 onDismissRequest = onDismissCrumb,
-                                width = NarrowPanelWidth,
+                                width = SetPanelWidth,
                             ) {
-                                EditorPanel(
-                                    current = editor,
-                                    onSelect = { kind ->
+                                SetPanel(
+                                    editor = editor,
+                                    config = config,
+                                    viewingSet = viewingSet,
+                                    onPreviewSet = onPreviewSet,
+                                    onSelectSet = { id, kind ->
                                         onCommitCrumb()
-                                        if (kind != editor) onSelectEditor(kind)
+                                        onSelectSet(id, kind)
+                                    },
+                                    onAddSet = { kind ->
+                                        onCommitCrumb()
+                                        onAddSet(kind)
                                     },
                                 )
                             }
@@ -269,13 +246,19 @@ internal fun RemapHierarchyBar(
 }
 
 /** The bar's crumbs, in hierarchy order — the order they read in the bar. */
-internal enum class HierarchyCrumb { APPLICATION, LAYOUT, BUTTONS, SET }
+internal enum class HierarchyCrumb { APPLICATION, LAYOUT, BUTTONS }
 
-/** The two editors the Buttons crumb switches between. Virtual is Material's (outlined) Layers —
- *  two stacked shapes, where Lucide's has three (Dylan, 2026-10-12). */
+/** The two editors, one per kind of button set — picking a set in the Buttons crumb picks its
+ *  editor. Virtual is Material's (outlined) Layers — two stacked shapes, where Lucide's has three
+ *  (Dylan, 2026-10-12). */
 internal enum class EditorKind(val label: String, val icon: ImageVector, val setKind: ActionSetKind) {
     PHYSICAL("Physical", Lucide.Gamepad2, ActionSetKind.PHYSICAL),
     VIRTUAL("Virtual", Icons.Outlined.Layers, ActionSetKind.VIRTUAL),
+    ;
+
+    companion object {
+        fun of(kind: ActionSetKind): EditorKind = entries.first { it.setKind == kind }
+    }
 }
 
 /** A crumb's concept glyph at the size the crumb hands it (the variant's glyph size). */
@@ -417,67 +400,55 @@ private fun <T> SearchSortRow(
 }
 
 /**
- * The editor's kind of sets: "+ New button set" first (as "+ New layout" heads the layouts), then
- * a row per set — the viewed set on the highlight plane. Focus previews a set, tap keeps it.
- * [sets] null = no config yet (no "new" row either).
+ * Every button set, by kind: the physical sets, a divider, the virtual sets — each kind headed
+ * by its "+ New … set" (as "+ New layout" heads the layouts), each row wearing its kind's glyph.
+ * The viewed set sits on the highlight plane. Sets of the [editor]'s own kind preview on focus and
+ * keep on tap; the other kind's are tap-only — picking one opens the other editor, which a
+ * focus-preview must not do. No config yet = no rows, no "new" rows either.
  */
 @Composable
 private fun ColumnScope.SetPanel(
-    sets: List<ActionSetGraph>?,
+    editor: EditorKind,
+    config: ControllerConfig?,
     viewingSet: ActionSetGraph?,
     onPreviewSet: (Long) -> Unit,
-    onSelectSet: (Long) -> Unit,
-    onAddSet: () -> Unit,
+    onSelectSet: (id: Long, kind: ActionSetKind) -> Unit,
+    onAddSet: (ActionSetKind) -> Unit,
 ) {
-    val hasConfig = sets != null
-    val rows = sets.orEmpty()
-    val viewingId = viewingSet?.actionSet?.id ?: rows.firstOrNull()?.actionSet?.id
+    val viewingId = viewingSet?.actionSet?.id
+        ?: config?.setsOf(editor.setKind)?.firstOrNull()?.actionSet?.id
     val seat = rememberControllerFocusSeat()
     Column(
         verticalArrangement = Arrangement.spacedBy(DrawerRowGap),
         modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
     ) {
-        if (hasConfig) {
-            PanelActionRow(label = "New button set", onClick = onAddSet)
-        }
-        rows.forEach { set ->
-            val id = set.actionSet.id
-            PanelChoiceRow(
-                label = set.actionSet.title,
-                active = id == viewingId,
-                onFocus = { if (id != viewingId) onPreviewSet(id) },
-                onClick = { onSelectSet(id) },
-                modifier = if (id == viewingId) Modifier.focusRequester(seat) else Modifier,
-            )
-        }
-        if (rows.isEmpty()) {
+        if (config == null) {
             Text(
                 text = "No button sets",
                 style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(CardPadding),
             )
+            return@Column
         }
-    }
-}
-
-/** Physical / virtual — the two editors, the current one on the highlight plane. Picking is a
- *  tap only: opening the virtual editor leaves this screen, which a focus-preview must not do. */
-@Composable
-private fun EditorPanel(
-    current: EditorKind,
-    onSelect: (EditorKind) -> Unit,
-) {
-    val seat = rememberControllerFocusSeat()
-    Column(verticalArrangement = Arrangement.spacedBy(DrawerRowGap)) {
-        EditorKind.entries.forEach { kind ->
-            PanelChoiceRow(
-                label = kind.label,
-                icon = kind.icon,
-                active = kind == current,
-                onClick = { onSelect(kind) },
-                modifier = if (kind == current) Modifier.focusRequester(seat) else Modifier,
+        EditorKind.entries.forEachIndexed { index, kind ->
+            if (index > 0) PanelDivider()
+            PanelActionRow(
+                label = "New ${kind.label.lowercase()} set",
+                onClick = { onAddSet(kind.setKind) },
             )
+            config.setsOf(kind.setKind).forEach { set ->
+                val id = set.actionSet.id
+                val ownKind = kind == editor
+                PanelChoiceRow(
+                    label = set.actionSet.title,
+                    icon = kind.icon,
+                    active = id == viewingId,
+                    onFocus = { if (ownKind && id != viewingId) onPreviewSet(id) },
+                    onClick = { onSelectSet(id, kind.setKind) },
+                    modifier = if (id == viewingId) Modifier.focusRequester(seat) else Modifier,
+                )
+            }
         }
     }
 }
@@ -603,5 +574,5 @@ private fun BarPin.icon(): ImageVector = when (this) {
 private fun MinputIconSize.stepDown(): MinputIconSize =
     MinputIconSize.entries[(ordinal - 1).coerceAtLeast(0)]
 
-/** Width of the set and editor panels — short labels, no search row. */
-private val NarrowPanelWidth = 160.dp
+/** Width of the button-set panel — short labels, no search row; room for "New physical set". */
+private val SetPanelWidth = 180.dp

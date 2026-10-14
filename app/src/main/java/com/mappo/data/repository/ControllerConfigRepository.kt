@@ -137,7 +137,7 @@ class ControllerConfigRepository @Inject constructor(
             ActionSet(
                 controllerProfileId = controllerProfileId,
                 name = "default",
-                // What the bar's Button set crumb shows (Dylan, 2026-10-12 — was "Layout Set 1"
+                // What the bar's Buttons crumb shows (Dylan, 2026-10-12 — was "Layout Set 1"
                 // before sets split by kind; "Default Map" before that, which named a Steam
                 // concept nobody here uses and read as a fallback).
                 title = defaultSetTitle(ActionSetKind.PHYSICAL, 1),

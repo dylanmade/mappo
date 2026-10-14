@@ -61,20 +61,22 @@ fun deriveActionSetName(title: String): String =
 
 @Composable
 fun AddSetDialog(
+    kind: ActionSetKind,
+    /** The existing sets of [kind] — the inherit-from choices (a clone keeps its source's kind). */
     existingSets: List<ActionSetGraph>,
     onConfirm: (title: String, inheritFromSetId: Long?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Prefilled with the next default name ("Physical Set 3") — sets split by kind 2026-10-12,
-    // and this dialog serves the physical editor.
-    var title by remember { mutableStateOf(defaultSetTitle(ActionSetKind.PHYSICAL, existingSets.size + 1)) }
+    // Prefilled with the next default name of its kind ("Physical Set 3" / "Virtual Set 2") —
+    // sets split by kind 2026-10-12; the Buttons crumb offers a "new" row for each.
+    var title by remember { mutableStateOf(defaultSetTitle(kind, existingSets.size + 1)) }
     var inheritFrom: ActionSetGraph? by remember { mutableStateOf(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        // Named as the control that opens it does (the bar's Button set crumb, 2026-10-12).
+        // Named as the row that opens it does (the Buttons crumb's "New … set", 2026-10-14).
         // "Action set" is Steam's word and stays in the code; the UI says button set.
-        title = { Text("New physical set") },
+        title = { Text(if (kind == ActionSetKind.VIRTUAL) "New virtual set" else "New physical set") },
         text = {
             Column {
                 OutlinedTextField(
@@ -86,7 +88,7 @@ fun AddSetDialog(
                     keyboardOptions = mappoKeyboardOptions(),
                 )
                 Text(
-                    text = "Shown on the bar's Button set crumb.",
+                    text = "Shown on the bar's Buttons crumb.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -99,9 +101,12 @@ fun AddSetDialog(
                         onSelected = { inheritFrom = it },
                     )
                     Text(
-                        text = if (inheritFrom == null)
-                            "Starts blank — every input is unbound."
-                        else "Copies every binding from \"${inheritFrom!!.actionSet.title}\".",
+                        text = if (inheritFrom == null) {
+                            if (kind == ActionSetKind.VIRTUAL) "Starts empty — place its buttons in the overlay editor."
+                            else "Starts blank — every input is unbound."
+                        } else if (kind == ActionSetKind.VIRTUAL) {
+                            "Copies every button from \"${inheritFrom!!.actionSet.title}\"."
+                        } else "Copies every binding from \"${inheritFrom!!.actionSet.title}\".",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),

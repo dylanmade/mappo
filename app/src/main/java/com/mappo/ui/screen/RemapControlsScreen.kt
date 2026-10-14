@@ -65,6 +65,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.mappo.R
 import com.mappo.data.model.Layout
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutput
@@ -146,7 +147,7 @@ fun RemapControlsScreen(
     layoutsLoaded: Boolean = false,
     viewingActionSetId: Long? = null,
     onSelectActionSet: (Long) -> Unit = {},
-    onAddActionSet: (title: String, inheritFromSetId: Long?) -> Unit = { _, _ -> },
+    onAddActionSet: (title: String, inheritFromSetId: Long?, kind: ActionSetKind) -> Unit = { _, _, _ -> },
     onRenameActionSet: (actionSetId: Long, newTitle: String) -> Unit = { _, _ -> },
     onDuplicateActionSet: (sourceSetId: Long, newTitle: String) -> Unit = { _, _ -> },
     onDeleteActionSet: (actionSetId: Long) -> Unit = {},
@@ -237,7 +238,8 @@ fun RemapControlsScreen(
     optionsEntries: List<RemapOptionEntry> = emptyList(),
     // The bar's Edit overlay button (2026-08-29): enters live overlay editing, which
     // returns HERE on exit (see OverlayLiveEditController.requestEdit).
-    onEditOverlay: () -> Unit = {},
+    /** Opens the virtual (overlay) editor — on the given virtual set, else on its default. */
+    onEditOverlay: (virtualSetId: Long?) -> Unit = {},
     // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
     // True when the layout on screen IS the runtime-active layout (the home state);
     // false = a layout under inspection — the bar grows the Activate pill.
@@ -554,7 +556,7 @@ fun RemapControlsScreen(
                 }
             },
     ) {
-        // The hierarchy bar (2026-10-07) — application › layout › set › buttons, plus the pin
+        // The hierarchy bar (2026-10-07) — application › layout › buttons, plus the pin
         // button — floating in its slot at the pinned edge rather than banding across it: a
         // compact group on the content's own plane, aligned start / middle / end, with
         // HierarchyBarSlotPadding above and below. One instance per bar shown (see
@@ -608,15 +610,22 @@ fun RemapControlsScreen(
                 },
                 config = config,
                 viewingSet = viewingSet,
-                onSelectSet = { id ->
+                onPreviewSet = { id ->
                     onSelectActionSet(id)
                     onSelectLayer(null)
                 },
-                onAddSet = { dialog = ActionSetDialogState.Add },
-                // This screen IS the physical editor; the virtual one is the overlay editor,
-                // its own activity over the game.
+                // This screen IS the physical editor; a virtual set opens the overlay editor,
+                // its own activity over the game, on that set.
+                onSelectSet = { id, kind ->
+                    if (kind == ActionSetKind.VIRTUAL) {
+                        onEditOverlay(id)
+                    } else {
+                        onSelectActionSet(id)
+                        onSelectLayer(null)
+                    }
+                },
+                onAddSet = { kind -> dialog = ActionSetDialogState.Add(kind) },
                 editor = EditorKind.PHYSICAL,
-                onSelectEditor = { kind -> if (kind == EditorKind.VIRTUAL) onEditOverlay() },
                 pin = barPin,
                 onPinChange = onBarPinChange,
             )
@@ -768,10 +777,11 @@ fun RemapControlsScreen(
     // can act on ANY set or layer.
     when (val d = dialog) {
         ActionSetDialogState.None -> Unit
-        ActionSetDialogState.Add -> AddSetDialog(
-            existingSets = config?.actionSets.orEmpty(),
+        is ActionSetDialogState.Add -> AddSetDialog(
+            kind = d.kind,
+            existingSets = config?.setsOf(d.kind).orEmpty(),
             onConfirm = { title, inheritFromSetId ->
-                onAddActionSet(title, inheritFromSetId)
+                onAddActionSet(title, inheritFromSetId, d.kind)
                 dialog = ActionSetDialogState.None
             },
             onDismiss = { dialog = ActionSetDialogState.None },
@@ -865,7 +875,7 @@ private fun layerEntityById(config: ControllerConfig?, id: Long) =
  *  target set id so the tab menus can act on any set. */
 private sealed class ActionSetDialogState {
     object None : ActionSetDialogState()
-    object Add : ActionSetDialogState()
+    data class Add(val kind: ActionSetKind) : ActionSetDialogState()
     data class Rename(val setId: Long) : ActionSetDialogState()
     data class Duplicate(val setId: Long) : ActionSetDialogState()
     data class Delete(val setId: Long) : ActionSetDialogState()

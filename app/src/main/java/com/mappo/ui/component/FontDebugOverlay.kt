@@ -1,5 +1,8 @@
 package com.mappo.ui.component
 
+import com.composables.icons.lucide.MoveHorizontal
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.material.icons.Icons
 import kotlin.math.roundToInt
 import com.themestudio.core.FontWeightCatalog
@@ -178,6 +181,20 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                 CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
                     val listState = rememberLazyListState()
                     val scope = rememberCoroutineScope()
+                    // Row 1 — the applied font's settings (Dylan, 2026-10-12): weight, size,
+                    // kerning, each a dropdown showing its current value ("Default" = the
+                    // theme's own).
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(SearchRowGap),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        FontWeightDropdown(familyName = displayName ?: DEFAULT_BODY_FONT_NAME)
+                        FontSizeDropdown()
+                        FontKerningDropdown()
+                    }
+                    Spacer(Modifier.height(SearchRowGap))
+                    // Row 2 — finding a font: search, then jump-to-top.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
@@ -193,13 +210,6 @@ fun FontDebugOverlay(modifier: Modifier = Modifier) {
                             inlineEdit = true,
                             modifier = Modifier.weight(1f),
                         )
-                        Spacer(Modifier.width(SearchRowGap))
-                        // Weight, then size, then jump-to-top (Dylan, 2026-10-12): the
-                        // applied font's weight and the theme's text size, each a dropdown
-                        // showing its current value ("Default" = the theme's own).
-                        FontWeightDropdown(familyName = displayName ?: DEFAULT_BODY_FONT_NAME)
-                        Spacer(Modifier.width(SearchRowGap))
-                        FontSizeDropdown()
                         Spacer(Modifier.width(SearchRowGap))
                         // Back to the list head — where favorites live.
                         MinputButton(
@@ -476,6 +486,62 @@ private fun FontWeightDropdown(familyName: String) {
     }
 }
 
+/**
+ * The applied font's kerning — letter spacing (tracking) on all text, through the display and
+ * body [UmbrellaRoles] like the weight. In EM, so it tracks every size alike (an sp spacing
+ * would be loose on small text and tight on large); shown as a percentage of the em. The button
+ * reads "Default" (each role's own spacing — 0 in Mappo's type scale) or the value.
+ */
+@Composable
+private fun FontKerningDropdown() {
+    val controller = LocalThemeStudioController.current
+    val spacing = controller.overrides.typography.displayUmbrella.letterSpacing
+    val percent = spacing?.takeIf { it.isEm }?.let { it.value * 100 }
+    var open by remember { mutableStateOf(false) }
+    fun apply(value: TextUnit?) {
+        val o = controller.overrides.typography
+        controller.setTypographyRole(UmbrellaRoles.display, o.displayUmbrella.copy(letterSpacing = value))
+        controller.setTypographyRole(UmbrellaRoles.body, o.bodyUmbrella.copy(letterSpacing = value))
+    }
+    fun percentText(p: Float) = (if (p > 0f) "+" else "") + trimPercent(p)
+    Box {
+        MinputButton(
+            text = percent?.let { percentText(it) + "%" } ?: "Default",
+            leadingIcon = Lucide.MoveHorizontal,
+            trailingIcon = Icons.Filled.ArrowDropDown,
+            highlighted = open,
+            onClick = { open = !open },
+            contentDescription = "Font kerning",
+        )
+        MinputDropdownPanel(
+            expanded = open,
+            onDismissRequest = { open = false },
+            width = SettingPanelWidth,
+        ) {
+            SettingSliderRow(resetEnabled = spacing != null, onReset = { apply(null) }) {
+                MinputSlider(
+                    label = "Kerning",
+                    value = percent ?: 0f,
+                    // Snapped to half-percent steps of the em.
+                    onChange = { apply(((it * 2).roundToInt() / 2f / 100f).em) },
+                    valueRange = KerningPercentRange,
+                    step = 0.5f,
+                    valueText = { trimPercent(it) },
+                    parseValue = { it.trimStart('+').toFloatOrNull() },
+                    unitLabel = "%",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/** A half-step percentage without a trailing ".0" — "2", "2.5", "-1.5". */
+private fun trimPercent(p: Float): String {
+    val halves = (p * 2).roundToInt()
+    return if (halves % 2 == 0) (halves / 2).toString() else "%.1f".format(halves / 2f)
+}
+
 /** A setting dropdown's body: its control, then the reset-to-theme-default button. */
 @Composable
 private fun SettingSliderRow(
@@ -701,3 +767,6 @@ private val SettingPanelWidth = 260.dp
 
 /** The text-size multiplier's range. */
 private val FontScaleRange = 0.7f..1.5f
+
+/** Kerning's range, in percent of the em. */
+private val KerningPercentRange = -5f..20f

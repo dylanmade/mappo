@@ -44,7 +44,7 @@ import kotlin.math.sqrt
 
 /**
  * **A breadcrumb row: a pill cut into joined segments** (Dylan, 2026-10-07) — the hierarchy
- * picker behind the remap editors' bar (application › layout › set › buttons).
+ * picker behind the remap editors' bar (application › layout › buttons).
  *
  * The silhouette is an M3 button group's — separate buttons with a gap between them, the whole
  * row reading as one pill — but the joins LEAD: every segment except the last bulges toward the

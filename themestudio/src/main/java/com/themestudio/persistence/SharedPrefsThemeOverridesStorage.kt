@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.themestudio.core.ColorGenerationOverrides
 import com.themestudio.core.ColorOverrides
@@ -32,6 +33,8 @@ import com.themestudio.core.UmbrellaRoles
  *   type.<role>.fontSize         Float (sp)
  *   type.<role>.fontWeight       Int (100..900)
  *   type.<role>.letterSpacing    Float (sp)
+ *   type.<role>.letterSpacingEm  Float (em) — an em spacing (the font picker's kerning) is
+ *                                stored under its own key so it reloads as em, not sp
  *   type.displayFontFamilyName   String (Google Font name)
  *   type.bodyFontFamilyName      String (Google Font name)
  *   type.fontScale               Float (multiplier)
@@ -115,10 +118,15 @@ class SharedPrefsThemeOverridesStorage(
             val sizeKey = "$TYPE_PREFIX${role.name}.fontSize"
             val weightKey = "$TYPE_PREFIX${role.name}.fontWeight"
             val letterKey = "$TYPE_PREFIX${role.name}.letterSpacing"
+            val letterEmKey = "$TYPE_PREFIX${role.name}.letterSpacingEm"
             val override = TextStyleOverride(
                 fontSize = if (prefs.contains(sizeKey)) prefs.getFloat(sizeKey, 14f).sp else null,
                 fontWeight = if (prefs.contains(weightKey)) FontWeight(prefs.getInt(weightKey, 400)) else null,
-                letterSpacing = if (prefs.contains(letterKey)) prefs.getFloat(letterKey, 0f).sp else null,
+                letterSpacing = when {
+                    prefs.contains(letterEmKey) -> prefs.getFloat(letterEmKey, 0f).em
+                    prefs.contains(letterKey) -> prefs.getFloat(letterKey, 0f).sp
+                    else -> null
+                },
             )
             result = role.withOverride(result, override)
         }
@@ -137,9 +145,11 @@ class SharedPrefsThemeOverridesStorage(
             val sizeKey = "$TYPE_PREFIX${role.name}.fontSize"
             val weightKey = "$TYPE_PREFIX${role.name}.fontWeight"
             val letterKey = "$TYPE_PREFIX${role.name}.letterSpacing"
+            val letterEmKey = "$TYPE_PREFIX${role.name}.letterSpacingEm"
             if (o.fontSize != null) edit.putFloat(sizeKey, o.fontSize.value) else edit.remove(sizeKey)
             if (o.fontWeight != null) edit.putInt(weightKey, o.fontWeight.weight) else edit.remove(weightKey)
-            if (o.letterSpacing != null) edit.putFloat(letterKey, o.letterSpacing.value) else edit.remove(letterKey)
+            edit.remove(letterKey).remove(letterEmKey)
+            o.letterSpacing?.let { edit.putFloat(if (it.isEm) letterEmKey else letterKey, it.value) }
         }
     }
 

@@ -47,6 +47,7 @@ import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSet
 import com.mappo.data.model.steam.ActionSetGraph
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.Activator
 import com.mappo.data.model.steam.ActivatorGraph
 import com.mappo.data.model.steam.ActivatorType
@@ -895,8 +896,8 @@ class RemapControlsScreenTest {
             }
         }
 
-        // Every set is a row in the Set crumb's dropdown; tapping one selects it.
-        composeRule.onNodeWithTag("bar:set").performClick()
+        // Every set is a row in the Buttons crumb's dropdown; tapping one selects it.
+        composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Menu", ignoreCase = true, useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Menu", ignoreCase = true, useUnmergedTree = true).performClick()
@@ -960,8 +961,8 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     /**
-     * **The hierarchy bar reads application › layout › buttons › button set, then the pin button**
-     * (2026-10-07; the set moved under the buttons 2026-10-12) — four crumbs in one row, none
+     * **The hierarchy bar reads application › layout › buttons, then the pin button** (2026-10-07;
+     * the Button set crumb folded into Buttons 2026-10-14) — three crumbs in one row, none
      * running under the next, even with a long layout name (titles cap and ellipsize).
      */
     @Test
@@ -987,7 +988,7 @@ class RemapControlsScreenTest {
 
         fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val order = listOf("bar:application", "bar:layout", "bar:buttons", "bar:set", "bar:pin")
+        val order = listOf("bar:application", "bar:layout", "bar:buttons", "bar:pin")
             .map { it to bounds(it) }
         // Joined crumbs overlap their BOXES by up to the recess depth (the recess is cut out of
         // the box; see MinputBreadcrumbRow) — never by more.
@@ -1066,19 +1067,32 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **The Buttons crumb** — this screen IS the physical-buttons editor, so Physical is the live
-     * one, and picking Virtual opens the virtual-buttons (overlay) editor.
+     * **The Buttons crumb lists both kinds of set** (2026-10-14) — this screen IS the
+     * physical-buttons editor, so its sets are physical; picking a VIRTUAL set opens the
+     * virtual-buttons (overlay) editor on that set.
      */
     @Test
-    fun hierarchyBar_buttonsCrumb_offersBothEditors_andOpensTheVirtualOne() {
-        var opened = 0
+    fun hierarchyBar_buttonsCrumb_listsBothKinds_andAVirtualSetOpensTheOverlayEditor() {
+        var opened: Long? = null
+        val virtual = ActionSetGraph(
+            actionSet = ActionSet(
+                id = 30L, controllerProfileId = 1L, name = "virtual_1", title = "Touch pad",
+                kind = ActionSetKind.VIRTUAL,
+            ),
+            layers = emptyList(),
+            preset = emptyList(),
+        )
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
                     RemapControlsScreen(
-                        config = seedShapedConfig(),
+                        config = twoSetConfig(
+                            setAButtonA = BindingOutput.Unbound,
+                            setBButtonA = BindingOutput.Unbound,
+                        ).copy(virtualSets = listOf(virtual)),
+                        viewingActionSetId = 1L,
                         onOpenInputEditor = { _, _, _ -> },
-                        onEditOverlay = { opened++ },
+                        onEditOverlay = { opened = it },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
@@ -1087,13 +1101,15 @@ class RemapControlsScreenTest {
         }
 
         composeRule.onNodeWithText("BUTTONS", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("Physical", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Edit overlay").assertCountEquals(0)
         composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("Virtual", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithText("New physical set", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Menu", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("New virtual set", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("Touch pad", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
-        assert(opened == 1) { "the virtual editor should have been opened once, got $opened" }
+        assert(opened == 30L) { "the overlay editor should have opened on set 30, got $opened" }
     }
 
     @Test
@@ -1133,12 +1149,12 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("Layout", useUnmergedTree = true).assertExists()
         composeRule.onAllNodesWithText("Activate layout").assertCountEquals(0)
         composeRule.onAllNodesWithText("Layout settings").assertCountEquals(0)
-        // Adding a set heads the Set crumb's dropdown (2026-10-07 — it was the set switch's
-        // kebab).
+        // Adding a set heads each kind's section of the Buttons crumb's dropdown (2026-10-14).
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(0)
-        composeRule.onNodeWithTag("bar:set").performClick()
+        composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("New button set", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("New physical set", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("New virtual set", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -1317,8 +1333,8 @@ class RemapControlsScreenTest {
             }
         }
 
-        // The sets live in the Set crumb's dropdown (2026-10-07).
-        composeRule.onNodeWithTag("bar:set").performClick()
+        // The sets live in the Buttons crumb's dropdown (2026-10-14; the Set crumb's until then).
+        composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Gameplay", useUnmergedTree = true).assertExists()
         // The viewed set twice: the crumb's title and its own (highlighted) row.
@@ -1349,8 +1365,8 @@ class RemapControlsScreenTest {
             }
         }
 
-        // The sets live in the Set crumb's dropdown (2026-10-07).
-        composeRule.onNodeWithTag("bar:set").performClick()
+        // The sets live in the Buttons crumb's dropdown (2026-10-14; the Set crumb's until then).
+        composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Menu", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()

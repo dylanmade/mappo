@@ -372,12 +372,15 @@ class OverlayLiveEditController @Inject constructor(
      * whatever was underneath. Set for those entries only; a QS-tile session over a game
      * exits to the game, as it should.
      */
-    fun requestEdit(returnToApp: Boolean = false) {
+    /** [virtualSetId] = the virtual set to open on (the hierarchy bar's Buttons crumb); null
+     *  keeps the editor's current scope. */
+    fun requestEdit(returnToApp: Boolean = false, virtualSetId: Long? = null) {
         if (_editing.value) return
         if (!canShow()) {
             Log.w(TAG, "requestEdit() skipped: overlay permission not granted")
             return
         }
+        virtualSetId?.let(overlayEditor::focusSet)
         val launch: (Bitmap?) -> Unit = { bmp ->
             backdropBitmap = bmp
             val intent = Intent(context, OverlayEditActivity::class.java)

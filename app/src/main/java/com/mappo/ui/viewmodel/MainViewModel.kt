@@ -27,6 +27,7 @@ import com.mappo.data.model.toJson
 import com.mappo.data.model.toKeyLayout
 import com.mappo.data.model.toSnapshot
 import com.mappo.data.model.wouldOverlap
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.model.steam.resolveActionSet
@@ -899,12 +900,21 @@ class MainViewModel @Inject constructor(
      * of that source; null seeds a default-shaped set. After creation the editor's
      * viewing pointer flips to the new set so the user lands in what they just made.
      */
-    fun addControllerActionSet(name: String, title: String, inheritFromSetId: Long? = null) {
+    fun addControllerActionSet(
+        name: String,
+        title: String,
+        inheritFromSetId: Long? = null,
+        kind: ActionSetKind = ActionSetKind.PHYSICAL,
+        /** Called with the new set's id once it exists — the caller opens a VIRTUAL one in the
+         *  overlay editor (this screen's viewing pointer only follows physical sets). */
+        onCreated: (Long) -> Unit = {},
+    ) {
         val cpId = viewedControllerConfig.value?.controllerProfile?.id ?: return
         if (editedLayout() == null) return
         viewModelScope.launch {
-            val newId = controllerConfigRepository.addActionSet(cpId, name, title, inheritFromSetId)
-            _viewingActionSetId.value = newId
+            val newId = controllerConfigRepository.addActionSet(cpId, name, title, inheritFromSetId, kind)
+            if (kind == ActionSetKind.PHYSICAL) _viewingActionSetId.value = newId
+            onCreated(newId)
         }
     }
 
@@ -1846,8 +1856,8 @@ class MainViewModel @Inject constructor(
      * [returnToApp] — the caller backgrounded Mappo to get out of the editor's way, so
      * exiting the editor should hand the user back to the screen they left.
      */
-    fun startLiveOverlayEdit(returnToApp: Boolean = false) {
-        overlayLiveEditController.requestEdit(returnToApp)
+    fun startLiveOverlayEdit(returnToApp: Boolean = false, virtualSetId: Long? = null) {
+        overlayLiveEditController.requestEdit(returnToApp, virtualSetId)
     }
 
     /**

@@ -108,11 +108,19 @@ class OverlayEditor @Inject constructor(
     /** The scope the editor is currently editing (defaults to the first set; see init). */
     val editingScope: StateFlow<OverlayScope?> = _editingScope.asStateFlow()
 
+    // A set asked for before it was among [availableScopes] — one created a moment ago, whose
+    // config reload hasn't landed yet. Applied when it shows up; any explicit scope change drops it.
+    private var pendingScope: OverlayScope? = null
+
     init {
         // Default to the first available scope (the active/first set), and reset whenever the
         // current scope disappears (layout switch, or its set/layer was deleted).
         scope.launch {
             availableScopes.collect { options ->
+                pendingScope?.takeIf { p -> options.any { it.scope == p } }?.let { p ->
+                    setScope(p)
+                    return@collect
+                }
                 val current = _editingScope.value
                 val stillValid = current != null && options.any { it.scope == current }
                 if (!stillValid) _editingScope.value = options.firstOrNull()?.scope
@@ -121,8 +129,16 @@ class OverlayEditor @Inject constructor(
     }
 
     fun setScope(newScope: OverlayScope) {
+        pendingScope = null
         if (_editingScope.value != newScope) clearHistory() // undo history is per editing scope
         _editingScope.value = newScope
+    }
+
+    /** Edit virtual set [actionSetId] — now if it is an available scope, else as soon as it is
+     *  (a just-created set). */
+    fun focusSet(actionSetId: Long) {
+        val target = OverlayScope.Set(actionSetId)
+        if (availableScopes.value.any { it.scope == target }) setScope(target) else pendingScope = target
     }
 
     // ── undo / redo (per editing scope; snapshots of the scope's full element list) ───────────────

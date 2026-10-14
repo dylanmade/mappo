@@ -111,6 +111,7 @@ import com.mappo.R
 import com.mappo.data.model.GridButton
 import com.mappo.data.model.GridLayout
 import com.mappo.data.model.RemapTarget
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.BindingOutput
 import com.mappo.data.model.steam.resolveActionSet
 import com.mappo.data.model.steam.toRemapTarget
@@ -273,8 +274,8 @@ fun MainScreen(
     // away first — dismissing the frame backgrounds the task via the frameVisible effect
     // below. `returnToApp` makes the editor hand the user back here on exit rather than
     // leaving them on whatever was underneath.
-    val startOverlayEdit = {
-        viewModel.startLiveOverlayEdit(returnToApp = true)
+    val startOverlayEdit: (virtualSetId: Long?) -> Unit = { virtualSetId ->
+        viewModel.startLiveOverlayEdit(returnToApp = true, virtualSetId = virtualSetId)
         frameVisible = false
     }
     // Dev tooling: the floating Theme Studio font picker (wordmark-drawer toggle).
@@ -499,12 +500,12 @@ fun MainScreen(
                     // options moved to the wordmark drawer) ──
                     optionsEntries = listOf(
                         RemapOptionEntry("edit_overlay", "Edit overlay", Icons.Filled.Layers) {
-                            startOverlayEdit()
+                            startOverlayEdit(null)
                         },
                     ),
                     // The controls bar's Edit overlay button (2026-08-29) — the same entry
                     // the panel carries, given a real home.
-                    onEditOverlay = { startOverlayEdit() },
+                    onEditOverlay = startOverlayEdit,
                     // ── Viewing vs active (2026-08-20) ──
                     isActiveLayout = isActiveLayout,
                     autoSwitchEnabled = autoSwitchEnabled,
@@ -546,11 +547,17 @@ fun MainScreen(
                     showBarComparison = true,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
-                    onAddActionSet = { title, inheritFromSetId ->
+                    onAddActionSet = { title, inheritFromSetId, kind ->
                         viewModel.addControllerActionSet(
                             name = com.mappo.ui.screen.deriveActionSetName(title),
                             title = title,
                             inheritFromSetId = inheritFromSetId,
+                            kind = kind,
+                            // A new virtual set is empty — straight into the overlay editor
+                            // to place its buttons.
+                            onCreated = { id ->
+                                if (kind == ActionSetKind.VIRTUAL) startOverlayEdit(id)
+                            },
                         )
                     },
                     onRenameActionSet = { setId, newTitle ->
