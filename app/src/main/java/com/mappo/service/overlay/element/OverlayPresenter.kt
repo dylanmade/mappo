@@ -8,6 +8,7 @@ import com.mappo.data.repository.ControllerConfigRepository
 import com.mappo.data.repository.OverlayRepository
 import com.mappo.data.repository.LayoutRepository
 import com.mappo.service.overlay.keyboard.KeyboardDisplayRouter
+import com.mappo.service.input.InputEvaluator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
@@ -49,6 +51,7 @@ class OverlayPresenter @Inject constructor(
     private val controllerConfigRepository: ControllerConfigRepository,
     private val dispatcher: OverlayTargetDispatcher,
     private val displayRouter: KeyboardDisplayRouter,
+    private val inputEvaluator: InputEvaluator,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -74,15 +77,21 @@ class OverlayPresenter @Inject constructor(
             return
         }
         _showing.value = true
-        // Run mode shows the **active action set's** set-owned elements (live action-set
-        // switching is a later brick — we follow the config's first/active set for now).
-        // Re-renders whenever those elements change, so editor edits reflect immediately.
+        // Run mode shows the active VIRTUAL set's set-owned elements: the one a
+        // `CHANGE_PRESET` last switched to (the evaluator tracks it apart from the physical
+        // set), else the layout's starting virtual set. Re-renders whenever those elements
+        // change, so editor edits reflect immediately.
         collectJob = scope.launch {
             layoutRepository.activeLayout
                 .filterNotNull()
                 .flatMapLatest { layout ->
-                    controllerConfigRepository.observeActiveConfig(layout.id)
-                        .map { it?.activeActionSet?.actionSet?.id }
+                    combine(
+                        controllerConfigRepository.observeActiveConfig(layout.id),
+                        inputEvaluator.activeVirtualSetIdFlow,
+                    ) { config, liveId ->
+                        val sets = config?.virtualSets.orEmpty()
+                        (sets.firstOrNull { it.actionSet.id == liveId } ?: sets.firstOrNull())?.actionSet?.id
+                    }
                         .distinctUntilChanged()
                         .flatMapLatest { setId ->
                             if (setId == null) flowOf(emptyList())

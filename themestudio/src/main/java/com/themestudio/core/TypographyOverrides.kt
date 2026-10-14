@@ -55,6 +55,13 @@ data class TypographyOverrides(
     val labelLarge: TextStyleOverride = TextStyleOverride(),
     val labelMedium: TextStyleOverride = TextStyleOverride(),
     val labelSmall: TextStyleOverride = TextStyleOverride(),
+    /**
+     * A multiplier on EVERY text size (2026-10-12; null = the theme's sizes, i.e. 1×). Not a
+     * size: the roles each have their own, and app chrome sets explicit sizes on top of them
+     * (minput's mini/micro styles), so one absolute size would either flatten the scale or miss
+     * most text. The host applies it as a font-scale factor at its theme root.
+     */
+    val fontScale: Float? = null,
 )
 
 /**

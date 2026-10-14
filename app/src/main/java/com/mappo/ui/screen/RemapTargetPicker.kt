@@ -376,7 +376,7 @@ private fun SwitchActionSetList(
         if (sets.isEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "No other action sets available",
+                "No button sets available",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),

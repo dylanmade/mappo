@@ -1,5 +1,6 @@
 package com.mappo.data.repository
 
+import com.mappo.data.db.OverlayElementDao
 import com.mappo.data.db.steam.ActionLayerDao
 import com.mappo.data.db.steam.ActionSetDao
 import com.mappo.data.db.steam.ActivatorDao
@@ -16,6 +17,7 @@ import com.mappo.data.io.vdf.VdfMappings
 import com.mappo.data.model.steam.ActionLayer
 import com.mappo.data.model.steam.ActionLayerGraph
 import com.mappo.data.model.steam.ActionSet
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.Activator
 import com.mappo.data.model.steam.ActivatorGraph
@@ -76,6 +78,8 @@ class ControllerConfigRepository @Inject constructor(
     private val presetBindingDao: PresetBindingDao,
     private val layerPresetBindingDao: com.mappo.data.db.steam.LayerPresetBindingDao,
     private val sourceModeShiftDao: com.mappo.data.db.steam.SourceModeShiftDao,
+    /** Virtual sets own overlay elements — a duplicated virtual set copies them. */
+    private val overlayElementDao: OverlayElementDao,
 ) {
 
     private val configDirtyTick = MutableStateFlow(0L)
@@ -85,13 +89,34 @@ class ControllerConfigRepository @Inject constructor(
      * controller_profile's id (either pre-existing or newly seeded).
      */
     suspend fun ensureSeeded(layoutId: Long): Long {
-        controllerProfileDao.getByLayout(layoutId).firstOrNull()?.let { return it.id }
+        controllerProfileDao.getByLayout(layoutId).firstOrNull()?.let { cp ->
+            ensureVirtualSet(cp.id)
+            return cp.id
+        }
         return seedDefaultConfig(layoutId)
     }
 
+    /** Every controller_profile has at least one VIRTUAL set — the overlay's buttons need a
+     *  home. A no-op once one exists; covers configs that arrive without one (an import). */
+    private suspend fun ensureVirtualSet(controllerProfileId: Long) {
+        val sets = actionSetDao.getByControllerProfile(controllerProfileId)
+        if (sets.any { it.kind == ActionSetKind.VIRTUAL }) return
+        actionSetDao.insert(defaultVirtualSet(controllerProfileId))
+        configDirtyTick.value = configDirtyTick.value + 1
+    }
+
+    private fun defaultVirtualSet(controllerProfileId: Long) = ActionSet(
+        controllerProfileId = controllerProfileId,
+        name = "virtual_1",
+        title = defaultSetTitle(ActionSetKind.VIRTUAL, 1),
+        legacy = true,
+        orderIndex = 0,
+        kind = ActionSetKind.VIRTUAL,
+    )
+
     /**
      * Seeds a default Steam-Input-style config under [layoutId]:
-     * one Generic Android controller_profile, one "Default" action_set,
+     * one Generic Android controller_profile, a "Physical Set 1" and a "Virtual Set 1",
      * one binding_group per default input source, default activators (FULL_PRESS)
      * with [BindingOutputType.UNBOUND] bindings.
      *
@@ -112,15 +137,16 @@ class ControllerConfigRepository @Inject constructor(
             ActionSet(
                 controllerProfileId = controllerProfileId,
                 name = "default",
-                // What the controls bar's switcher shows. "Layout Set 1" (Dylan, 2026-09-27) —
-                // it was "Default Map", which named a Steam concept nobody here uses and read as
-                // a fallback rather than as the first of however many the user goes on to make.
-                title = "Layout Set 1",
+                // What the bar's Button set crumb shows (Dylan, 2026-10-12 — was "Layout Set 1"
+                // before sets split by kind; "Default Map" before that, which named a Steam
+                // concept nobody here uses and read as a fallback).
+                title = defaultSetTitle(ActionSetKind.PHYSICAL, 1),
                 legacy = true,
                 orderIndex = 0,
             )
         )
         seedDefaultSetContents(actionSetId)
+        actionSetDao.insert(defaultVirtualSet(controllerProfileId))
 
         configDirtyTick.value = configDirtyTick.value + 1
         return controllerProfileId
@@ -313,6 +339,10 @@ class ControllerConfigRepository @Inject constructor(
             )
         }
 
+        // A Steam config has no virtual buttons: its sets are all physical, and the overlay
+        // gets the usual empty first virtual set.
+        actionSetDao.insert(defaultVirtualSet(controllerProfileId))
+
         configDirtyTick.value = configDirtyTick.value + 1
         return controllerProfileId
     }
@@ -455,7 +485,8 @@ class ControllerConfigRepository @Inject constructor(
      * table's keys and seeds the missing ones. Existing rows are untouched.
      */
     suspend fun ensureSeededInputSources() {
-        val sets = actionSetDao.getAll()
+        // Only PHYSICAL sets carry input-source groups; a virtual set holds overlay buttons.
+        val sets = actionSetDao.getAll().filter { it.kind == ActionSetKind.PHYSICAL }
         if (sets.isEmpty()) return
         val setIds = sets.map { it.id }
         val activePresetsBySetId = presetBindingDao.getByActionSets(setIds)
@@ -488,7 +519,7 @@ class ControllerConfigRepository @Inject constructor(
      * every new row (per feedback_duplicates_own_their_data). The destination
      * set is assumed to already exist and be empty.
      */
-    private suspend fun cloneSetContents(sourceSetId: Long, destSetId: Long) {
+    private suspend fun cloneSetContents(sourceSetId: Long, destSetId: Long): Map<Long, Long> {
         val sourceLayers = actionLayerDao.getByActionSets(listOf(sourceSetId))
         val layerIdMap = HashMap<Long, Long>(sourceLayers.size)
         for (sourceLayer in sourceLayers) {
@@ -567,13 +598,29 @@ class ControllerConfigRepository @Inject constructor(
                 )
             )
         }
+        return layerIdMap
+    }
+
+    /**
+     * Copy a VIRTUAL set's overlay buttons — its own and its layers' — onto [destSetId] and the
+     * layers [layerIdMap] cloned them to. Fresh ids, so the copy owns its buttons
+     * (feedback_duplicates_own_their_data).
+     */
+    private suspend fun cloneOverlayElements(sourceSetId: Long, destSetId: Long, layerIdMap: Map<Long, Long>) {
+        val copies = overlayElementDao.getBySetOnce(sourceSetId).map { it.copy(id = 0, actionSetId = destSetId) } +
+            layerIdMap.flatMap { (sourceLayerId, destLayerId) ->
+                overlayElementDao.getByLayerOnce(sourceLayerId).map { it.copy(id = 0, actionLayerId = destLayerId) }
+            }
+        if (copies.isNotEmpty()) overlayElementDao.insertAll(copies)
     }
 
     /**
      * Append a new [ActionSet] to [controllerProfileId]. When [inheritFromSetId] is
      * null the new set is seeded with the same default groups/inputs/activators as
      * [seedDefaultConfig]; when non-null the named source set is deep-cloned into
-     * the new set (groups, inputs, activators, bindings, preset_bindings, layers).
+     * the new set (groups, inputs, activators, bindings, preset_bindings, layers — and,
+     * for a VIRTUAL set, its overlay buttons). [kind] picks a fresh set's kind (a clone
+     * takes its source's); a fresh VIRTUAL set starts empty.
      * Returns the new set id.
      */
     suspend fun addActionSet(
@@ -581,8 +628,11 @@ class ControllerConfigRepository @Inject constructor(
         name: String,
         title: String,
         inheritFromSetId: Long? = null,
+        kind: ActionSetKind = ActionSetKind.PHYSICAL,
     ): Long {
-        val existing = actionSetDao.getByControllerProfile(controllerProfileId)
+        // A clone is always its source's kind.
+        val setKind = inheritFromSetId?.let { actionSetDao.getById(it)?.kind } ?: kind
+        val existing = actionSetDao.getByControllerProfile(controllerProfileId).filter { it.kind == setKind }
         val nextOrder = (existing.maxOfOrNull { it.orderIndex } ?: -1) + 1
         val newSetId = actionSetDao.insert(
             ActionSet(
@@ -591,12 +641,16 @@ class ControllerConfigRepository @Inject constructor(
                 title = title,
                 legacy = true,
                 orderIndex = nextOrder,
+                kind = setKind,
             )
         )
-        if (inheritFromSetId != null) {
-            cloneSetContents(inheritFromSetId, newSetId)
-        } else {
-            seedDefaultSetContents(newSetId)
+        when {
+            inheritFromSetId != null -> {
+                val layerIdMap = cloneSetContents(inheritFromSetId, newSetId)
+                if (setKind == ActionSetKind.VIRTUAL) cloneOverlayElements(inheritFromSetId, newSetId, layerIdMap)
+            }
+            // A fresh virtual set starts empty — its buttons are placed in the overlay editor.
+            setKind == ActionSetKind.PHYSICAL -> seedDefaultSetContents(newSetId)
         }
         configDirtyTick.value = configDirtyTick.value + 1
         return newSetId
@@ -622,14 +676,16 @@ class ControllerConfigRepository @Inject constructor(
     }
 
     /**
-     * Delete [actionSetId]. Guards against deleting the last remaining set under a
-     * controller_profile (returns false). The starting set is implicitly the first
+     * Delete [actionSetId]. Guards against deleting the last remaining set OF ITS KIND
+     * under a controller_profile (returns false). The starting set is implicitly the first
      * set by orderIndex on whatever remains, so no reassignment is needed.
      * Returns true on successful deletion.
      */
     suspend fun deleteActionSet(actionSetId: Long): Boolean {
         val existing = actionSetDao.getById(actionSetId) ?: return false
+        // The last set OF ITS KIND stays: each kind needs a starting set.
         val siblings = actionSetDao.getByControllerProfile(existing.controllerProfileId)
+            .filter { it.kind == existing.kind }
         if (siblings.size <= 1) return false
 
         actionSetDao.deleteById(actionSetId)
@@ -2023,7 +2079,8 @@ class ControllerConfigRepository @Inject constructor(
             ActionSetGraph(actionSet, layerGraphs, presetEntries, setModeShifts)
         }
 
-        return ControllerConfig(controllerProfile, actionSetGraphs)
+        val (physical, virtual) = actionSetGraphs.partition { it.actionSet.kind == ActionSetKind.PHYSICAL }
+        return ControllerConfig(controllerProfile, actionSets = physical, virtualSets = virtual)
     }
 
     private data class InputSourceSeed(
@@ -2145,4 +2202,10 @@ class ControllerConfigRepository @Inject constructor(
             ),
         )
     }
+}
+
+/** A new set's default title: "Physical Set 2", "Virtual Set 1" (Dylan, 2026-10-12). */
+fun defaultSetTitle(kind: ActionSetKind, number: Int): String = when (kind) {
+    ActionSetKind.PHYSICAL -> "Physical Set $number"
+    ActionSetKind.VIRTUAL -> "Virtual Set $number"
 }

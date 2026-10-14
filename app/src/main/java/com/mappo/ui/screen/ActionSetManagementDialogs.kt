@@ -1,5 +1,7 @@
 package com.mappo.ui.screen
 
+import com.mappo.data.model.steam.ActionSetKind
+import com.mappo.data.repository.defaultSetTitle
 import com.mappo.ui.minput.MinputIconSize
 import com.mappo.ui.minput.MinputIcon
 import androidx.compose.foundation.clickable
@@ -63,14 +65,16 @@ fun AddSetDialog(
     onConfirm: (title: String, inheritFromSetId: Long?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var title by remember { mutableStateOf("") }
+    // Prefilled with the next default name ("Physical Set 3") — sets split by kind 2026-10-12,
+    // and this dialog serves the physical editor.
+    var title by remember { mutableStateOf(defaultSetTitle(ActionSetKind.PHYSICAL, existingSets.size + 1)) }
     var inheritFrom: ActionSetGraph? by remember { mutableStateOf(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        // Named as the control that opens it does (the sets kebab's "New layout set", 2026-09-27).
-        // "Action set" is Steam's word and stays in the code; the UI says layout set.
-        title = { Text("New layout set") },
+        // Named as the control that opens it does (the bar's Button set crumb, 2026-10-12).
+        // "Action set" is Steam's word and stays in the code; the UI says button set.
+        title = { Text("New physical set") },
         text = {
             Column {
                 OutlinedTextField(
@@ -82,7 +86,7 @@ fun AddSetDialog(
                     keyboardOptions = mappoKeyboardOptions(),
                 )
                 Text(
-                    text = "Shown on the controls bar's set switcher.",
+                    text = "Shown on the bar's Button set crumb.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

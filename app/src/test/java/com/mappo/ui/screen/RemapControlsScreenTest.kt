@@ -960,9 +960,9 @@ class RemapControlsScreenTest {
     // ── Action-set row (rehomed from the top-bar tabs, 2026-08-13) ───────
 
     /**
-     * **The hierarchy bar reads application › layout › set › buttons, then the pin button**
-     * (2026-10-07) — four crumbs in one row, none running under the next, even with a long layout
-     * name (titles cap and ellipsize).
+     * **The hierarchy bar reads application › layout › buttons › button set, then the pin button**
+     * (2026-10-07; the set moved under the buttons 2026-10-12) — four crumbs in one row, none
+     * running under the next, even with a long layout name (titles cap and ellipsize).
      */
     @Test
     fun hierarchyBar_crumbsReadInOrder_evenWithALongLayoutName() {
@@ -987,7 +987,7 @@ class RemapControlsScreenTest {
 
         fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val order = listOf("bar:application", "bar:layout", "bar:set", "bar:buttons", "bar:pin")
+        val order = listOf("bar:application", "bar:layout", "bar:buttons", "bar:set", "bar:pin")
             .map { it to bounds(it) }
         // Joined crumbs overlap their BOXES by up to the recess depth (the recess is cut out of
         // the box; see MinputBreadcrumbRow) — never by more.
@@ -998,6 +998,13 @@ class RemapControlsScreenTest {
             assert(left.second.right - tolerance <= right.second.left + 0.5f) {
                 "${left.first} ran under ${right.first}: ${left.second} vs ${right.second}"
             }
+        }
+        // Every crumb reads the same width (2026-10-12): the round-started Application crumb's
+        // box is a recess narrower, since its arc reaches the box edge where a recess cuts back.
+        val app = order[0].second
+        val layout = order[1].second
+        assert(kotlin.math.abs(app.width - (layout.width - tolerance)) <= 1.5f) {
+            "application crumb ${app.width} vs layout ${layout.width} less recess $tolerance"
         }
     }
 
@@ -1131,7 +1138,7 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithContentDescription("Add action set").assertCountEquals(0)
         composeRule.onNodeWithTag("bar:set").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("New layout set", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("New button set", useUnmergedTree = true).assertExists()
     }
 
     @Test

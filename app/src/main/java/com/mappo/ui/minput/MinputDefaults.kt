@@ -467,8 +467,9 @@ enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: Minp
 
     /** Two-line controls — an overline over a title (the hierarchy bar's crumbs, 2026-10-07).
      *  Large held the ~23dp stack with too little air above and below it; this gives it ~6.5dp
-     *  each side. The glyph scales with the frame: 20 in 36 is the same proportion as 12 in 24. */
-    ExtraLarge(height = 36.dp, contentPadding = 12.dp, iconSize = MinputIconSize.Xl);
+     *  each side. The glyph is L (16), not the 20 the frame proportions would give: the frame grew for
+     *  the TEXT stack, and at 20 the glyphs read oversized beside it (Dylan, 2026-10-12). */
+    ExtraLarge(height = 36.dp, contentPadding = 12.dp, iconSize = MinputIconSize.L);
 
     /** A pill at this scale: half the height. */
     val corner: Dp get() = height / 2

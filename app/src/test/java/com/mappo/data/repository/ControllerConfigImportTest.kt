@@ -1,5 +1,7 @@
 package com.mappo.data.repository
 
+import com.mappo.data.model.steam.ActionSetKind
+import com.mappo.data.db.FakeOverlayElementDao
 import com.mappo.data.db.steam.FakeActionLayerDao
 import com.mappo.data.db.steam.FakeActionSetDao
 import com.mappo.data.db.steam.FakeActivatorDao
@@ -66,6 +68,7 @@ class ControllerConfigImportTest {
             presetBindingDao,
             layerPresetBindingDao,
             sourceModeShiftDao,
+            FakeOverlayElementDao(),
         )
     }
 
@@ -151,8 +154,10 @@ class ControllerConfigImportTest {
         assertEquals("gg", cp.name)
         assertTrue(cp.legacySet)
 
-        // Action set + layer.
-        val sets = actionSetDao.getByControllerProfile(cpId)
+        // Action set + layer — the imported set is PHYSICAL; the overlay gets an empty virtual set.
+        val all = actionSetDao.getByControllerProfile(cpId)
+        assertEquals(listOf("Virtual Set 1"), all.filter { it.kind == ActionSetKind.VIRTUAL }.map { it.title })
+        val sets = all.filter { it.kind == ActionSetKind.PHYSICAL }
         assertEquals(1, sets.size)
         val setId = sets.single().id
         assertEquals("Default", sets.single().name)
@@ -171,7 +176,7 @@ class ControllerConfigImportTest {
     @Test
     fun presetBindingsSkipModeshiftGroup() = runTest {
         val cpId = subject.importConfig(7L, VdfImporter.import(sample))
-        val setId = actionSetDao.getByControllerProfile(cpId).single().id
+        val setId = actionSetDao.getByControllerProfile(cpId).single { it.kind == ActionSetKind.PHYSICAL }.id
 
         val presets = presetBindingDao.getByActionSets(listOf(setId))
         // button_diamond, dpad, left_trigger, right_bumper — but NOT the modeshift right_joystick.
@@ -191,7 +196,7 @@ class ControllerConfigImportTest {
     @Test
     fun renamedKeyAndButtonBindingsPersist() = runTest {
         val cpId = subject.importConfig(7L, VdfImporter.import(sample))
-        val setId = actionSetDao.getByControllerProfile(cpId).single().id
+        val setId = actionSetDao.getByControllerProfile(cpId).single { it.kind == ActionSetKind.PHYSICAL }.id
         val faceGroup = presetBindingDao.getByActionSets(listOf(setId))
             .single { it.inputSource == InputSource.BUTTON_DIAMOND }.bindingGroupId
 
@@ -210,7 +215,7 @@ class ControllerConfigImportTest {
     @Test
     fun triggerSoftPullSplitPersists() = runTest {
         val cpId = subject.importConfig(7L, VdfImporter.import(sample))
-        val setId = actionSetDao.getByControllerProfile(cpId).single().id
+        val setId = actionSetDao.getByControllerProfile(cpId).single { it.kind == ActionSetKind.PHYSICAL }.id
         val triggerGroup = presetBindingDao.getByActionSets(listOf(setId))
             .single { it.inputSource == InputSource.LEFT_TRIGGER }.bindingGroupId
 
@@ -221,7 +226,7 @@ class ControllerConfigImportTest {
     @Test
     fun groupSettingsCarriedUnderVdfNamespace() = runTest {
         val cpId = subject.importConfig(7L, VdfImporter.import(sample))
-        val setId = actionSetDao.getByControllerProfile(cpId).single().id
+        val setId = actionSetDao.getByControllerProfile(cpId).single { it.kind == ActionSetKind.PHYSICAL }.id
         val triggerGroup = bindingGroupDao.getByActionSets(listOf(setId))
             .single { it.mode == BindingMode.TRIGGER }
         assertEquals("""{"_vdf":{"output_trigger":"1"}}""", triggerGroup.settingsJson)
@@ -230,7 +235,7 @@ class ControllerConfigImportTest {
     @Test
     fun modeShiftWiredToTargetGroup() = runTest {
         val cpId = subject.importConfig(7L, VdfImporter.import(sample))
-        val setId = actionSetDao.getByControllerProfile(cpId).single().id
+        val setId = actionSetDao.getByControllerProfile(cpId).single { it.kind == ActionSetKind.PHYSICAL }.id
 
         val shifts = sourceModeShiftDao.getByActionSets(listOf(setId))
         assertEquals(1, shifts.size)

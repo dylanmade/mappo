@@ -200,7 +200,8 @@ fun BindingOutput.displayLabel(): String = when (this) {
 fun BindingOutput.displayLabel(config: ControllerConfig?): String {
     if (this is BindingOutput.ControllerAction) {
         changePresetLabelOrNull()?.let { targetId ->
-            val title = config?.actionSets?.firstOrNull { it.actionSet.id == targetId }?.actionSet?.title
+            // Either kind — a binding can switch the physical or the virtual set.
+            val title = config?.allSets?.firstOrNull { it.actionSet.id == targetId }?.actionSet?.title
             return if (title != null) "Switch to: $title" else "Switch to: Set #$targetId"
         }
         if (verb in LAYER_VERBS) {

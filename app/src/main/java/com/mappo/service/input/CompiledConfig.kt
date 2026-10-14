@@ -45,6 +45,14 @@ data class CompiledConfig(
      * target source while the trigger is held.
      */
     val compiledGroups: Map<Long, CompiledBindingGroup> = emptyMap(),
+    /**
+     * The layout's VIRTUAL set ids (2026-10-12). They compile to nothing — a virtual set holds
+     * overlay buttons, not bindings — but a `CHANGE_PRESET` may target one, and the evaluator has
+     * to tell "switch the overlay's set" from "no such set". [startingVirtualSetId] is the
+     * overlay's starting set (0 = the layout has none).
+     */
+    val virtualSetIds: Set<Long> = emptySet(),
+    val startingVirtualSetId: Long = 0L,
 ) {
     /**
      * Resolve an address within a specific action set. Returns null if either the set
@@ -645,5 +653,7 @@ fun ControllerConfig.toCompiled(): CompiledConfig {
         startingActionSetId = startingId,
         sets = compiledSets,
         compiledGroups = compiledGroups,
+        virtualSetIds = virtualSets.mapTo(HashSet()) { it.actionSet.id },
+        startingVirtualSetId = startingVirtualSet?.actionSet?.id ?: 0L,
     )
 }

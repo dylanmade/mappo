@@ -1035,8 +1035,10 @@ fun MainScreen(
                 // Brick 4.5: source the action sets list from the active config for the
                 // Steam-Input call site. ConfigureButton sets showActionSets=false so this
                 // list isn't consulted there even though we'd compute the same value.
+                // Both kinds (2026-10-12): one press can switch the physical set, the virtual
+                // set, or — two commands on it — both. The titles say which kind each is.
                 val availableActionSets: List<Pair<Long, String>> = if (showActionSets) {
-                    viewedControllerConfig?.actionSets?.map { it.actionSet.id to it.actionSet.title }
+                    viewedControllerConfig?.allSets?.map { it.actionSet.id to it.actionSet.title }
                         ?: emptyList()
                 } else emptyList()
                 // Brick 5.6: layers list is scoped to the viewing action set — layers in

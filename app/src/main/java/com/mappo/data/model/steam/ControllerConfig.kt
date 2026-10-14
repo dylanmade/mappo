@@ -10,8 +10,29 @@ package com.mappo.data.model.steam
  */
 data class ControllerConfig(
     val controllerProfile: ControllerProfile,
+    /** The PHYSICAL button sets ([ActionSetKind.PHYSICAL]), in order — everything that remaps
+     *  the controller reads these. Named before sets had kinds; the virtual ones are
+     *  [virtualSets]. */
     val actionSets: List<ActionSetGraph>,
+    /** The VIRTUAL button sets ([ActionSetKind.VIRTUAL]), in order — the overlay's on-screen
+     *  buttons hang off these (and their layers). No binding graph of their own. */
+    val virtualSets: List<ActionSetGraph> = emptyList(),
 ) {
+    /** Every set, physical first — for whatever names or targets a set of either kind (a
+     *  `CHANGE_PRESET` binding can switch either). */
+    val allSets: List<ActionSetGraph>
+        get() = actionSets + virtualSets
+
+    /** The overlay's starting set: the first virtual set by ordering. */
+    val startingVirtualSet: ActionSetGraph?
+        get() = virtualSets.firstOrNull()
+
+    /** The sets of [kind]. */
+    fun setsOf(kind: ActionSetKind): List<ActionSetGraph> = when (kind) {
+        ActionSetKind.PHYSICAL -> actionSets
+        ActionSetKind.VIRTUAL -> virtualSets
+    }
+
     /**
      * The starting set when the controller_profile is loaded at runtime: the first
      * [ActionSetGraph] by ordering. Steam has no exposed "default" concept; switching

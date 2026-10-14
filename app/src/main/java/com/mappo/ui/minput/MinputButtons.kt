@@ -97,6 +97,10 @@ fun MinputButton(
     size: MinputSize = MinputSize.Standard,
     corner: Dp = size.corner,
     contentDescription: String? = null,
+    /** The leading glyph's size, when the variant's [MinputSize.iconSize] is wrong for THIS
+     *  glyph — a solid, square-inked glyph carries more mass than a stroked one at the same
+     *  size (the hierarchy bar's pin grid, one step under the crumbs' glyphs). */
+    iconSize: MinputIconSize? = null,
 ) {
     val iconOnly = text == null && leadingIcon != null
     val height = size.height
@@ -158,7 +162,7 @@ fun MinputButton(
                     // the bare (chrome-less) form keeps the utility-glyph scale — a glyph
                     // that size floating in an invisible target reads right, but fills a
                     // visible circle to bursting.
-                    size = if (bare) MinputIconButtonIconSize else size.iconSize,
+                    size = iconSize ?: if (bare) MinputIconButtonIconSize else size.iconSize,
                     tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                 )
             }
@@ -179,7 +183,7 @@ fun MinputButton(
                     MinputIcon(
                         leadingIcon,
                         contentDescription = null,
-                        size = size.iconSize,
+                        size = iconSize ?: size.iconSize,
                         tint = leadingIconTint,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))

@@ -1,6 +1,7 @@
 package com.mappo.data.db.steam
 
 import androidx.room.TypeConverter
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.ActivatorType
 import com.mappo.data.model.steam.BindingMode
 import com.mappo.data.model.steam.BindingOutputType
@@ -8,6 +9,9 @@ import com.mappo.data.model.steam.ControllerType
 import com.mappo.data.model.steam.InputSource
 
 class SteamTypeConverters {
+
+    @TypeConverter fun actionSetKindToString(value: ActionSetKind): String = value.name
+    @TypeConverter fun stringToActionSetKind(value: String): ActionSetKind = ActionSetKind.valueOf(value)
 
     @TypeConverter fun controllerTypeToString(value: ControllerType): String = value.name
     @TypeConverter fun stringToControllerType(value: String): ControllerType = ControllerType.valueOf(value)

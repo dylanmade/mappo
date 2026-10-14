@@ -2,6 +2,7 @@ package com.mappo.ui.minput
 
 import android.graphics.Matrix
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
@@ -12,6 +13,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
@@ -21,6 +25,9 @@ import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import java.util.WeakHashMap
 import kotlin.math.abs
@@ -53,7 +60,7 @@ import kotlin.math.sqrt
  * cached. If the measurement fails (a malformed path, or a test runtime without real graphics)
  * the icon falls back to its original viewport rather than failing to draw.
  *
- * Launcher icons are bitmaps, not glyphs, and stay on `AppIconImage`.
+ * Launcher icons are bitmaps: the [ImageBitmap] overload measures their opaque pixels instead.
  */
 @Composable
 fun MinputIcon(
@@ -120,6 +127,73 @@ fun MinputIcon(
     tint: Color = LocalContentColor.current,
     slot: Boolean = false,
 ) = MinputIcon(ImageVector.vectorResource(id), contentDescription, modifier, size, tint, slot)
+
+/**
+ * **A BITMAP glyph — a launcher icon — through the same ink rule** (2026-10-12). A launcher icon
+ * carries its own transparent margin (legacy icons pad themselves; adaptive ones draw their mask
+ * inside the bounds), so drawn at a size it inked smaller than the vector glyphs beside it — the
+ * hierarchy bar's Application crumb read a step under its neighbours. The opaque bounds are
+ * measured once per bitmap ([MinputBitmapInkAlpha] counts as ink) and only they are drawn, the
+ * longer side at [size]. Drawn in its own colours: a launcher icon is artwork, not a tintable
+ * glyph.
+ */
+@Composable
+fun MinputIcon(
+    bitmap: ImageBitmap,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    size: MinputIconSize = MinputIconSize.S,
+    slot: Boolean = false,
+) {
+    val ink = remember(bitmap) { bitmap.inkBounds() }
+    val painter = remember(bitmap, ink) {
+        BitmapPainter(bitmap, srcOffset = IntOffset(ink.left, ink.top), srcSize = IntSize(ink.width, ink.height))
+    }
+    val longer = max(ink.width, ink.height).toFloat()
+    val width = size.dp * (ink.width / longer)
+    val height = size.dp * (ink.height / longer)
+    val image = @Composable { m: Modifier ->
+        Image(painter = painter, contentDescription = contentDescription, modifier = m.size(width, height))
+    }
+    if (slot) {
+        Box(modifier.size(size.dp), contentAlignment = Alignment.Center) { image(Modifier) }
+    } else {
+        image(modifier)
+    }
+}
+
+/** The opaque bounds of a bitmap — the whole bitmap when nothing clears [MinputBitmapInkAlpha]. */
+private fun ImageBitmap.inkBounds(): IntRect = synchronized(bitmapInkCache) {
+    bitmapInkCache.getOrPut(this) {
+        val source = asAndroidBitmap()
+        val w = source.width
+        val h = source.height
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, 0, 0, w, h)
+        var left = w
+        var top = h
+        var right = -1
+        var bottom = -1
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                if ((pixels[row + x] ushr 24) > MinputBitmapInkAlpha) {
+                    if (x < left) left = x
+                    if (x > right) right = x
+                    if (y < top) top = y
+                    if (y > bottom) bottom = y
+                }
+            }
+        }
+        if (right < 0) IntRect(0, 0, w, h) else IntRect(left, top, right + 1, bottom + 1)
+    }
+}
+
+private val bitmapInkCache = WeakHashMap<ImageBitmap, IntRect>()
+
+/** Alpha (0..255) a pixel must exceed to count as ink — clears a launcher icon's faint shadow
+ *  and anti-aliased fringe, which would otherwise widen the bounds by a pixel or two. */
+private const val MinputBitmapInkAlpha = 24
 
 /**
  * **The icon scale** — the glyph's longer inked side. One scale for every icon in the app, so

@@ -288,6 +288,24 @@ The config drawer flunked the 1:1 test; per-button editing moved into the cascad
 - Per-button styling parity (shapes/shadows/regions) cribbed from the grid renderer.
 - Thor / multi-display routing via `KeyboardDisplayRouter` (FC2).
 
+### Decision 2026-10-12 — virtual buttons get their OWN button sets
+
+Dylan: the hierarchy is now **Application › Layout › Buttons › Button set** — physical and
+virtual buttons each have their own sets, switched independently (one press can switch only the
+physical set, only the virtual one, or — two commands — both). A deliberate step off Steam's
+model; Steam configs map onto the physical sets alone.
+
+- `ActionSet.kind: ActionSetKind` (PHYSICAL | VIRTUAL), DB v23 (destructive). New layouts seed
+  "Physical Set 1" (the input-source groups) + "Virtual Set 1" (empty); imports get a virtual set.
+- `ControllerConfig.actionSets` = PHYSICAL (every remap consumer unchanged); `virtualSets`;
+  `allSets` for set-switch targets/labels. Last set of EACH kind can't be deleted; a duplicated
+  virtual set copies its overlay elements.
+- Overlay elements live on virtual sets (and their layers) only: the editor's scope dropdown
+  lists virtual sets; run mode shows the LIVE virtual set — `InputEvaluator.activeVirtualSetIdFlow`,
+  set by a `CHANGE_PRESET` aimed at a virtual set (no physical flush), else the starting one.
+- Not yet: virtual-set LAYERS at run time (no runtime layer stack for the overlay), and overlay
+  buttons can't themselves fire `CHANGE_PRESET` (they emit `RemapTarget`s — the FC1 seam).
+
 ---
 
 ## Verification (end-to-end)

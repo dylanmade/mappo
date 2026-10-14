@@ -697,7 +697,7 @@ fun RemapControlsScreen(
                             // While a crumb's dropdown is open, controller focus lives in it;
                             // browsing can remount this view (no-layout ↔ controls flip), and
                             // an ungated entry-seat would steal focus from the dropdown.
-                            focusSeatEnabled = openCrumb == null,
+                            focusSeatEnabled = { openCrumb == null },
                             seatCommand = seatCommandId,
                             onSeatCommand = { seatCommandId = it },
                             modifier = Modifier.weight(1f).fillMaxWidth(),

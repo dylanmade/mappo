@@ -210,6 +210,16 @@ class InputEvaluator @Inject constructor(
      */
     val activeSetIdFlow: StateFlow<Long> = _activeSetIdFlow.asStateFlow()
 
+    private val _activeVirtualSetIdFlow = MutableStateFlow(0L)
+    /**
+     * The overlay's live VIRTUAL set (2026-10-12): physical and virtual button sets switch
+     * independently, so a `CHANGE_PRESET` aimed at a virtual set lands here and leaves
+     * [activeSetId] — and every held physical binding — alone. 0L = not switched since the
+     * config arrived: follow the layout's starting virtual set. The overlay presenter is the
+     * consumer; the evaluator itself evaluates nothing against a virtual set.
+     */
+    val activeVirtualSetIdFlow: StateFlow<Long> = _activeVirtualSetIdFlow.asStateFlow()
+
     /**
      * FULL_PRESS activators that have been deferred by a coexisting LONG_PRESS on the same
      * address (with `interruptable=true`). On LONG fire: suppressed (popped, discarded). On
@@ -343,6 +353,10 @@ class InputEvaluator @Inject constructor(
      * we also zero those.
      */
     private fun handleConfigChange(compiled: CompiledConfig) {
+        // A virtual set from another layout (or a deleted one) — back to the starting set.
+        if (_activeVirtualSetIdFlow.value != 0L && _activeVirtualSetIdFlow.value !in compiled.virtualSetIds) {
+            _activeVirtualSetIdFlow.value = 0L
+        }
         // Re-center + drop any digital→joystick synthesis held state; the source may
         // have just left JOYSTICK_MOVE mode, which would otherwise strand its stick.
         for (src in digitalStickHeld.keys) gamepadEmitter.clearSource(src)
@@ -1805,10 +1819,13 @@ class InputEvaluator @Inject constructor(
         return when (output.verb) {
             "CHANGE_PRESET" -> {
                 val targetId = output.args.firstOrNull()?.toLongOrNull()
-                if (targetId == null) {
-                    Log.w(TAG, "CHANGE_PRESET has no valid target set id: ${output.args}")
-                } else {
-                    setActiveSet(targetId)
+                when {
+                    targetId == null -> Log.w(TAG, "CHANGE_PRESET has no valid target set id: ${output.args}")
+                    targetId in dispatcher.compiledConfig.value.virtualSetIds -> {
+                        Log.d(TAG, "active virtual set: ${_activeVirtualSetIdFlow.value} -> $targetId")
+                        _activeVirtualSetIdFlow.value = targetId
+                    }
+                    else -> setActiveSet(targetId)
                 }
                 true
             }

@@ -16,6 +16,14 @@ import com.themestudio.R
  * family per line. The picker also accepts free-text input so families
  * added after the snapshot remain reachable.
  *
+ * **Every family resolves, GMS-served or not** (2026-10-12). The GMS provider serves a
+ * narrower list than fonts.google.com (its directory:
+ * https://fonts.gstatic.com/s/a/directory.xml) — newer families are missing, and width cuts
+ * like "Barlow Condensed" exist there only as widths of their base family — and a missing name
+ * failed silently into the default typeface. [googleFontFamily] chains a direct download from
+ * the Google Fonts web API ([WebGoogleFont]) behind the GMS font, so whatever the web catalog
+ * lists, the picker can use.
+ *
  * Why on-demand: building a [FontFamily] is just a descriptor; the actual
  * font bytes are downloaded by Google Play Services on first render and
  * disk-cached at the system level. We don't ship any font binaries — only
@@ -89,10 +97,22 @@ fun googleFontFamily(name: String): FontFamily {
     val key = name.trim()
     synchronized(familyCache) {
         familyCache[key]?.let { return it }
+        // GMS first (a system-wide cache shared with every app); when it doesn't serve the
+        // family, Compose falls through to the next font in the list — the web download.
+        // Every weight (2026-10-12), so a weight override renders the family's real face
+        // rather than a synthesized one; only the weights asked for are ever loaded.
         val family = FontFamily(
-            Font(googleFont = GoogleFont(key), fontProvider = GoogleFontsProvider),
+            FontWeights.flatMap { weight ->
+                listOf(
+                    Font(googleFont = GoogleFont(key), fontProvider = GoogleFontsProvider, weight = weight),
+                    WebGoogleFont(key, weight),
+                )
+            },
         )
         familyCache[key] = family
         return family
     }
 }
+
+/** The CSS weight scale, 100…900. */
+private val FontWeights = (100..900 step 100).map { androidx.compose.ui.text.font.FontWeight(it) }

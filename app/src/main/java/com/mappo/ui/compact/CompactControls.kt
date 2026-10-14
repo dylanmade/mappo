@@ -1,5 +1,7 @@
 package com.mappo.ui.compact
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -193,19 +195,40 @@ fun CompactSlider(
             )
         },
         track = {
+            val activeTrack = if (enabled) colors.primary else colors.onSurface.copy(alpha = 0.38f)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(density.sliderTrackHeight)
                     .clip(CircleShape)
-                    .background(colors.surfaceVariant),
+                    .background(colors.surfaceVariant)
+                    // A pip per stop when the slider is stepped (2026-10-12 — the font picker's
+                    // weight slider marks each weight the family has), drawn over the fill:
+                    // contrasting on the active run, the variant ink beyond it.
+                    .drawWithContent {
+                        drawContent()
+                        if (steps > 0) {
+                            val radius = size.height * 0.3f
+                            val stops = steps + 1
+                            for (i in 0..stops) {
+                                val f = i.toFloat() / stops
+                                // Inset by the radius so the end pips sit inside the track.
+                                val x = radius + f * (size.width - 2 * radius)
+                                drawCircle(
+                                    color = if (f <= fraction) colors.onPrimary else colors.onSurfaceVariant,
+                                    radius = radius,
+                                    center = Offset(x, size.height / 2),
+                                )
+                            }
+                        }
+                    },
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
                         .fillMaxWidth(fraction)
                         .clip(CircleShape)
-                        .background(if (enabled) colors.primary else colors.onSurface.copy(alpha = 0.38f)),
+                        .background(activeTrack),
                 )
             }
         },

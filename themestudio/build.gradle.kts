@@ -37,6 +37,9 @@ dependencies {
     // family pickers. Bundled here so themestudio is self-contained when
     // extracted; the cert array resource ships in this module's res too.
     implementation(libs.androidx.compose.ui.text.google.fonts)
+    // FontsContractCompat — the font picker's load probe asks GMS directly, to learn which
+    // families it serves (FontAvailability).
+    implementation(libs.androidx.core.ktx)
 
     // JVM unit tests
     testImplementation(libs.junit)

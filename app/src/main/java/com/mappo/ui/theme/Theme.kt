@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.unit.dp
@@ -102,6 +103,14 @@ fun MappoTheme(
     val fontResolver = rememberThemeFontResolver()
     val typography = rememberAppTypography().applyOverrides(overrides.typography, fontResolver)
     val shapes = Shapes().applyOverrides(overrides.shapes)
+    // The theme's font-size multiplier (the font picker's size slider, 2026-10-12) rides on the
+    // density's font scale, so EVERY sp — role styles and minput's explicit sizes alike —
+    // scales together, on top of the window root's text-size setting (TextSizeSettings).
+    val rootDensity = LocalDensity.current
+    val textScale = overrides.typography.fontScale ?: 1f
+    val scaledDensity = remember(rootDensity, textScale) {
+        Density(rootDensity.density, rootDensity.fontScale * textScale)
+    }
 
     val extraColors = if (effectiveDark) MappoExtraColors.Dark else MappoExtraColors.Light
     MaterialExpressiveTheme(
@@ -164,6 +173,7 @@ fun MappoTheme(
             CompositionLocalProvider(
                 LocalMappoExtraColors provides extraColors,
                 LocalBringIntoViewSpec provides bringIntoViewSpec,
+                LocalDensity provides scaledDensity,
                 content = content,
             )
         }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
@@ -61,4 +62,21 @@ fun rememberAppIconPainter(packageName: String?): Painter? {
         }
     }
     return painter
+}
+
+/** The launcher icon as a bitmap, for [com.mappo.ui.minput.MinputIcon]'s ink-cropping bitmap
+ *  overload (a launcher icon sized beside glyphs). Null while loading or when there is none. */
+@Composable
+fun rememberAppIconBitmap(packageName: String?): ImageBitmap? {
+    val context = LocalContext.current.applicationContext
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
+        value = packageName?.let { pkg ->
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    context.packageManager.getApplicationIcon(pkg).toBitmap().asImageBitmap()
+                }.getOrNull()
+            }
+        }
+    }
+    return bitmap
 }

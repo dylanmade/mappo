@@ -138,7 +138,10 @@ internal fun RemapSimpleView(
     // no-layout state ↔ controls flip), and an ungated entry-seat on remount stole focus
     // from the drawer mid-scroll. The pending seat is NOT consumed while gated, so it still
     // fires once the drawers close and the screen becomes controller-ready then.
-    focusSeatEnabled: Boolean = true,
+    // A LAMBDA, read only while a seat is pending (2026-10-12): as a plain Boolean, opening any
+    // bar crumb flipped it and recomposed this whole view on the tap's frame — the dropdown
+    // landed a beat after the pin button's menu, which never touched this view.
+    focusSeatEnabled: () -> Boolean = { true },
     /** A command the edit-mode cursor should land on once it exists — see [RemapStage]. */
     seatCommand: Long? = null,
     onSeatCommand: (Long?) -> Unit = {},
@@ -353,7 +356,7 @@ internal fun RemapSimpleView(
         // The cursor arriving in a group is what reveals it, tap or d-pad alike.
         onGroupFocused = { if (editGroup != null) editCursor = it },
         onCarrying = { carrying = it },
-        focusSeatGroup = returnFocusGroup.takeIf { focusSeatEnabled },
+        focusSeatGroup = returnFocusGroup?.takeIf { focusSeatEnabled() },
         onFocusSeated = { returnFocusGroup = null },
         modifier = modifier.onFocusChanged { state ->
             if (state.hasFocus) viewHadFocus = true else if (viewHadFocus) refocusTick++

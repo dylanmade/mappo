@@ -198,8 +198,11 @@ fun MinputBreadcrumbSegment(
         border = minputBevelBorder(fill, cornerRadius = startCorner, endCornerRadius = endCorner),
         modifier = modifier
             .width(
-                if (iconMode) minputBreadcrumbIconWidth(size)
-                else minputBreadcrumbExpandedWidth(size, join),
+                (if (iconMode) minputBreadcrumbIconWidth(size) else minputBreadcrumbExpandedWidth(size, join)) -
+                    // A round START reaches the box's edge where a recess would be cut back, so
+                    // the same box reads a recess wider — trim it, so every crumb has the same
+                    // width at mid-height and the same room inside.
+                    (if (position.roundStart) recessDepth else 0.dp),
             )
             .minputInteractiveMotion(interaction)
             .fillMaxHeight()
@@ -267,10 +270,10 @@ fun MinputBreadcrumbSegment(
 }
 
 /**
- * Every expanded segment's width at [size]: the glyph, the gap, [MinputBreadcrumbTitleWidth] of
- * text, an inset each side — plus room for the deepest pair of joins (a middle segment's bulge
- * AND recess), so the middle segments get the full title width and the round-ended ones a little
- * more.
+ * A middle segment's width at [size]: the glyph, the gap, [MinputBreadcrumbTitleWidth] of text,
+ * an inset each side, plus its bulge and recess. Every segment reads this wide at mid-height — a
+ * round-STARTED segment's box is trimmed by the recess it doesn't have (its arc reaches the box
+ * edge where a recess would be cut back); a round END spans the box just as a bulge does.
  */
 fun minputBreadcrumbExpandedWidth(size: MinputSize, join: MinputBreadcrumbJoin): Dp =
     size.iconSize.dp + MinputBarIconTextGap + MinputBreadcrumbTitleWidth +

@@ -7,7 +7,9 @@ import android.view.WindowManager
 import com.mappo.data.model.OverlayElement
 import com.mappo.data.settings.OverlaySettings
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.repository.ControllerConfigRepository
+import com.mappo.data.repository.defaultSetTitle
 import com.mappo.data.repository.OverlayRepository
 import com.mappo.data.repository.LayoutRepository
 import kotlinx.coroutines.CoroutineScope
@@ -69,12 +71,13 @@ class OverlayEditor @Inject constructor(
         .map { it?.id }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
-    /** The active layout's action sets + their layers, flattened for the scope dropdown. */
+    /** The active layout's VIRTUAL button sets + their layers, flattened for the scope dropdown
+     *  (overlay buttons live only on virtual sets — see [com.mappo.data.model.steam.ActionSetKind]). */
     val availableScopes: StateFlow<List<ScopeOption>> = activeLayoutId
         .flatMapLatest { id ->
             if (id == null) flowOf(emptyList())
             else controllerConfigRepository.observeActiveConfig(id).map { config ->
-                config?.actionSets.orEmpty().flatMap { setGraph ->
+                config?.virtualSets.orEmpty().flatMap { setGraph ->
                     buildList {
                         add(
                             ScopeOption(
@@ -334,18 +337,19 @@ class OverlayEditor @Inject constructor(
     }
 
     /**
-     * Create a new (default-seeded) action set in the active controller config and report its scope
+     * Create a new, empty VIRTUAL button set in the active controller config and report its scope
      * (so the caller can switch the editor to it). The new set appears in [availableScopes] reactively.
      */
     fun addActionSet(onDone: (OverlayScope) -> Unit = {}) {
         val layoutId = activeLayoutId.value ?: return
         scope.launch {
             val config = controllerConfigRepository.getActiveConfigOnce(layoutId) ?: return@launch
-            val n = config.actionSets.size + 1
+            val n = config.virtualSets.size + 1
             val id = controllerConfigRepository.addActionSet(
                 controllerProfileId = config.controllerProfile.id,
-                name = "set_$n",
-                title = "Action set $n",
+                name = "virtual_$n",
+                title = defaultSetTitle(ActionSetKind.VIRTUAL, n),
+                kind = ActionSetKind.VIRTUAL,
             )
             onDone(OverlayScope.Set(id))
         }
@@ -356,7 +360,7 @@ class OverlayEditor @Inject constructor(
         val layoutId = activeLayoutId.value ?: return
         scope.launch {
             val config = controllerConfigRepository.getActiveConfigOnce(layoutId) ?: return@launch
-            val set = config.actionSets.firstOrNull { it.actionSet.id == actionSetId } ?: return@launch
+            val set = config.virtualSets.firstOrNull { it.actionSet.id == actionSetId } ?: return@launch
             val n = set.layers.size + 1
             val id = controllerConfigRepository.addLayer(actionSetId, name = "layer_$n", title = "Layer $n")
             onDone(OverlayScope.Layer(actionLayerId = id, parentActionSetId = actionSetId))

@@ -34,6 +34,7 @@ import com.themestudio.core.UmbrellaRoles
  *   type.<role>.letterSpacing    Float (sp)
  *   type.displayFontFamilyName   String (Google Font name)
  *   type.bodyFontFamilyName      String (Google Font name)
+ *   type.fontScale               Float (multiplier)
  *   shape.<role>                 Float (dp)
  */
 class SharedPrefsThemeOverridesStorage(
@@ -105,6 +106,7 @@ class SharedPrefsThemeOverridesStorage(
         var result = TypographyOverrides(
             displayFontFamilyName = prefs.getString(TYPE_DISPLAY_FAMILY_KEY, null),
             bodyFontFamilyName = prefs.getString(TYPE_BODY_FAMILY_KEY, null),
+            fontScale = if (prefs.contains(TYPE_FONT_SCALE_KEY)) prefs.getFloat(TYPE_FONT_SCALE_KEY, 1f) else null,
         )
         // Umbrella roles share the same key shape as per-role entries, so we
         // iterate both lists with one loop. UmbrellaRoles.all entries are
@@ -128,6 +130,8 @@ class SharedPrefsThemeOverridesStorage(
         else edit.remove(TYPE_DISPLAY_FAMILY_KEY)
         if (overrides.bodyFontFamilyName != null) edit.putString(TYPE_BODY_FAMILY_KEY, overrides.bodyFontFamilyName)
         else edit.remove(TYPE_BODY_FAMILY_KEY)
+        if (overrides.fontScale != null) edit.putFloat(TYPE_FONT_SCALE_KEY, overrides.fontScale)
+        else edit.remove(TYPE_FONT_SCALE_KEY)
         for (role in UmbrellaRoles.all + TypographyRoles.all) {
             val o = role.readOverride(overrides)
             val sizeKey = "$TYPE_PREFIX${role.name}.fontSize"
@@ -167,6 +171,7 @@ class SharedPrefsThemeOverridesStorage(
         private const val TYPE_PREFIX = "type."
         private const val TYPE_DISPLAY_FAMILY_KEY = "type.displayFontFamilyName"
         private const val TYPE_BODY_FAMILY_KEY = "type.bodyFontFamilyName"
+        private const val TYPE_FONT_SCALE_KEY = "type.fontScale"
         private const val SHAPE_PREFIX = "shape."
         private const val GEN_SEED_KEY = "gen.seed"
         private const val GEN_STYLE_KEY = "gen.style"

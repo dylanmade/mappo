@@ -12,9 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BorderBottom
-import androidx.compose.material.icons.filled.BorderStyle
-import androidx.compose.material.icons.filled.BorderTop
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,19 +35,18 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.AppWindow
 import com.composables.icons.lucide.ArrowUpDown
 import com.composables.icons.lucide.Gamepad2
-import com.composables.icons.lucide.Layers
-import com.composables.icons.lucide.LayoutTemplate
-import com.composables.icons.lucide.SquareStack
+import com.composables.icons.lucide.SendToBack
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActionSetGraph
+import com.mappo.data.model.steam.ActionSetKind
 import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.BarPin
-import com.mappo.ui.component.AppIconImage
-import com.mappo.ui.component.rememberAppIconPainter
+import com.mappo.ui.component.rememberAppIconBitmap
+import com.mappo.ui.icons.PinSpot
 import com.mappo.ui.minput.MinputBreadcrumbJoin
 import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
 import com.mappo.ui.minput.MinputBreadcrumbMode
@@ -67,7 +65,6 @@ import com.mappo.ui.minput.MinputSegmentGap
 import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputTextField
 import com.mappo.ui.minput.minputMiniTextStyle
-import com.mappo.ui.minput.minputMirrored
 import kotlinx.collections.immutable.ImmutableList
 
 /**
@@ -76,14 +73,17 @@ import kotlinx.collections.immutable.ImmutableList
  * physical/virtual editor switch with ONE compact group that floats at a pinned spot on the
  * screen.
  *
- * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of four chevron-joined crumbs reading the
- * hierarchy left to right — **Application › Layout › Set › Buttons** — each an overline over the
- * current value; then, as its own circular button, the PIN button choosing which of six spots the
- * bar sits in ([BarPin]). Every crumb drops a [MinputDropdownPanel] holding that level's picker:
+ * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of four joined crumbs reading the
+ * hierarchy left to right — **Application › Layout › Buttons › Button set** (2026-10-12: the set
+ * moved under the buttons when physical and virtual buttons got sets of their own — see
+ * [ActionSetKind]) — each an overline over the current value; then, as its own circular button,
+ * the PIN button choosing which of six spots the bar sits in ([BarPin]). Every crumb drops a
+ * [MinputDropdownPanel] holding that level's picker:
  *  - Application — search · sort over the applications list (was the drawer's applications mode);
  *  - Layout — search · sort over the layouts list with "+ New layout" (was the drawer's body);
- *  - Set — "+ New layout set" over the layout's sets (was the group-button switch + kebab);
- *  - Buttons — Physical / Virtual (was the editor switch).
+ *  - Buttons — Physical / Virtual (was the editor switch);
+ *  - Button set — "+ New button set" over the [editor]'s kind of sets (was the group-button
+ *    switch + kebab).
  *
  * The crumb whose panel is open wears the highlight plane. Which crumb is open is the CALLER's
  * state ([openCrumb]) because closing one is not a single thing: [onDismissCrumb] is a close with
@@ -114,14 +114,14 @@ internal fun RemapHierarchyBar(
     onPreviewLayout: (Long) -> Unit,
     onActivateLayout: (Layout) -> Unit,
     onNewLayout: () -> Unit,
-    // ── Set ──
+    // ── Buttons ──
+    editor: EditorKind,
+    onSelectEditor: (EditorKind) -> Unit,
+    // ── Button set — the [editor]'s kind ──
     config: ControllerConfig?,
     viewingSet: ActionSetGraph?,
     onSelectSet: (Long) -> Unit,
     onAddSet: () -> Unit,
-    // ── Buttons ──
-    editor: EditorKind,
-    onSelectEditor: (EditorKind) -> Unit,
     // ── Pin ──
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
@@ -182,7 +182,7 @@ internal fun RemapHierarchyBar(
                                 overline = (if (previewing) "Layout · preview" else "Layout")
                                     .takeIf { showOverlines },
                                 title = layoutTitle,
-                                icon = { iconSize -> CrumbIcon(Lucide.LayoutTemplate, iconSize) },
+                                icon = { iconSize -> CrumbIcon(Icons.Outlined.SpaceDashboard, iconSize) },
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
                                 onClickLabel = "Choose layout",
@@ -205,14 +205,14 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.SET -> {
                             MinputBreadcrumbSegment(
                                 position = position,
-                                overline = "Set".takeIf { showOverlines },
-                                icon = { iconSize -> CrumbIcon(Lucide.SquareStack, iconSize) },
+                                overline = "Button set".takeIf { showOverlines },
+                                icon = { iconSize -> CrumbIcon(Lucide.SendToBack, iconSize) },
                                 title = viewingSet?.actionSet?.title
-                                    ?: config?.actionSets?.firstOrNull()?.actionSet?.title
+                                    ?: config?.setsOf(editor.setKind)?.firstOrNull()?.actionSet?.title
                                     ?: "None",
                                 selected = openCrumb == crumb,
                                 onClick = { toggle(crumb) },
-                                onClickLabel = "Choose layout set",
+                                onClickLabel = "Choose button set",
                                 modifier = Modifier.testTag("bar:set"),
                             )
                             MinputDropdownPanel(
@@ -221,7 +221,7 @@ internal fun RemapHierarchyBar(
                                 width = NarrowPanelWidth,
                             ) {
                                 SetPanel(
-                                    config = config,
+                                    sets = config?.setsOf(editor.setKind),
                                     viewingSet = viewingSet,
                                     onPreviewSet = onSelectSet,
                                     onSelectSet = { id ->
@@ -269,14 +269,13 @@ internal fun RemapHierarchyBar(
 }
 
 /** The bar's crumbs, in hierarchy order — the order they read in the bar. */
-internal enum class HierarchyCrumb { APPLICATION, LAYOUT, SET, BUTTONS }
+internal enum class HierarchyCrumb { APPLICATION, LAYOUT, BUTTONS, SET }
 
-/** The two editors the Buttons crumb switches between. Lucide glyphs (2026-10-07): every crumb
- *  wears one icon size now, so the Material pair's per-glyph size tuning had nowhere to go, and
- *  Lucide's stroke set reads evenly at one size. */
-internal enum class EditorKind(val label: String, val icon: ImageVector) {
-    PHYSICAL("Physical", Lucide.Gamepad2),
-    VIRTUAL("Virtual", Lucide.Layers),
+/** The two editors the Buttons crumb switches between. Virtual is Material's (outlined) Layers —
+ *  two stacked shapes, where Lucide's has three (Dylan, 2026-10-12). */
+internal enum class EditorKind(val label: String, val icon: ImageVector, val setKind: ActionSetKind) {
+    PHYSICAL("Physical", Lucide.Gamepad2, ActionSetKind.PHYSICAL),
+    VIRTUAL("Virtual", Icons.Outlined.Layers, ActionSetKind.VIRTUAL),
 }
 
 /** A crumb's concept glyph at the size the crumb hands it (the variant's glyph size). */
@@ -285,13 +284,14 @@ private fun CrumbIcon(icon: ImageVector, size: MinputIconSize) {
     MinputIcon(icon, contentDescription = null, size = size)
 }
 
-/** The viewed application's launcher icon at the crumb's glyph size — the same edge the other
- *  crumbs' glyphs ink to — or a generic app glyph when there is no application or no icon. */
+/** The viewed application's launcher icon, cropped to its opaque pixels and sized like the
+ *  other crumbs' glyphs (the bitmap [MinputIcon]) — or a generic app glyph when there is no
+ *  application or no icon. */
 @Composable
 private fun CrumbAppIcon(appPackage: String?, size: MinputIconSize) {
-    val icon = rememberAppIconPainter(appPackage)
+    val icon = rememberAppIconBitmap(appPackage)
     if (icon != null) {
-        AppIconImage(icon, size = size.dp)
+        MinputIcon(icon, contentDescription = null, size = size)
     } else {
         CrumbIcon(Lucide.AppWindow, size)
     }
@@ -417,28 +417,30 @@ private fun <T> SearchSortRow(
 }
 
 /**
- * The layout's sets: "+ New layout set" first (as "+ New layout" heads the layouts), then a row
- * per set — the viewed set on the highlight plane. Focus previews a set, tap keeps it.
+ * The editor's kind of sets: "+ New button set" first (as "+ New layout" heads the layouts), then
+ * a row per set — the viewed set on the highlight plane. Focus previews a set, tap keeps it.
+ * [sets] null = no config yet (no "new" row either).
  */
 @Composable
 private fun ColumnScope.SetPanel(
-    config: ControllerConfig?,
+    sets: List<ActionSetGraph>?,
     viewingSet: ActionSetGraph?,
     onPreviewSet: (Long) -> Unit,
     onSelectSet: (Long) -> Unit,
     onAddSet: () -> Unit,
 ) {
-    val sets = config?.actionSets.orEmpty()
-    val viewingId = viewingSet?.actionSet?.id ?: sets.firstOrNull()?.actionSet?.id
+    val hasConfig = sets != null
+    val rows = sets.orEmpty()
+    val viewingId = viewingSet?.actionSet?.id ?: rows.firstOrNull()?.actionSet?.id
     val seat = rememberControllerFocusSeat()
     Column(
         verticalArrangement = Arrangement.spacedBy(DrawerRowGap),
         modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
     ) {
-        if (config != null) {
-            PanelActionRow(label = "New layout set", onClick = onAddSet)
+        if (hasConfig) {
+            PanelActionRow(label = "New button set", onClick = onAddSet)
         }
-        sets.forEach { set ->
+        rows.forEach { set ->
             val id = set.actionSet.id
             PanelChoiceRow(
                 label = set.actionSet.title,
@@ -448,9 +450,9 @@ private fun ColumnScope.SetPanel(
                 modifier = if (id == viewingId) Modifier.focusRequester(seat) else Modifier,
             )
         }
-        if (sets.isEmpty()) {
+        if (rows.isEmpty()) {
             Text(
-                text = "No layout sets",
+                text = "No button sets",
                 style = minputMiniTextStyle(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(CardPadding),
@@ -568,6 +570,9 @@ private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit, size: Minpu
             contentDescription = "Bar position: ${pin.label}",
             highlighted = open,
             size = size,
+            // The grid is solid and square-inked — more mass than the crumbs' stroked glyphs at
+            // the same size — so it sits one step under them.
+            iconSize = size.iconSize.stepDown(),
             onClick = { open = !open },
             modifier = Modifier.testTag("bar:pin"),
         )
@@ -583,16 +588,20 @@ private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit, size: Minpu
     }
 }
 
-/**
- * The spot's glyph, from Material's border family: the corners are BORDER STYLE (solid top and
- * left edges, the rest dotted) mirrored into the right corner; the middles are BORDER TOP /
- * BORDER BOTTOM — the same dotted frame with one solid edge, the edge the bar is on.
- */
-private fun BarPin.icon(): ImageVector = when (horizontal) {
-    BarPin.Horizontal.CENTER -> if (top) Icons.Filled.BorderTop else Icons.Filled.BorderBottom
-    BarPin.Horizontal.START -> Icons.Filled.BorderStyle.minputMirrored(horizontal = false, vertical = !top)
-    BarPin.Horizontal.END -> Icons.Filled.BorderStyle.minputMirrored(horizontal = true, vertical = !top)
-}
+/** The spot's glyph: the dot grid with the spot drawn as a line ([PinSpot], 2026-10-12 —
+ *  replaced Material's border-style family). */
+private fun BarPin.icon(): ImageVector = when (this) {
+    BarPin.TOP_START -> PinSpot.TopStart
+    BarPin.TOP_CENTER -> PinSpot.TopCenter
+    BarPin.TOP_END -> PinSpot.TopEnd
+    BarPin.BOTTOM_START -> PinSpot.BottomStart
+    BarPin.BOTTOM_CENTER -> PinSpot.BottomCenter
+    BarPin.BOTTOM_END -> PinSpot.BottomEnd
+}.icon
+
+/** The next size down the icon scale (the smallest stays put). */
+private fun MinputIconSize.stepDown(): MinputIconSize =
+    MinputIconSize.entries[(ordinal - 1).coerceAtLeast(0)]
 
 /** Width of the set and editor panels — short labels, no search row. */
 private val NarrowPanelWidth = 160.dp

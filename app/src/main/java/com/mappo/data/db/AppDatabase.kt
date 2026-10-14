@@ -54,7 +54,7 @@ import com.mappo.data.model.steam.SourceModeShift
         LayerPresetBinding::class,
         SourceModeShift::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 @TypeConverters(SteamTypeConverters::class)

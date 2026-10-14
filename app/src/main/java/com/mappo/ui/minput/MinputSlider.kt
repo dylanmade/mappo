@@ -44,6 +44,8 @@ import kotlin.math.roundToInt
  *   editable); pair it with [unitLabel] for the suffix shown after the field.
  * @param parseValue parses field text back to a raw value; null = invalid input (reverts).
  * @param unitLabel optional short unit caption after the value field ("%", "dp", "°").
+ * @param steps discrete stops BETWEEN the ends (the M3 slider's `steps`); > 0 snaps the value to
+ *   them and puts a pip on every stop, ends included — e.g. one pip per weight a font family has.
  */
 @Composable
 fun MinputSlider(
@@ -59,6 +61,7 @@ fun MinputSlider(
     unitLabel: String? = null,
     onChangeFinished: (() -> Unit)? = null,
     valueFieldWidth: Dp = MappoSliderValueFieldWidth,
+    steps: Int = 0,
 ) {
     fun commitValue(v: Float) {
         onChange(v.coerceIn(valueRange))
@@ -103,6 +106,7 @@ fun MinputSlider(
                 value = value,
                 onValueChange = { onChange(it.coerceIn(valueRange)) },
                 valueRange = valueRange,
+                steps = steps,
                 enabled = enabled,
                 onValueChangeFinished = onChangeFinished,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp),

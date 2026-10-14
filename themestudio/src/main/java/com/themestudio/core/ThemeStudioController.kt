@@ -83,6 +83,14 @@ class ThemeStudioController(
         storage.save(_overrides)
     }
 
+    /** Every text size × [scale]; null = the theme's own sizes. See [TypographyOverrides.fontScale]. */
+    fun setFontScale(scale: Float?) {
+        _overrides = _overrides.copy(
+            typography = _overrides.typography.copy(fontScale = scale),
+        )
+        storage.save(_overrides)
+    }
+
     // ── Shapes ────────────────────────────────────────────────────────────
 
     fun setShapeRole(role: ShapeRole, radius: Dp?) {
