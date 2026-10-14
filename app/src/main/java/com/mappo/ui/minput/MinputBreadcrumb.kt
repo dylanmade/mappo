@@ -1,16 +1,16 @@
 package com.mappo.ui.minput
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
@@ -39,7 +40,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import kotlin.math.asin
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -57,9 +60,11 @@ import kotlin.math.sqrt
  *    its [MinputBreadcrumbJoin.curvature] (0 = a straight edge … 1 = as deep as a pill end).
  *    App-wide default: [MinputBreadcrumbJoinDefault].
  *  - [size] — the control variant; [MinputSize.ExtraLarge] holds the overline + title stack.
- *  - [mode] — [MinputBreadcrumbMode.Expanded] (glyph + text) or [MinputBreadcrumbMode.Icon]
- *    (glyph alone). Either way every segment is the SAME width — fixed per mode and size, never
- *    the width of its text, so the row doesn't shuffle while a focus-preview changes a title.
+ *  - [mode] — [MinputBreadcrumbMode.Expanded] (glyph + text) or [MinputBreadcrumbMode.Collapsed]
+ *    (glyph alone) — the row's default; a segment can override it for itself (2026-10-14), and
+ *    animates between the two. Either way every segment in a mode is the SAME width — fixed per
+ *    mode and size, never the width of its text, so the row doesn't shuffle while a
+ *    focus-preview changes a title.
  *
  * **The segments OVERLAP their layout boxes.** A recess is cut out of its segment's box, so boxes
  * placed a plain [MinputSegmentGap] apart would leave the gap PLUS the recess between bulge and
@@ -114,8 +119,9 @@ enum class MinputBreadcrumbMode {
     /** Glyph + text, start-aligned, at [minputBreadcrumbExpandedWidth]. */
     Expanded,
 
-    /** The glyph alone, centred, at [minputBreadcrumbIconWidth]. */
-    Icon,
+    /** The glyph alone, centred, at [minputBreadcrumbIconWidth] — functionally an icon button,
+     *  still wearing its joins (arc or chevron). */
+    Collapsed,
 }
 
 /** Where a segment sits in its [MinputBreadcrumbRow] — which of its ends are round (the row's
@@ -147,8 +153,9 @@ enum class MinputBreadcrumbPosition(val roundStart: Boolean, val roundEnd: Boole
  * Expanded content is START-aligned at [MinputBreadcrumbContentInset] from the segment's visible
  * edge at mid-height — the pill arc's leftmost point, or a recess's apex — so every crumb's glyph
  * lines up the same way whatever its start is. The title takes what is left of the fixed width
- * and ellipsizes. Icon mode centres the glyph between the joins; the overline + title become the
- * button's content description.
+ * and ellipsizes. Collapsed, the glyph centres between the joins and the overline + title become
+ * the button's content description. [mode] defaults to the row's; a change between the two
+ * animates the width, the glyph's alignment and the text's fade together.
  */
 @Composable
 fun MinputBreadcrumbSegment(
@@ -163,6 +170,7 @@ fun MinputBreadcrumbSegment(
     onClickLabel: String? = null,
     container: Color = minputBoxContainer(),
     style: MinputBreadcrumbStyle = LocalMinputBreadcrumbStyle.current,
+    mode: MinputBreadcrumbMode = style.mode,
 ) {
     val size = style.size
     val join = style.join
@@ -190,7 +198,27 @@ fun MinputBreadcrumbSegment(
     val joinCorner = join.bevelCorner(size.corner)
     val startCorner = if (position.roundStart) size.corner else joinCorner
     val endCorner = if (position.roundEnd) size.corner else joinCorner
-    val iconMode = style.mode == MinputBreadcrumbMode.Icon
+    val collapsed = mode == MinputBreadcrumbMode.Collapsed
+    // 1 = expanded, 0 = collapsed. Width, glyph position and text alpha all ride it, so the
+    // crumb folds as one motion; the text leaves the composition only once it has fully faded.
+    val expansion by animateFloatAsState(
+        targetValue = if (collapsed) 0f else 1f,
+        animationSpec = tween(MinputBreadcrumbCollapseMillis, easing = FastOutSlowInEasing),
+        label = "minputBreadcrumbExpansion",
+    )
+    val showText = expansion > 0f
+    val endAdjust = minputBreadcrumbEndAdjust(position, join, size.height)
+    val expandedWidth = minputBreadcrumbExpandedWidth(size, join) + endAdjust
+    val collapsedWidth = minputBreadcrumbIconWidth(size) + endAdjust
+    // Collapsed, the glyph sits on the shape's CENTROID, not midway between its end edges: a pill
+    // end carries less of the button than a join, so the midpoint reads off-centre on the row's
+    // outer crumbs.
+    val collapsedGlyphCentre = remember(position, join, size, collapsedWidth) {
+        minputBreadcrumbCentroidX(position, join, size.height, collapsedWidth)
+    }
+    // Where expanded content starts: the inset off the visible edge at mid-height.
+    val startEdge = if (position.roundStart) 0.dp else recessDepth
+    val endEdge = if (position.roundEnd) 0.dp else bulgeDepth
     Surface(
         shape = shape,
         color = fill,
@@ -198,11 +226,9 @@ fun MinputBreadcrumbSegment(
         border = minputBevelBorder(fill, cornerRadius = startCorner, endCornerRadius = endCorner),
         modifier = modifier
             .width(
-                (if (iconMode) minputBreadcrumbIconWidth(size) else minputBreadcrumbExpandedWidth(size, join)) -
-                    // A round START reaches the box's edge where a recess would be cut back, so
-                    // the same box reads a recess wider — trim it, so every crumb has the same
-                    // width at mid-height and the same room inside.
-                    (if (position.roundStart) recessDepth else 0.dp),
+                // A round end gives up more of its box than a join does, so an outer crumb's box
+                // is grown until it holds as much button as a middle one (endAdjust).
+                lerp(collapsedWidth, expandedWidth, expansion),
             )
             .minputInteractiveMotion(interaction)
             .fillMaxHeight()
@@ -215,55 +241,64 @@ fun MinputBreadcrumbSegment(
                 onClick = onClick,
             )
             .then(
-                if (iconMode) {
+                if (collapsed) {
                     val description = listOfNotNull(overline, title).joinToString(": ")
                     Modifier.semantics { contentDescription = description }
                 } else Modifier,
             ),
     ) {
-        // The stroke rule: padding starts inside the bevel ring.
-        val inset = Modifier.fillMaxHeight().minputStrokeInset()
-        if (iconMode) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = inset.padding(
-                    start = if (position.roundStart) 0.dp else recessDepth,
-                    end = if (position.roundEnd) 0.dp else bulgeDepth,
-                ),
-            ) { icon(size.iconSize) }
-        } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = inset.padding(
-                    start = (if (position.roundStart) 0.dp else recessDepth) +
-                        MinputBreadcrumbContentInset,
-                    end = (if (position.roundEnd) 0.dp else bulgeDepth) +
-                        MinputBreadcrumbContentInset,
-                ),
-            ) {
-                icon(size.iconSize)
-                Spacer(Modifier.width(MinputBarIconTextGap))
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (overline != null) {
+        // Placed by hand rather than aligned: the glyph slides from its expanded spot to the
+        // collapsed centroid along the same curve as the width, and the text trails it at its
+        // EXPANDED width (clipped by the shape as the crumb narrows). Alignment-based layout let
+        // the fading text fill the row and shove the glyph to the start edge at both ends of the
+        // motion. The stroke rule: coordinates are inside the bevel ring.
+        Layout(
+            content = {
+                Box { icon(size.iconSize) }
+                if (showText) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(MinputBarStackGap),
+                        modifier = Modifier.alpha(expansion),
+                    ) {
+                        if (overline != null) {
+                            Text(
+                                text = overline.uppercase(),
+                                style = minputOverlineTextStyle(),
+                                color = overlineColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = false,
+                            )
+                        }
                         Text(
-                            text = overline.uppercase(),
-                            style = minputOverlineTextStyle(),
-                            color = overlineColor,
+                            text = title,
+                            style = minputMiniTextStyle(),
+                            color = contentColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                     }
-                    Text(
-                        text = title,
-                        style = minputMiniTextStyle(),
-                        color = contentColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
+            },
+            modifier = Modifier.fillMaxHeight().minputStrokeInset(),
+        ) { measurables, constraints ->
+            val stroke = MinputBoxStroke.toPx()
+            val inset = MinputBreadcrumbContentInset.toPx()
+            val gap = MinputBarIconTextGap.toPx()
+            val glyph = measurables[0].measure(constraints.copy(minWidth = 0, minHeight = 0))
+            val expandedGlyphX = startEdge.toPx() + inset
+            val collapsedGlyphX = collapsedGlyphCentre.toPx() - stroke - glyph.width / 2f
+            val glyphX = androidx.compose.ui.util.lerp(collapsedGlyphX, expandedGlyphX, expansion)
+            // The text's room in the EXPANDED crumb, held through the motion so it never reflows.
+            val textRoom = (expandedWidth.toPx() - 2 * stroke - expandedGlyphX - glyph.width - gap -
+                endEdge.toPx() - inset).toInt().coerceAtLeast(0)
+            val text = measurables.getOrNull(1)
+                ?.measure(constraints.copy(minWidth = 0, maxWidth = textRoom, minHeight = 0))
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                val h = constraints.maxHeight
+                glyph.placeRelative(glyphX.roundToInt(), (h - glyph.height) / 2)
+                text?.placeRelative((glyphX + glyph.width + gap).roundToInt(), (h - text.height) / 2)
             }
         }
     }
@@ -271,16 +306,112 @@ fun MinputBreadcrumbSegment(
 
 /**
  * A middle segment's width at [size]: the glyph, the gap, [MinputBreadcrumbTitleWidth] of text,
- * an inset each side, plus its bulge and recess. Every segment reads this wide at mid-height — a
- * round-STARTED segment's box is trimmed by the recess it doesn't have (its arc reaches the box
- * edge where a recess would be cut back); a round END spans the box just as a bulge does.
+ * an inset each side, plus its bulge and recess. The row's outer segments differ from it by
+ * [minputBreadcrumbEndAdjust].
  */
 fun minputBreadcrumbExpandedWidth(size: MinputSize, join: MinputBreadcrumbJoin): Dp =
     size.iconSize.dp + MinputBarIconTextGap + MinputBreadcrumbTitleWidth +
         MinputBreadcrumbContentInset * 2 + join.depth(size.height) + join.recessDepth(size.height)
 
-/** Every icon-mode segment's width at [size]: the height, plus air for the joins either side. */
+/** A collapsed middle segment's width at [size]: the height, plus air for the joins either side.
+ *  The row's outer segments differ from it by [minputBreadcrumbEndAdjust]. */
 fun minputBreadcrumbIconWidth(size: MinputSize): Dp = size.height + MinputBreadcrumbIconModeExtra
+
+/**
+ * What a segment at [position] adds to (or takes off) a middle segment's box, so EVERY segment
+ * holds the same amount of button: the same filled area, i.e. the same AVERAGE width across its
+ * height (Dylan, 2026-10-14: "make sure the widths of all those breadcrumb buttons is the same").
+ *
+ * Each end of a box gives up part of it: a pill end the corners its semicircle misses, a bulge
+ * the slivers either side of its apex, a recess the bite cut out of it. They differ — a full pill
+ * end gives up far more than a shallow chevron — so a row's outer crumbs read narrower (worst
+ * collapsed, where the ends are most of the button). Equalising the width at MID-HEIGHT instead
+ * (the first pass: trim a round-started box by the recess it lacks) shrank the first crumb
+ * further, because its pill end already gives up more than the recess it was trimmed for.
+ */
+fun minputBreadcrumbEndAdjust(position: MinputBreadcrumbPosition, join: MinputBreadcrumbJoin, height: Dp): Dp {
+    val round = pillEndLoss(height)
+    val start = if (position.roundStart) round else join.recessLoss(height)
+    val end = if (position.roundEnd) round else join.bulgeLoss(height)
+    return start + end - join.recessLoss(height) - join.bulgeLoss(height)
+}
+
+/**
+ * The x of a segment's area centroid — where a lone glyph reads as centred — in a box [width]
+ * wide, LTR (the row mirrors under RTL). Integrated over the outline [MinputBreadcrumbShape]
+ * draws, sampled across the height.
+ */
+fun minputBreadcrumbCentroidX(
+    position: MinputBreadcrumbPosition,
+    join: MinputBreadcrumbJoin,
+    height: Dp,
+    width: Dp,
+): Dp {
+    val h = height.value
+    val r = h / 2
+    val w = width.value
+    val d = join.depth(height).value
+    val dr = join.recessDepth(height).value
+    val radius = if (join.style == MinputBreadcrumbJoinStyle.Arc) arcRadius(d, r) else null
+    val grown = radius?.let { it + MinputSegmentGap.value }
+    fun bow(of: Float, dy: Float) = sqrt((of * of - dy * dy).coerceAtLeast(0f))
+    var area = 0f
+    var moment = 0f
+    val samples = CentroidSamples
+    for (i in 0 until samples) {
+        val dy = kotlin.math.abs((i + 0.5f) / samples * h - r)
+        val left = when {
+            position.roundStart -> r - bow(r, dy)
+            grown != null -> dr - grown + bow(grown, dy)
+            else -> dr * (1 - dy / r)
+        }
+        val right = when {
+            position.roundEnd -> w - r + bow(r, dy)
+            radius != null -> w - radius + bow(radius, dy)
+            else -> w - d * dy / r
+        }
+        area += right - left
+        moment += (right * right - left * left) / 2
+    }
+    return if (area > 0f) (moment / area).dp else (w / 2).dp
+}
+
+/** Rows sampled by [minputBreadcrumbCentroidX] — far finer than a pixel matters. */
+private const val CentroidSamples = 64
+
+/** The average width a pill end gives up across its box's height: (2 − π/2)·r² of corner over
+ *  the height 2r. */
+private fun pillEndLoss(height: Dp): Dp = height / 4 * (2f - Math.PI.toFloat() / 2f)
+
+/** The average width a BULGE gives up: its box runs to the apex, its fill only to the edges. */
+private fun MinputBreadcrumbJoin.bulgeLoss(height: Dp): Dp {
+    val d = depth(height).value
+    val half = height.value / 2
+    val filled = when (style) {
+        MinputBreadcrumbJoinStyle.Chevron -> d * half
+        MinputBreadcrumbJoinStyle.Arc -> arcRadius(d, half)?.let { circularSegmentArea(it, half) } ?: 0f
+    }
+    return (d - filled / height.value).dp
+}
+
+/** The average width a RECESS gives up: the bite cut into its box. */
+private fun MinputBreadcrumbJoin.recessLoss(height: Dp): Dp {
+    val dr = recessDepth(height).value
+    val half = height.value / 2
+    val bitten = when (style) {
+        MinputBreadcrumbJoinStyle.Chevron -> dr * half
+        MinputBreadcrumbJoinStyle.Arc -> arcRadius(depth(height).value, half)
+            ?.let { circularSegmentArea(it + MinputSegmentGap.value, half) } ?: 0f
+    }
+    return (bitten / height.value).dp
+}
+
+/** Area of the circular segment of a circle of [radius] cut off by a chord [half] each side of
+ *  its midpoint. */
+private fun circularSegmentArea(radius: Float, half: Float): Float {
+    val theta = 2 * asin((half / radius).coerceAtMost(1f))
+    return radius * radius / 2 * (theta - kotlin.math.sin(theta))
+}
 
 /**
  * How two breadcrumb segments meet: the earlier one's end BULGES toward the later one, whose
@@ -458,8 +589,11 @@ val MinputBreadcrumbContentInset = 8.dp
 /** The text room every expanded segment gets — titles longer than this ellipsize. */
 val MinputBreadcrumbTitleWidth = 88.dp
 
-/** An icon-mode segment's width over its height — air for the joins either side of the glyph. */
+/** A collapsed segment's width over its height — air for the joins either side of the glyph. */
 val MinputBreadcrumbIconModeExtra = 12.dp
+
+/** How long a segment takes to fold between expanded and collapsed. */
+const val MinputBreadcrumbCollapseMillis = 250
 
 /** The overline on the highlight plane: onPrimary softened, as the drawer rows' secondary
  *  text is (the scheme has no secondary-on-primary role). */

@@ -234,6 +234,9 @@ class MainViewModel @Inject constructor(
     /** Where the editors' hierarchy bar is pinned. See BarPinSettings. */
     val barPin: StateFlow<com.mappo.data.settings.BarPin> = barPinSettings.pin
 
+    /** Names of the hierarchy bar's collapsed crumbs. See BarPinSettings. */
+    val barCollapsedCrumbs: StateFlow<Set<String>> = barPinSettings.collapsedCrumbs
+
     val appLayoutBindings: StateFlow<ImmutableList<AppLayoutBinding>> =
         appLayoutBindingRepository.getAll()
             .map { it.toImmutableList() }
@@ -635,6 +638,8 @@ class MainViewModel @Inject constructor(
         tileRevealSettings.setReveal(reveal)
 
     fun setBarPin(pin: com.mappo.data.settings.BarPin) = barPinSettings.setPin(pin)
+
+    fun setBarCollapsedCrumbs(names: Set<String>) = barPinSettings.setCollapsedCrumbs(names)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

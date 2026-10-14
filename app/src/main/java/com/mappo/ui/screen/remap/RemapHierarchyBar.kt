@@ -34,10 +34,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.AppWindow
 import com.composables.icons.lucide.ArrowUpDown
+import com.composables.icons.lucide.ChevronsLeftRight
+import com.composables.icons.lucide.ChevronsRightLeft
+import com.composables.icons.lucide.FoldHorizontal
 import com.composables.icons.lucide.Gamepad2
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.UnfoldHorizontal
 import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActionSetGraph
 import com.mappo.data.model.steam.ActionSetKind
@@ -46,6 +50,7 @@ import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.BarPin
 import com.mappo.ui.component.rememberAppIconBitmap
 import com.mappo.ui.icons.PinSpot
+import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputBreadcrumbJoin
 import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
 import com.mappo.ui.minput.MinputBreadcrumbMode
@@ -82,6 +87,10 @@ import kotlinx.collections.immutable.ImmutableList
  *    the virtual sets, each kind headed by its own "+ New … set" (2026-10-14: folded the separate
  *    Buttons (editor switch) and Button set crumbs into one — picking a set of the other kind IS
  *    the editor switch; see [ActionSetKind]).
+ *
+ * Each crumb is EXPANDED (glyph + overline + title) or COLLAPSED to its glyph — an icon button
+ * still wearing its join ([collapsed], 2026-10-14). The pin button's menu toggles each crumb and
+ * collapses / expands them all, under the six spots.
  *
  * The crumb whose panel is open wears the highlight plane. Which crumb is open is the CALLER's
  * state ([openCrumb]) because closing one is not a single thing: [onDismissCrumb] is a close with
@@ -126,12 +135,17 @@ internal fun RemapHierarchyBar(
     // ── Pin ──
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
+    // ── Collapse ──
+    /** The crumbs collapsed to their glyph; the rest show [mode]. */
+    collapsed: Set<HierarchyCrumb>,
+    onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
     modifier: Modifier = Modifier,
     // ── Presentation (2026-10-07: tunable while the design settles) ──
     /** The crumbs' and pin button's control variant. */
     size: MinputSize = MinputBreadcrumbSize,
     /** Whether the crumbs carry their small-caps level labels over the titles. */
     showOverlines: Boolean = true,
+    /** Every crumb's mode unless it is [collapsed]. */
     mode: MinputBreadcrumbMode = MinputBreadcrumbMode.Expanded,
     join: MinputBreadcrumbJoin = MinputBreadcrumbJoinDefault,
 ) {
@@ -147,12 +161,14 @@ internal fun RemapHierarchyBar(
         MinputBreadcrumbRow(size = size, join = join, mode = mode) {
             crumbs.forEachIndexed { index, crumb ->
                 val position = MinputBreadcrumbPosition.of(index, crumbs.size)
+                val crumbMode = if (crumb in collapsed) MinputBreadcrumbMode.Collapsed else mode
                 // Each crumb is its panel's anchor, so the two share a Box.
                 Box {
                     when (crumb) {
                         HierarchyCrumb.APPLICATION -> {
                             MinputBreadcrumbSegment(
                                 position = position,
+                                mode = crumbMode,
                                 overline = "Application".takeIf { showOverlines },
                                 title = appLabel ?: "None",
                                 selected = openCrumb == crumb,
@@ -179,6 +195,7 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.LAYOUT -> {
                             MinputBreadcrumbSegment(
                                 position = position,
+                                mode = crumbMode,
                                 // A non-active layout on screen says so where it is named.
                                 overline = (if (previewing) "Layout · preview" else "Layout")
                                     .takeIf { showOverlines },
@@ -206,6 +223,7 @@ internal fun RemapHierarchyBar(
                         HierarchyCrumb.BUTTONS -> {
                             MinputBreadcrumbSegment(
                                 position = position,
+                                mode = crumbMode,
                                 overline = "Buttons".takeIf { showOverlines },
                                 icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
                                 title = viewingSet?.actionSet?.title
@@ -241,12 +259,23 @@ internal fun RemapHierarchyBar(
                 }
             }
         }
-        BarPinButton(pin = pin, onPinChange = onPinChange, size = size)
+        BarPinButton(
+            pin = pin,
+            onPinChange = onPinChange,
+            collapsed = collapsed,
+            onCollapsedChange = onCollapsedChange,
+            size = size,
+        )
     }
 }
 
-/** The bar's crumbs, in hierarchy order — the order they read in the bar. */
-internal enum class HierarchyCrumb { APPLICATION, LAYOUT, BUTTONS }
+/** The bar's crumbs, in hierarchy order — the order they read in the bar. [label] names one in
+ *  the pin menu's collapse toggles. */
+internal enum class HierarchyCrumb(val label: String) {
+    APPLICATION("application"),
+    LAYOUT("layout"),
+    BUTTONS("buttons"),
+}
 
 /** The two editors, one per kind of button set — picking a set in the Buttons crumb picks its
  *  editor. Virtual is Material's (outlined) Layers — two stacked shapes, where Lucide's has three
@@ -528,13 +557,35 @@ private fun rememberControllerFocusSeat(): FocusRequester {
 // ── The pin button ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Where the bar sits: a circular button wearing the CURRENT spot's border glyph, opening the six
- * spots as a single-choice menu. Its own button after the crumbs — the M3 button group's
- * convention for a control that is not part of the group's one silhouette.
+ * Where the bar sits, and how much of it shows: a circular button wearing the CURRENT spot's
+ * border glyph, opening the six spots as a single-choice menu — then, under a divider, a
+ * collapse/expand toggle per crumb, and under another, collapse all (or expand all, once every
+ * crumb is collapsed). Its own button after the crumbs — the M3 button group's convention for a
+ * control that is not part of the group's one silhouette.
  */
 @Composable
-private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit, size: MinputSize) {
+private fun BarPinButton(
+    pin: BarPin,
+    onPinChange: (BarPin) -> Unit,
+    collapsed: Set<HierarchyCrumb>,
+    onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
+    size: MinputSize,
+) {
     var open by remember { mutableStateOf(false) }
+    val perCrumb = HierarchyCrumb.entries.map { crumb ->
+        val isCollapsed = crumb in collapsed
+        MinputAction(
+            label = (if (isCollapsed) "Expand " else "Collapse ") + crumb.label,
+            icon = if (isCollapsed) Lucide.UnfoldHorizontal else Lucide.FoldHorizontal,
+            onClick = { onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb) },
+        )
+    }
+    val allCollapsed = collapsed.containsAll(HierarchyCrumb.entries)
+    val all = MinputAction(
+        label = if (allCollapsed) "Expand all" else "Collapse all",
+        icon = if (allCollapsed) Lucide.ChevronsLeftRight else Lucide.ChevronsRightLeft,
+        onClick = { onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet()) },
+    )
     Box {
         MinputButton(
             leadingIcon = pin.icon(),
@@ -555,6 +606,7 @@ private fun BarPinButton(pin: BarPin, onPinChange: (BarPin) -> Unit, size: Minpu
             optionLabel = { it.label },
             onPick = onPinChange,
             optionIcon = { it.icon() },
+            actionGroups = listOf(perCrumb, listOf(all)),
         )
     }
 }

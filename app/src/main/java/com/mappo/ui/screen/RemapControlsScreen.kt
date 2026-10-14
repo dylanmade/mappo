@@ -277,6 +277,9 @@ fun RemapControlsScreen(
     // ── The hierarchy bar's pinned spot (2026-10-07; global, see BarPinSettings) ──
     barPin: BarPin = BarPinSettings.Default,
     onBarPinChange: (BarPin) -> Unit = {},
+    /** Names of the bar's collapsed crumbs ([HierarchyCrumb.name]) — persisted with the pin. */
+    barCollapsedCrumbs: Set<String> = emptySet(),
+    onBarCollapsedCrumbsChange: (Set<String>) -> Unit = {},
     // TEMPORARY (2026-10-07): render the comparison bar variant (no overlines, Standard controls)
     // under the real one, for a side-by-side read on the device.
     showBarComparison: Boolean = false,
@@ -628,6 +631,8 @@ fun RemapControlsScreen(
                 editor = EditorKind.PHYSICAL,
                 pin = barPin,
                 onPinChange = onBarPinChange,
+                collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
+                onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
             )
         }
         val hierarchyBar: @Composable () -> Unit = {

@@ -257,6 +257,7 @@ fun MainScreen(
     val moveCommitGesture by viewModel.moveCommitGesture.collectAsStateWithLifecycle()
     val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
     val barPin by viewModel.barPin.collectAsStateWithLifecycle()
+    val barCollapsedCrumbs by viewModel.barCollapsedCrumbs.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -542,6 +543,8 @@ fun MainScreen(
                     // ── The hierarchy bar's pinned spot (2026-10-07) ──
                     barPin = barPin,
                     onBarPinChange = viewModel::setBarPin,
+                    barCollapsedCrumbs = barCollapsedCrumbs,
+                    onBarCollapsedCrumbsChange = viewModel::setBarCollapsedCrumbs,
                     // TEMPORARY: the no-overline / Standard-size bar under the real one, for a
                     // side-by-side comparison on the device (2026-10-07).
                     showBarComparison = true,

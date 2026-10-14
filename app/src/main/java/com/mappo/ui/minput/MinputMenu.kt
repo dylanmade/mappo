@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.LocalContentColor
@@ -528,6 +529,9 @@ fun BoxScope.MinputActionMenu(
  * @param caret draws the pointer back at the summoning control. Side placements only.
  * @param framePadding inset above the first row and below the last. Defaults to
  *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
+ * @param actionGroups verbs that live with the choice (2026-10-14 — the hierarchy bar's pin menu
+ *   carries the crumbs' collapse toggles): each group follows the options under a divider, its
+ *   rows drawn as [MinputActionMenu]'s. Picking one dismisses first, then invokes.
  */
 @Composable
 fun <T> BoxScope.MinputDropdownMenu(
@@ -542,7 +546,9 @@ fun <T> BoxScope.MinputDropdownMenu(
     placement: MinputMenuPlacement = MinputMenuPlacement.Below,
     caret: Boolean = false,
     framePadding: Dp = MinputMenuFramePadding,
+    actionGroups: List<List<MinputAction>> = emptyList(),
 ) {
+    val actions = actionGroups.flatten()
     MinputMenuSurface(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
@@ -550,8 +556,8 @@ fun <T> BoxScope.MinputDropdownMenu(
         caret = caret,
         framePadding = framePadding,
         menuWidth = rememberMinputMenuWidth(
-            labels = options.map(optionLabel),
-            hasLeadingIcon = optionIcon != null,
+            labels = options.map(optionLabel) + actions.map { it.label },
+            hasLeadingIcon = optionIcon != null || actions.isNotEmpty(),
             // The check on the current option.
             hasTrailingIcon = true,
         ),
@@ -574,6 +580,19 @@ fun <T> BoxScope.MinputDropdownMenu(
                 } else null,
                 onClick = { onDismissRequest(); if (option != current) onPick(option) },
             )
+        }
+        actionGroups.filter { it.isNotEmpty() }.forEach { group ->
+            HorizontalDivider(Modifier.padding(vertical = MinputMenuFramePadding))
+            group.forEach { action ->
+                MinputMenuRow(
+                    label = action.label,
+                    enabled = action.enabled,
+                    leadingIcon = {
+                        MinputIcon(action.icon, contentDescription = null, size = MinputMenuIconSize, slot = true)
+                    },
+                    onClick = { onDismissRequest(); action.onClick() },
+                )
+            }
         }
     }
 }

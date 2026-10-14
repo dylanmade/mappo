@@ -23,6 +23,8 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
@@ -1000,12 +1002,19 @@ class RemapControlsScreenTest {
                 "${left.first} ran under ${right.first}: ${left.second} vs ${right.second}"
             }
         }
-        // Every crumb reads the same width (2026-10-12): the round-started Application crumb's
-        // box is a recess narrower, since its arc reaches the box edge where a recess cuts back.
+        // Every crumb holds the same amount of button (2026-10-14): same AVERAGE width, so the
+        // round-ended outer crumbs' boxes differ from a middle one's by exactly the end adjust.
         val app = order[0].second
         val layout = order[1].second
-        assert(kotlin.math.abs(app.width - (layout.width - tolerance)) <= 1.5f) {
-            "application crumb ${app.width} vs layout ${layout.width} less recess $tolerance"
+        val adjust = with(composeRule.density) {
+            com.mappo.ui.minput.minputBreadcrumbEndAdjust(
+                com.mappo.ui.minput.MinputBreadcrumbPosition.First,
+                MinputBreadcrumbJoinDefault,
+                MinputBreadcrumbSize.height,
+            ).toPx()
+        }
+        assert(kotlin.math.abs(app.width - (layout.width + adjust)) <= 1.5f) {
+            "application crumb ${app.width} vs layout ${layout.width} plus end adjust $adjust"
         }
     }
 
@@ -1064,6 +1073,53 @@ class RemapControlsScreenTest {
         }
         clickMenuItem("Bottom middle")
         assert(picked == com.mappo.data.settings.BarPin.BOTTOM_CENTER) { "got $picked" }
+    }
+
+    /**
+     * **The pin menu collapses the crumbs** (2026-10-14) — a toggle per crumb, then collapse all;
+     * a collapsed crumb drops its text and is named by its content description instead.
+     */
+    @Test
+    fun hierarchyBar_pinMenu_collapsesCrumbs_oneOrAll() {
+        var collapsed by androidx.compose.runtime.mutableStateOf(setOf<String>())
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        layoutName = "Alpha layout",
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        barCollapsedCrumbs = collapsed,
+                        onBarCollapsedCrumbsChange = { collapsed = it },
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("bar:pin").performClick()
+        composeRule.waitForIdle()
+        clickMenuItem("Collapse layout")
+        composeRule.waitForIdle()
+        assert(collapsed == setOf("LAYOUT")) { "got $collapsed" }
+        // The layout crumb is a glyph now: its text is gone, its name moved to the description.
+        composeRule.onAllNodesWithText("Alpha layout", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Layout: Alpha layout").assertExists()
+
+        composeRule.onNodeWithTag("bar:pin").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Expand layout", useUnmergedTree = true).assertExists()
+        clickMenuItem("Collapse all")
+        composeRule.waitForIdle()
+        assert(collapsed == setOf("APPLICATION", "LAYOUT", "BUTTONS")) { "got $collapsed" }
+
+        composeRule.onNodeWithTag("bar:pin").performClick()
+        composeRule.waitForIdle()
+        clickMenuItem("Expand all")
+        composeRule.waitForIdle()
+        assert(collapsed.isEmpty()) { "got $collapsed" }
+        composeRule.onNodeWithText("Alpha layout", useUnmergedTree = true).assertExists()
     }
 
     /**
