@@ -4,6 +4,7 @@ import android.graphics.Matrix
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -76,7 +77,10 @@ fun MinputIcon(
      * glyphs must still line up. Everywhere else the box is the ink and nothing more.
      */
     slot: Boolean = false,
-) = MinputIcon(icon, contentDescription, inkSize = size.dp, modifier = modifier, tint = tint, slot = slot)
+    /** Size by AREA rather than the longer side — see [minputOpticalScale]. For glyphs read as
+     *  PEERS (crumbs side by side, a list of rows), where a wide glyph must not read a step small. */
+    optical: Boolean = false,
+) = MinputIcon(icon, contentDescription, inkSize = size.dp, modifier = modifier, tint = tint, slot = slot, optical = optical)
 
 /**
  * **The escape hatch: an ink size that isn't on the scale.** Only for sizes that are COMPUTED
@@ -92,18 +96,22 @@ fun MinputIcon(
     modifier: Modifier = Modifier,
     tint: Color = LocalContentColor.current,
     slot: Boolean = false,
+    optical: Boolean = false,
 ) {
     val inked = remember(icon) { icon.croppedToInk() }
     val longer = max(inked.viewportWidth, inked.viewportHeight)
-    val width = inkSize * (inked.viewportWidth / longer)
-    val height = inkSize * (inked.viewportHeight / longer)
+    val scale = if (optical) minputOpticalScale(inked.viewportWidth, inked.viewportHeight) else 1f
+    val width = inkSize * (inked.viewportWidth / longer) * scale
+    val height = inkSize * (inked.viewportHeight / longer) * scale
     if (slot) {
         Box(modifier.size(inkSize), contentAlignment = Alignment.Center) {
             Icon(
                 painter = rememberVectorPainter(inked),
                 contentDescription = contentDescription,
                 tint = tint,
-                modifier = Modifier.size(width, height),
+                // An optical glyph may run past its slot on its longer side; the slot still
+                // spaces the column, and the overflow stays centred on it.
+                modifier = Modifier.requiredSize(width, height),
             )
         }
     } else {
@@ -115,6 +123,27 @@ fun MinputIcon(
         )
     }
 }
+
+/**
+ * **Optical sizing: match glyphs by AREA, not by their longer side** (2026-10-14). Sizing the
+ * longer side makes every glyph the same WIDTH or HEIGHT, but a wide glyph then carries far less
+ * ink than a square one beside it — Lucide's Gamepad2 inks 22 × 16, so at one size it covered
+ * ~73% of the square Layout glyph next to it in the hierarchy bar and read a step smaller.
+ *
+ * The scale grows the glyph until its ink box has the square's area (the geometric mean of its
+ * sides equals the size), capped so the longer side never exceeds [MinputOpticalMaxOvershoot] ×
+ * the size — a very elongated glyph gets closer, never dominant. Square glyphs are untouched.
+ * Returns the factor to apply on top of the longer-side size.
+ */
+fun minputOpticalScale(width: Float, height: Float): Float {
+    val longer = max(width, height)
+    val shorter = min(width, height)
+    if (longer <= 0f || shorter <= 0f) return 1f
+    return sqrt(longer / shorter).coerceAtMost(MinputOpticalMaxOvershoot)
+}
+
+/** How far past its size an [optical][minputOpticalScale] glyph's longer side may run. */
+const val MinputOpticalMaxOvershoot = 1.2f
 
 /** A vector drawable resource, through the same ink measurement. (PNG resources aren't
  *  glyphs — they can't be measured this way and don't belong here.) */

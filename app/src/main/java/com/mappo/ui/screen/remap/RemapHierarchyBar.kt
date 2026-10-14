@@ -293,7 +293,8 @@ internal enum class EditorKind(val label: String, val icon: ImageVector, val set
 /** A crumb's concept glyph at the size the crumb hands it (the variant's glyph size). */
 @Composable
 private fun CrumbIcon(icon: ImageVector, size: MinputIconSize) {
-    MinputIcon(icon, contentDescription = null, size = size)
+    // Optical: the crumbs' glyphs are read side by side (the wide gamepad read a step small).
+    MinputIcon(icon, contentDescription = null, size = size, optical = true)
 }
 
 /** The viewed application's launcher icon, cropped to its opaque pixels and sized like the
@@ -501,8 +502,9 @@ private fun PanelChoiceRow(
             .padding(CardPadding),
     ) {
         if (icon != null) {
-            // A slot, so labels align past glyphs of different shapes.
-            MinputIcon(icon, contentDescription = null, size = iconSize, tint = content, slot = true)
+            // A slot, so labels align past glyphs of different shapes; optical, so a wide glyph
+            // carries the same weight as the square ones in the rows around it.
+            MinputIcon(icon, contentDescription = null, size = iconSize, tint = content, slot = true, optical = true)
             Spacer(Modifier.width(MinputGlyphLabelGap))
         }
         Text(
