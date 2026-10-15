@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,9 +63,13 @@ internal fun ApplicationsList(
     modifier: Modifier = Modifier,
 ) {
     val trimmed = query.trim()
-    val filtered = if (trimmed.isEmpty()) apps
-    else apps.filter { it.label.contains(trimmed, ignoreCase = true) }
-    val installed = filtered.sortedWith(sort.comparator)
+    // Remembered: the list recomposes on every focus-preview, and the filter + sort walk the
+    // whole device app list.
+    val installed = remember(apps, trimmed, sort) {
+        val filtered = if (trimmed.isEmpty()) apps
+        else apps.filter { it.label.contains(trimmed, ignoreCase = true) }
+        filtered.sortedWith(sort.comparator)
+    }
     val community = emptyList<InstalledApp>()
 
     // Preview triggers are DELIBERATE only (2026-08-26): card focus or tap —

@@ -76,13 +76,16 @@ internal fun LayoutsList(
     // context → every layout under Installed. Community stays empty until sharing
     // lands. (The Default category retired with the default-layout concept —
     // 2026-08-24: the active layout IS the app's functional default.)
-    val children = if (appPackage != null) {
-        layouts.filter { it.packageName == appPackage }
-    } else layouts
     val trimmed = query.trim()
-    val filtered = if (trimmed.isEmpty()) children
-    else children.filter { it.name.contains(trimmed, ignoreCase = true) }
-    val installed = filtered.sortedWith(sort.comparator)
+    // Remembered, as the applications list's is: the list recomposes on every focus-preview.
+    val installed = remember(layouts, appPackage, trimmed, sort) {
+        val children = if (appPackage != null) {
+            layouts.filter { it.packageName == appPackage }
+        } else layouts
+        val filtered = if (trimmed.isEmpty()) children
+        else children.filter { it.name.contains(trimmed, ignoreCase = true) }
+        filtered.sortedWith(sort.comparator)
+    }
     val community = emptyList<Layout>()
 
     // Preview triggers are DELIBERATE only (2026-08-26): card focus (d-pad, via

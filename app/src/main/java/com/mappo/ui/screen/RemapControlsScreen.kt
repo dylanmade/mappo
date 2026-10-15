@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -93,7 +94,9 @@ import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
 import com.mappo.ui.screen.remap.AddLayoutModalContent
+import com.mappo.ui.component.AppIconCache
 import com.mappo.ui.screen.remap.AddLayoutModalHeight
+import com.mappo.ui.screen.remap.ApplicationSort
 import com.mappo.ui.screen.remap.EditorKind
 import com.mappo.ui.screen.remap.HierarchyCrumb
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
@@ -368,6 +371,15 @@ fun RemapControlsScreen(
 
     val gatedSetBindingGroupMode: (Long, BindingMode) -> Unit = { bindingGroupId, mode ->
         // Resolve the source for this binding group so the gate can be source-aware: NONE on a
+    // …and their launcher icons decode in the background as soon as it arrives, in the
+    // Application crumb's default (Recent) order, so its panel opens on icons already decoded.
+    val iconContext = LocalContext.current
+    LaunchedEffect(installedApps) {
+        AppIconCache.prewarm(
+            iconContext,
+            installedApps.sortedWith(ApplicationSort.RECENT.comparator).map { it.packageName },
+        )
+    }
         // stick / trigger / dpad needs Shizuku (EVIOCGRAB silences); NONE on a button doesn't.
         val source: InputSource? = config?.actionSets?.firstNotNullOfOrNull { set ->
             set.preset.firstOrNull { it.group.group.id == bindingGroupId }?.inputSource
