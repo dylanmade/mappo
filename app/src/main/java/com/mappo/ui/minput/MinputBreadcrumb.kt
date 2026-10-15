@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
@@ -41,7 +43,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
-import kotlin.math.asin
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -56,8 +57,8 @@ import kotlin.math.sqrt
  * at a glance: each crumb visibly leads into the one after it.
  *
  * Three knobs, all handed down to the segments ([LocalMinputBreadcrumbStyle]):
- *  - [join] — the join's [MinputBreadcrumbJoin.style] (a circular ARC or a pointed CHEVRON) and
- *    its [MinputBreadcrumbJoin.curvature] (0 = a straight edge … 1 = as deep as a pill end).
+ *  - [join] — the CHEVRON join's [MinputBreadcrumbJoin.curvature] (0 = a straight edge … 1 = as
+ *    deep as a pill end). Chevrons only since 2026-10-14 — the arc style was retired.
  *    App-wide default: [MinputBreadcrumbJoinDefault].
  *  - [size] — the control variant; [MinputSize.ExtraLarge] holds the overline + title stack.
  *  - [mode] — [MinputBreadcrumbMode.Expanded] (glyph + text) or [MinputBreadcrumbMode.Collapsed]
@@ -69,12 +70,16 @@ import kotlin.math.sqrt
  * **The segments OVERLAP their layout boxes.** A recess is cut out of its segment's box, so boxes
  * placed a plain [MinputSegmentGap] apart would leave the gap PLUS the recess between bulge and
  * recess (the first pass shipped exactly that). The row places each segment so the recess sits
- * exactly [MinputSegmentGap] off the previous bulge, measured square to the edge: an arc's recess
- * is the bulge's circle grown by the gap (concentric — a uniform gap round the curve); a
- * chevron's recess is the bulge's edges moved the gap along their normal.
+ * exactly [MinputSegmentGap] off the previous bulge, measured square to the edge: the recess is
+ * the bulge's edges moved the gap along their normal.
  *
  * Place [MinputBreadcrumbSegment]s (each optionally in a Box with its menu) as direct children,
  * passing each one's [MinputBreadcrumbPosition] ([MinputBreadcrumbPosition.of]).
+ *
+ * [orientation] (2026-10-14): [MinputBreadcrumbOrientation.Vertical] stacks the segments top to
+ * bottom — the same outline transposed, so each bulge leads DOWN into the next — for a row pinned
+ * down a screen side. Vertical segments are always [MinputBreadcrumbMode.Collapsed]: a glyph
+ * stack, there being no room across it for text.
  */
 @Composable
 fun MinputBreadcrumbRow(
@@ -82,10 +87,28 @@ fun MinputBreadcrumbRow(
     size: MinputSize = MinputBreadcrumbSize,
     join: MinputBreadcrumbJoin = MinputBreadcrumbJoinDefault,
     mode: MinputBreadcrumbMode = MinputBreadcrumbMode.Expanded,
+    orientation: MinputBreadcrumbOrientation = MinputBreadcrumbOrientation.Horizontal,
     content: @Composable () -> Unit,
 ) {
-    val style = MinputBreadcrumbStyle(size = size, join = join, mode = mode)
+    val style = MinputBreadcrumbStyle(size = size, join = join, mode = mode, orientation = orientation)
     CompositionLocalProvider(LocalMinputBreadcrumbStyle provides style) {
+        if (orientation == MinputBreadcrumbOrientation.Vertical) {
+            Layout(content = content, modifier = modifier.width(size.height)) { measurables, constraints ->
+                val loose = constraints.copy(minHeight = 0)
+                val placeables = measurables.map { it.measure(loose) }
+                val step = join.step(size.height).roundToPx()
+                val height = placeables.sumOf { it.height } + step * (placeables.size - 1).coerceAtLeast(0)
+                val width = placeables.maxOfOrNull { it.width } ?: 0
+                layout(width, height.coerceAtLeast(0)) {
+                    var y = 0
+                    placeables.forEach {
+                        it.placeRelative((width - it.width) / 2, y)
+                        y += it.height + step
+                    }
+                }
+            }
+            return@CompositionLocalProvider
+        }
         Layout(content = content, modifier = modifier.height(size.height)) { measurables, constraints ->
             val loose = constraints.copy(minWidth = 0)
             val placeables = measurables.map { it.measure(loose) }
@@ -108,7 +131,17 @@ data class MinputBreadcrumbStyle(
     val size: MinputSize,
     val join: MinputBreadcrumbJoin,
     val mode: MinputBreadcrumbMode,
+    val orientation: MinputBreadcrumbOrientation = MinputBreadcrumbOrientation.Horizontal,
 )
+
+/** Which way a [MinputBreadcrumbRow] runs. */
+enum class MinputBreadcrumbOrientation {
+    /** Start to end — the joins lead in reading order. */
+    Horizontal,
+
+    /** Top to bottom — collapsed segments only; the joins lead downward. */
+    Vertical,
+}
 
 val LocalMinputBreadcrumbStyle = staticCompositionLocalOf {
     MinputBreadcrumbStyle(MinputBreadcrumbSize, MinputBreadcrumbJoinDefault, MinputBreadcrumbMode.Expanded)
@@ -120,7 +153,7 @@ enum class MinputBreadcrumbMode {
     Expanded,
 
     /** The glyph alone, centred, at [minputBreadcrumbIconWidth] — functionally an icon button,
-     *  still wearing its joins (arc or chevron). */
+     *  still wearing its chevron joins. */
     Collapsed,
 }
 
@@ -174,9 +207,9 @@ fun MinputBreadcrumbSegment(
 ) {
     val size = style.size
     val join = style.join
-    val shape = remember(position, join) { MinputBreadcrumbShape(position, join) }
-    val bulgeDepth = join.depth(size.height)
-    val recessDepth = join.recessDepth(size.height)
+    val vertical = style.orientation == MinputBreadcrumbOrientation.Vertical
+    val shape = remember(position, join, vertical) { MinputBreadcrumbShape(position, join, vertical) }
+    val joinDepth = join.depth(size.height)
     val fill by animateColorAsState(
         targetValue = if (selected) minputHighlightContainer() else container,
         label = "minputBreadcrumbFill",
@@ -193,12 +226,11 @@ fun MinputBreadcrumbSegment(
     )
     val interaction = remember { MutableInteractionSource() }
     // A join's corner, as far as the bevel's light is concerned: a chevron is squared and sheds
-    // the top face's highlight almost at once; an arc carries it round in proportion to its
-    // curvature, all the way to a pill end's run at full curvature.
-    val joinCorner = join.bevelCorner(size.corner)
-    val startCorner = if (position.roundStart) size.corner else joinCorner
-    val endCorner = if (position.roundEnd) size.corner else joinCorner
-    val collapsed = mode == MinputBreadcrumbMode.Collapsed
+    // the top face's highlight almost at once. Vertical, the joins are the top and bottom ends and
+    // both sides run straight — the bevel's side fades see a pill's sides either way.
+    val startCorner = if (position.roundStart || vertical) size.corner else 0.dp
+    val endCorner = if (position.roundEnd || vertical) size.corner else 0.dp
+    val collapsed = vertical || mode == MinputBreadcrumbMode.Collapsed
     // 1 = expanded, 0 = collapsed. Width, glyph position and text alpha all ride it, so the
     // crumb folds as one motion; the text leaves the composition only once it has fully faded.
     val expansion by animateFloatAsState(
@@ -217,21 +249,22 @@ fun MinputBreadcrumbSegment(
         minputBreadcrumbCentroidX(position, join, size.height, collapsedWidth)
     }
     // Where expanded content starts: the inset off the visible edge at mid-height.
-    val startEdge = if (position.roundStart) 0.dp else recessDepth
-    val endEdge = if (position.roundEnd) 0.dp else bulgeDepth
+    val startEdge = if (position.roundStart) 0.dp else joinDepth
+    val endEdge = if (position.roundEnd) 0.dp else joinDepth
     Surface(
         shape = shape,
         color = fill,
         contentColor = contentColor,
         border = minputBevelBorder(fill, cornerRadius = startCorner, endCornerRadius = endCorner),
         modifier = modifier
-            .width(
+            .then(
                 // A round end gives up more of its box than a join does, so an outer crumb's box
-                // is grown until it holds as much button as a middle one (endAdjust).
-                lerp(collapsedWidth, expandedWidth, expansion),
+                // is sized to read as long as a middle one (endAdjust). Vertical,
+                // that length runs down the stack.
+                if (vertical) Modifier.height(collapsedWidth).fillMaxWidth()
+                else Modifier.width(lerp(collapsedWidth, expandedWidth, expansion)).fillMaxHeight(),
             )
             .minputInteractiveMotion(interaction)
-            .fillMaxHeight()
             .clip(shape)
             .clickable(
                 interactionSource = interaction,
@@ -281,9 +314,17 @@ fun MinputBreadcrumbSegment(
                     }
                 }
             },
-            modifier = Modifier.fillMaxHeight().minputStrokeInset(),
+            modifier = (if (vertical) Modifier.fillMaxSize() else Modifier.fillMaxHeight()).minputStrokeInset(),
         ) { measurables, constraints ->
             val stroke = MinputBoxStroke.toPx()
+            if (vertical) {
+                // The glyph alone, on the centroid down the stack, centred across it.
+                val glyph = measurables[0].measure(constraints.copy(minWidth = 0, minHeight = 0))
+                val glyphY = collapsedGlyphCentre.toPx() - stroke - glyph.height / 2f
+                return@Layout layout(constraints.maxWidth, constraints.maxHeight) {
+                    glyph.placeRelative((constraints.maxWidth - glyph.width) / 2, glyphY.roundToInt())
+                }
+            }
             val inset = MinputBreadcrumbContentInset.toPx()
             val gap = MinputBarIconTextGap.toPx()
             val glyph = measurables[0].measure(constraints.copy(minWidth = 0, minHeight = 0))
@@ -311,29 +352,32 @@ fun MinputBreadcrumbSegment(
  */
 fun minputBreadcrumbExpandedWidth(size: MinputSize, join: MinputBreadcrumbJoin): Dp =
     size.iconSize.dp + MinputBarIconTextGap + MinputBreadcrumbTitleWidth +
-        MinputBreadcrumbContentInset * 2 + join.depth(size.height) + join.recessDepth(size.height)
+        MinputBreadcrumbContentInset * 2 + join.depth(size.height) * 2
 
 /** A collapsed middle segment's width at [size]: the height, plus air for the joins either side.
  *  The row's outer segments differ from it by [minputBreadcrumbEndAdjust]. */
 fun minputBreadcrumbIconWidth(size: MinputSize): Dp = size.height + MinputBreadcrumbIconModeExtra
 
 /**
- * What a segment at [position] adds to (or takes off) a middle segment's box, so EVERY segment
- * holds the same amount of button: the same filled area, i.e. the same AVERAGE width across its
- * height (Dylan, 2026-10-14: "make sure the widths of all those breadcrumb buttons is the same").
+ * What a segment at [position] adds to (or takes off) a middle segment's box so every crumb is the
+ * same length (Dylan, 2026-10-14/15: "consistent in length across the modes and pin locations").
  *
- * Each end of a box gives up part of it: a pill end the corners its semicircle misses, a bulge
- * the slivers either side of its apex, a recess the bite cut out of it. They differ — a full pill
- * end gives up far more than a shallow chevron — so a row's outer crumbs read narrower (worst
- * collapsed, where the ends are most of the button). Equalising the width at MID-HEIGHT instead
- * (the first pass: trim a round-started box by the recess it lacks) shrank the first crumb
- * further, because its pill end already gives up more than the recess it was trimmed for.
+ * **Equal PITCH**: the row is one pill divided into equal parts at its gaps. A gap is a chevron
+ * band; the eye places the divide at its MIDDLE — half the join depth in from the corners, half
+ * the gap's own width across — and an outer crumb's far end at its pill TIP. So a middle crumb's
+ * part is its box less the depth plus a whole gap (half each side), and an outer crumb's is its
+ * box less half the depth plus half a gap: each round end differs from a join end by half of
+ * (gap width − depth), which is exactly half the [step] between boxes. A fixed rule in dp, so it
+ * holds for collapsed and expanded crumbs, either orientation, every pin — measured on a render,
+ * all three parts come out equal to the pixel.
+ *
+ * What it replaced, for the record — each read wrong on the device: equal AREA (the first crumb
+ * long), equal centre line (the first short), and a 0..1 blend of the two (wrong somewhere at
+ * every value: the blend only ever moved the first crumb, while the last read long too).
  */
 fun minputBreadcrumbEndAdjust(position: MinputBreadcrumbPosition, join: MinputBreadcrumbJoin, height: Dp): Dp {
-    val round = pillEndLoss(height)
-    val start = if (position.roundStart) round else join.recessLoss(height)
-    val end = if (position.roundEnd) round else join.bulgeLoss(height)
-    return start + end - join.recessLoss(height) - join.bulgeLoss(height)
+    val half = join.step(height) / 2
+    return (if (position.roundStart) half else 0.dp) + (if (position.roundEnd) half else 0.dp)
 }
 
 /**
@@ -351,25 +395,14 @@ fun minputBreadcrumbCentroidX(
     val r = h / 2
     val w = width.value
     val d = join.depth(height).value
-    val dr = join.recessDepth(height).value
-    val radius = if (join.style == MinputBreadcrumbJoinStyle.Arc) arcRadius(d, r) else null
-    val grown = radius?.let { it + MinputSegmentGap.value }
-    fun bow(of: Float, dy: Float) = sqrt((of * of - dy * dy).coerceAtLeast(0f))
+    fun bow(dy: Float) = sqrt((r * r - dy * dy).coerceAtLeast(0f))
     var area = 0f
     var moment = 0f
     val samples = CentroidSamples
     for (i in 0 until samples) {
         val dy = kotlin.math.abs((i + 0.5f) / samples * h - r)
-        val left = when {
-            position.roundStart -> r - bow(r, dy)
-            grown != null -> dr - grown + bow(grown, dy)
-            else -> dr * (1 - dy / r)
-        }
-        val right = when {
-            position.roundEnd -> w - r + bow(r, dy)
-            radius != null -> w - radius + bow(radius, dy)
-            else -> w - d * dy / r
-        }
+        val left = if (position.roundStart) r - bow(dy) else d * (1 - dy / r)
+        val right = if (position.roundEnd) w - r + bow(dy) else w - d * dy / r
         area += right - left
         moment += (right * right - left * left) / 2
     }
@@ -379,49 +412,13 @@ fun minputBreadcrumbCentroidX(
 /** Rows sampled by [minputBreadcrumbCentroidX] — far finer than a pixel matters. */
 private const val CentroidSamples = 64
 
-/** The average width a pill end gives up across its box's height: (2 − π/2)·r² of corner over
- *  the height 2r. */
-private fun pillEndLoss(height: Dp): Dp = height / 4 * (2f - Math.PI.toFloat() / 2f)
-
-/** The average width a BULGE gives up: its box runs to the apex, its fill only to the edges. */
-private fun MinputBreadcrumbJoin.bulgeLoss(height: Dp): Dp {
-    val d = depth(height).value
-    val half = height.value / 2
-    val filled = when (style) {
-        MinputBreadcrumbJoinStyle.Chevron -> d * half
-        MinputBreadcrumbJoinStyle.Arc -> arcRadius(d, half)?.let { circularSegmentArea(it, half) } ?: 0f
-    }
-    return (d - filled / height.value).dp
-}
-
-/** The average width a RECESS gives up: the bite cut into its box. */
-private fun MinputBreadcrumbJoin.recessLoss(height: Dp): Dp {
-    val dr = recessDepth(height).value
-    val half = height.value / 2
-    val bitten = when (style) {
-        MinputBreadcrumbJoinStyle.Chevron -> dr * half
-        MinputBreadcrumbJoinStyle.Arc -> arcRadius(depth(height).value, half)
-            ?.let { circularSegmentArea(it + MinputSegmentGap.value, half) } ?: 0f
-    }
-    return (bitten / height.value).dp
-}
-
-/** Area of the circular segment of a circle of [radius] cut off by a chord [half] each side of
- *  its midpoint. */
-private fun circularSegmentArea(radius: Float, half: Float): Float {
-    val theta = 2 * asin((half / radius).coerceAtMost(1f))
-    return radius * radius / 2 * (theta - kotlin.math.sin(theta))
-}
-
 /**
- * How two breadcrumb segments meet: the earlier one's end BULGES toward the later one, whose
- * start carries the matching RECESS. [curvature] (0..1) sets how far the bulge's apex sits beyond
- * its corners — `curvature × height / 2` — for EITHER style: 0 is a straight, squared edge; 1 is
- * as deep as a pill end (exactly a pill end, for an [MinputBreadcrumbJoinStyle.Arc]; a right-angle
- * point, for a [MinputBreadcrumbJoinStyle.Chevron]).
+ * How two breadcrumb segments meet: a CHEVRON — the earlier one's end BULGES to a point toward
+ * the later one, whose start carries the matching RECESS. [curvature] (0..1) sets how far the
+ * apex sits beyond the corners — `curvature × height / 2`: 0 is a straight, squared edge; 1 a
+ * right-angle point, as deep as a pill end.
  */
 data class MinputBreadcrumbJoin(
-    val style: MinputBreadcrumbJoinStyle,
     val curvature: Float,
 ) {
     init {
@@ -429,138 +426,78 @@ data class MinputBreadcrumbJoin(
     }
 }
 
-enum class MinputBreadcrumbJoinStyle {
-    /** A circular arc through the segment's corners and the apex. */
-    Arc,
-
-    /** Two straight edges meeting at the apex. */
-    Chevron,
-}
-
-/** How far a join's BULGE apex sits beyond its corners, for a segment [height] tall. */
+/** How far a join's apex sits beyond its corners, for a segment [height] tall — the bulge's
+ *  depth and the recess's alike (the recess is the bulge's edges moved along their normal). */
 fun MinputBreadcrumbJoin.depth(height: Dp): Dp = height / 2 * curvature
 
 /**
- * How deep the matching RECESS is cut. A chevron's recess is its bulge moved along the edges'
- * normal, so it is the same depth. An arc's is the bulge's circle grown by [gap]: a bigger circle
- * through the same corners, so a shallower cut.
- */
-fun MinputBreadcrumbJoin.recessDepth(height: Dp, gap: Dp = MinputSegmentGap): Dp = when (style) {
-    MinputBreadcrumbJoinStyle.Chevron -> depth(height)
-    MinputBreadcrumbJoinStyle.Arc -> {
-        val half = height.value / 2
-        val radius = arcRadius(depth(height).value, half) ?: return 0.dp
-        val grown = radius + gap.value
-        (grown - sqrt(grown * grown - half * half)).dp
-    }
-}
-
-/**
  * The advance from one segment's box end to the next one's box start: the horizontal shift that
- * puts the recess [gap] off the bulge, square to the edge, less the recess (which is cut into the
- * next box). An arc's concentric recess is shifted by exactly the gap; a chevron's edges lean, so
- * moving them [gap] along their normal is a longer horizontal shift.
+ * puts the recess [gap] off the bulge, square to the edges — which lean, so it is longer than the
+ * gap — less the recess (which is cut into the next box).
  */
 fun MinputBreadcrumbJoin.step(height: Dp, gap: Dp = MinputSegmentGap): Dp {
-    val shift = when (style) {
-        MinputBreadcrumbJoinStyle.Arc -> gap
-        MinputBreadcrumbJoinStyle.Chevron -> {
-            val lean = depth(height).value / (height.value / 2)
-            gap * sqrt(1f + lean * lean)
-        }
-    }
-    return shift - recessDepth(height, gap)
+    val lean = depth(height).value / (height.value / 2)
+    return gap * sqrt(1f + lean * lean) - depth(height)
 }
-
-/** The corner radius the bevel treats a join as — see [MinputBreadcrumbSegment]. */
-private fun MinputBreadcrumbJoin.bevelCorner(pillCorner: Dp): Dp = when (style) {
-    MinputBreadcrumbJoinStyle.Chevron -> 0.dp
-    MinputBreadcrumbJoinStyle.Arc -> pillCorner * curvature
-}
-
-/** Radius of the circle through two corners [half] above and below the apex, with the apex
- *  [depth] beyond them (chord + sagitta). Null for a flat join. */
-private fun arcRadius(depth: Float, half: Float): Float? =
-    if (depth <= ArcFlatEpsilon) null else (depth * depth + half * half) / (2 * depth)
-
-/** Below this sagitta (in whatever unit the caller works in) a join is drawn as a straight edge. */
-private const val ArcFlatEpsilon = 0.01f
 
 /**
  * A breadcrumb segment's outline: a rectangle whose ends are either fully round (the row's outer
- * ends) or [join]s — a BULGE on the end side, the matching RECESS on the start side, so a recess
- * nests the previous segment's bulge. Mirrored under RTL, so the joins always lead in reading
- * order.
+ * ends) or chevron [join]s — a BULGE on the end side, the matching RECESS on the start side, so a
+ * recess nests the previous segment's bulge. Mirrored under RTL, so the joins always lead in reading
+ * order. [vertical]: the same outline TRANSPOSED — drawn along the box's height, the joins on
+ * its top (recess) and bottom (bulge) ends; never mirrored.
  */
 class MinputBreadcrumbShape(
     private val position: MinputBreadcrumbPosition,
     private val join: MinputBreadcrumbJoin,
+    private val vertical: Boolean = false,
 ) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
-        val w = size.width
-        val h = size.height
+        // Built in the horizontal frame: the run along w, the thickness h.
+        val w = if (vertical) size.height else size.width
+        val h = if (vertical) size.width else size.height
         val r = h / 2f
-        val heightDp = with(density) { h.toDp() }
-        val d = with(density) { join.depth(heightDp).toPx() }
-        val dr = with(density) { join.recessDepth(heightDp).toPx() }
-        // An arc join: the circle through both corners and the apex — radius from the chord (h)
-        // and the sagitta (d). The recess is that circle grown by the gap, apex dr deep.
-        val radius = if (join.style == MinputBreadcrumbJoinStyle.Arc) arcRadius(d, r) else null
-        val grown = if (radius != null) radius + with(density) { MinputSegmentGap.toPx() } else null
-        fun halfSweep(of: Float) = Math.toDegrees(asin((r / of).coerceAtMost(1f)).toDouble()).toFloat()
+        val d = with(density) { join.depth(h.toDp()).toPx() }
         val path = Path().apply {
             moveTo(if (position.roundStart) r else 0f, 0f)
-            // Top edge, then the END: a pill arc, or the join's bulge.
-            when {
-                position.roundEnd -> {
-                    lineTo(w - r, 0f)
-                    arcTo(Rect(w - 2 * r, 0f, w, h), -90f, 180f, false)
-                }
-                radius != null -> {
-                    lineTo(w - d, 0f)
-                    // Centre at (w − R, r): from the top corner, clockwise through the apex.
-                    val cx = w - radius
-                    val sweep = halfSweep(radius)
-                    arcTo(Rect(cx - radius, r - radius, cx + radius, r + radius), -sweep, 2 * sweep, false)
-                }
-                else -> {
-                    lineTo(w - d, 0f)
-                    lineTo(w, r)
-                    lineTo(w - d, h)
-                }
+            // Top edge, then the END: a pill arc, or the chevron's bulge.
+            if (position.roundEnd) {
+                lineTo(w - r, 0f)
+                arcTo(Rect(w - 2 * r, 0f, w, h), -90f, 180f, false)
+            } else {
+                lineTo(w - d, 0f)
+                lineTo(w, r)
+                lineTo(w - d, h)
             }
-            // Bottom edge, then the START: a pill arc, or the join's recess.
-            when {
-                position.roundStart -> {
-                    lineTo(r, h)
-                    arcTo(Rect(0f, 0f, 2 * r, h), 90f, 180f, false)
-                }
-                grown != null -> {
-                    lineTo(0f, h)
-                    // The grown circle, apex at x = dr: centre at (dr − R', r), run back up
-                    // anticlockwise from the bottom corner through the apex.
-                    val cx = dr - grown
-                    val sweep = halfSweep(grown)
-                    arcTo(Rect(cx - grown, r - grown, cx + grown, r + grown), sweep, -2 * sweep, false)
-                }
-                else -> {
-                    lineTo(0f, h)
-                    lineTo(dr, r)
-                    lineTo(0f, 0f)
-                }
+            // Bottom edge, then the START: a pill arc, or the chevron's recess.
+            if (position.roundStart) {
+                lineTo(r, h)
+                arcTo(Rect(0f, 0f, 2 * r, h), 90f, 180f, false)
+            } else {
+                lineTo(0f, h)
+                lineTo(d, r)
+                lineTo(0f, 0f)
             }
             close()
         }
-        if (layoutDirection == LayoutDirection.Rtl) {
+        if (vertical) {
+            // Transpose: (x, y) → (y, x).
+            path.transform(
+                Matrix().apply {
+                    this[0, 0] = 0f; this[1, 1] = 0f
+                    this[0, 1] = 1f; this[1, 0] = 1f
+                },
+            )
+        } else if (layoutDirection == LayoutDirection.Rtl) {
             path.transform(Matrix().apply { translate(w, 0f); scale(-1f, 1f) })
         }
         return Outline.Generic(path)
     }
 
     override fun equals(other: Any?): Boolean = other is MinputBreadcrumbShape &&
-        other.position == position && other.join == join
+        other.position == position && other.join == join && other.vertical == vertical
 
-    override fun hashCode(): Int = 31 * position.hashCode() + join.hashCode()
+    override fun hashCode(): Int = (31 * position.hashCode() + join.hashCode()) * 31 + vertical.hashCode()
 }
 
 /** The breadcrumb's default control variant: [MinputSize.ExtraLarge] — a two-line overline +
@@ -569,17 +506,11 @@ val MinputBreadcrumbSize = MinputSize.ExtraLarge
 
 // ── THE TUNING KNOBS ─────────────────────────────────────────────────────────────────────────
 
-/** The join's style: [MinputBreadcrumbJoinStyle.Arc] or [MinputBreadcrumbJoinStyle.Chevron]. */
-val MinputBreadcrumbJoinStyleDefault = MinputBreadcrumbJoinStyle.Chevron
-
-/** How deep the joins are: 0 = straight edge … 1 = as deep as a pill end. Drives both styles. */
+/** How deep the chevron joins are: 0 = straight edge … 1 = a right-angle point. */
 const val MinputBreadcrumbJoinCurvatureDefault = 0.4f
 
-/** The join every breadcrumb row wears unless told otherwise — built from the two knobs above. */
-val MinputBreadcrumbJoinDefault = MinputBreadcrumbJoin(
-    style = MinputBreadcrumbJoinStyleDefault,
-    curvature = MinputBreadcrumbJoinCurvatureDefault,
-)
+/** The join every breadcrumb row wears unless told otherwise. */
+val MinputBreadcrumbJoinDefault = MinputBreadcrumbJoin(curvature = MinputBreadcrumbJoinCurvatureDefault)
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 

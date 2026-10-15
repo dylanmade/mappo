@@ -175,27 +175,36 @@ internal fun BoxScope.MinputMenuSurface(
     // start from the anchor's start, y shifts its top from the anchor's bottom. So a side
     // placement is "push clear of the anchor horizontally, then lift back up by the anchor's
     // height to line the tops up". [Below] passes zero and is pure M3.
+    // A caret on a [Below] menu needs its depth of air between anchor and body; M3 applies the
+    // same y offset upward when it flips the menu above the anchor.
     val offset = when (side) {
-        MinputMenuPlacement.Below -> DpOffset.Zero
+        MinputMenuPlacement.Below -> if (caret) DpOffset(0.dp, MinputMenuCaretDepth) else DpOffset.Zero
         MinputMenuPlacement.End -> DpOffset(anchorWidth + MinputMenuCaretDepth, -anchorHeight)
         MinputMenuPlacement.Start -> DpOffset(-(menuWidth + MinputMenuCaretDepth), -anchorHeight)
     }
 
-    val wantsCaret = caret && side != MinputMenuPlacement.Below
+    // 2026-10-14: [Below] carries one too — on the top edge, or the bottom once M3 flips the menu
+    // above the anchor.
+    val wantsCaret = caret
+    val vertical = side == MinputMenuPlacement.Below
     // Derived from where the menu LANDED, not from where it was asked to go.
-    val caretGeometry = if (wantsCaret) caretGeometryFor(anchorScreen, menuScreen) else null
+    val caretGeometry = if (wantsCaret) caretGeometryFor(anchorScreen, menuScreen, vertical) else null
     // ONE source of truth for which edge the caret is on: the measurement when we have it, the
     // predicted side until then. The shape and the content inset below BOTH read this — when
     // they disagreed (shape measured, inset predicted) the result was a band of menu-colored
     // surface on the opposite edge that no row could ever fill.
-    val caretOnStart = caretGeometry?.first ?: (side == MinputMenuPlacement.End)
+    val caretEdge = caretGeometry?.first ?: when (side) {
+        MinputMenuPlacement.Below -> MinputCaretEdge.Top
+        MinputMenuPlacement.End -> MinputCaretEdge.Start
+        MinputMenuPlacement.Start -> MinputCaretEdge.End
+    }
     val shape = if (caretGeometry != null) {
-        val (onStart, centerFromTopPx) = caretGeometry
-        remember(onStart, centerFromTopPx) {
+        val (edge, centerAlongEdgePx) = caretGeometry
+        remember(edge, centerAlongEdgePx) {
             MinputCaretMenuShape(
                 corner = MinputMenuCorner,
-                edge = if (onStart) MinputCaretEdge.Start else MinputCaretEdge.End,
-                caretCenterPx = centerFromTopPx,
+                edge = edge,
+                caretCenterPx = centerAlongEdgePx,
                 caretHalfWidth = MinputMenuCaretWidth / 2,
                 caretDepth = MinputMenuCaretDepth,
             )
@@ -230,10 +239,11 @@ internal fun BoxScope.MinputMenuSurface(
             .padding(vertical = framePadding)
             .collapseMenuVerticalPadding(collapse = true)
             .then(
-                when {
-                    !wantsCaret -> Modifier
-                    caretOnStart -> Modifier.padding(start = MinputMenuCaretDepth)
-                    else -> Modifier.padding(end = MinputMenuCaretDepth)
+                if (!wantsCaret) Modifier else when (caretEdge) {
+                    MinputCaretEdge.Start -> Modifier.padding(start = MinputMenuCaretDepth)
+                    MinputCaretEdge.End -> Modifier.padding(end = MinputMenuCaretDepth)
+                    MinputCaretEdge.Top -> Modifier.padding(top = MinputMenuCaretDepth)
+                    MinputCaretEdge.Bottom -> Modifier.padding(bottom = MinputMenuCaretDepth)
                 },
             ),
         content = content,
@@ -294,15 +304,21 @@ private fun Modifier.collapseMenuVerticalPadding(collapse: Boolean = true): Modi
     }
 
 /**
- * Which edge the caret belongs on, and how far down that edge it points, from the menu's and
+ * Which edge the caret belongs on, and how far along that edge it points, from the menu's and
  * the anchor's measured positions. Null until both are known.
  *
- * `true` = the caret sits on the menu's START edge (i.e. the menu is to the END of the anchor).
+ * A side menu ([vertical] false): Start when the menu is to the END of the anchor, the distance
+ * down from its top. A [MinputMenuPlacement.Below] menu: Top when it hangs below the anchor,
+ * Bottom when M3 flipped it above, the distance in from its left.
  */
-private fun caretGeometryFor(anchor: Rect?, menu: Rect?): Pair<Boolean, Float>? {
+private fun caretGeometryFor(anchor: Rect?, menu: Rect?, vertical: Boolean): Pair<MinputCaretEdge, Float>? {
     if (anchor == null || menu == null || menu.width <= 0f) return null
-    val onStart = anchor.center.x <= menu.center.x
-    return onStart to (anchor.center.y - menu.top)
+    if (vertical) {
+        val edge = if (anchor.center.y <= menu.center.y) MinputCaretEdge.Top else MinputCaretEdge.Bottom
+        return edge to (anchor.center.x - menu.left)
+    }
+    val edge = if (anchor.center.x <= menu.center.x) MinputCaretEdge.Start else MinputCaretEdge.End
+    return edge to (anchor.center.y - menu.top)
 }
 
 /** This node's bounds in SCREEN coordinates, or null when they aren't resolvable yet.
@@ -468,7 +484,7 @@ internal class MinputCaretMenuShape(
  * Place it in a `Box` alongside the control that summons it.
  *
  * @param placement where the menu sits relative to its anchor.
- * @param caret draws the pointer back at the summoning control. Side placements only.
+ * @param caret draws the pointer back at the summoning control.
  * @param framePadding inset above the first row and below the last. Defaults to
  *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
  */
@@ -526,7 +542,7 @@ fun BoxScope.MinputActionMenu(
  * actual change.
  *
  * @param placement where the menu sits relative to its anchor.
- * @param caret draws the pointer back at the summoning control. Side placements only.
+ * @param caret draws the pointer back at the summoning control.
  * @param framePadding inset above the first row and below the last. Defaults to
  *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
  * @param actionGroups verbs that live with the choice (2026-10-14 — the hierarchy bar's pin menu

@@ -10,20 +10,27 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * **Where the editors' hierarchy bar is pinned on the screen** (Dylan, 2026-10-07) — one of six
- * spots: the top or bottom edge, at its start, middle or end. The bar is a compact floating group
- * rather than a full-width strip, so it can get out of the way of whatever sits under it; the
- * choice is global (the physical and virtual editors share it), not a layout property.
+ * **Where the editors' hierarchy bar is pinned on the screen** (Dylan, 2026-10-07; four edges
+ * since 2026-10-14, was six top/bottom spots) — the middle of one screen edge. Top and bottom lay
+ * the bar out as a row; the sides ([sideways]) stack its crumbs in a column down the edge. The
+ * bar is a compact floating group rather than a full-width strip, so it can get out of the way of
+ * whatever sits under it; the choice is global (the physical and virtual editors share it), not a
+ * layout property. START / END follow the layout direction, as the bar's placement does.
  */
-enum class BarPin(val label: String, val top: Boolean, val horizontal: Horizontal) {
-    TOP_START("Top left", top = true, Horizontal.START),
-    TOP_CENTER("Top middle", top = true, Horizontal.CENTER),
-    TOP_END("Top right", top = true, Horizontal.END),
-    BOTTOM_START("Bottom left", top = false, Horizontal.START),
-    BOTTOM_CENTER("Bottom middle", top = false, Horizontal.CENTER),
-    BOTTOM_END("Bottom right", top = false, Horizontal.END);
+enum class BarPin(
+    /** The edge in words — "top", "left" … — for the menu option and the button's description. */
+    val edge: String,
+) {
+    TOP("top"),
+    START("left"),
+    END("right"),
+    BOTTOM("bottom");
 
-    enum class Horizontal { START, CENTER, END }
+    /** The pin menu's option. */
+    val label: String get() = "Pin to $edge"
+
+    /** Pinned to a side edge — the bar is a vertical stack. */
+    val sideways: Boolean get() = this == START || this == END
 }
 
 /** Persisted home for [BarPin] — one class per setting in the app's one settings file, like
@@ -75,8 +82,8 @@ class BarPinSettings @Inject constructor(
     }
 
     companion object {
-        /** The corner the old top bar's identity widget held — the hierarchy reads from there. */
-        val Default = BarPin.TOP_START
+        /** The edge the old top bar held. */
+        val Default = BarPin.TOP
 
         private const val PREFS_NAME = "mappo_settings"
         private const val KEY_BAR_PIN = "bar_pin"

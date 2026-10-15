@@ -560,10 +560,10 @@ fun RemapControlsScreen(
             },
     ) {
         // The hierarchy bar (2026-10-07) — application › layout › buttons, plus the pin
-        // button — floating in its slot at the pinned edge rather than banding across it: a
-        // compact group on the content's own plane, aligned start / middle / end, with
-        // HierarchyBarSlotPadding above and below. One instance per bar shown (see
-        // showBarComparison), each with its own open crumb.
+        // button — floating OVER the content at the pinned edge (it takes no layout space of its
+        // own): a compact group centred along that edge, HierarchyBarSlotPadding off it — a row
+        // on the top or bottom, a vertical breadcrumb down a side.
+        // One instance per bar shown (see showBarComparison), each with its own open crumb.
         @Composable
         fun hierarchyBarInstance(
             barIndex: Int,
@@ -635,24 +635,35 @@ fun RemapControlsScreen(
                 onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
             )
         }
-        val hierarchyBar: @Composable () -> Unit = {
+        val hierarchyBar: @Composable (Modifier) -> Unit = { barModifier ->
             // THE bar, then — temporarily, for a side-by-side read on the device (Dylan,
-            // 2026-10-07) — the comparison variant under it: no overlines, Standard controls.
+            // 2026-10-07) — the comparison variant beside it: no overlines, Standard controls.
             // Delete the second instance (and openBarIndex) once the comparison is settled.
-            Column(
-                horizontalAlignment = when (barPin.horizontal) {
-                    BarPin.Horizontal.START -> Alignment.Start
-                    BarPin.Horizontal.CENTER -> Alignment.CenterHorizontally
-                    BarPin.Horizontal.END -> Alignment.End
-                },
-                verticalArrangement = Arrangement.spacedBy(HierarchyBarSlotPadding),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = MinputBarEdgePadding, vertical = HierarchyBarSlotPadding),
-            ) {
-                hierarchyBarInstance(barIndex = 0)
-                if (showBarComparison) {
-                    hierarchyBarInstance(barIndex = 1, size = MinputSize.Standard, showOverlines = false)
+            // Sized to the bar alone (it FLOATS over the content), so the screen around it
+            // still takes touches.
+            if (barPin.sideways) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(HierarchyBarSlotPadding),
+                    modifier = barModifier
+                        .padding(horizontal = HierarchyBarSlotPadding, vertical = MinputBarEdgePadding),
+                ) {
+                    hierarchyBarInstance(barIndex = 0)
+                    if (showBarComparison) {
+                        hierarchyBarInstance(barIndex = 1, size = MinputSize.Standard, showOverlines = false)
+                    }
+                }
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(HierarchyBarSlotPadding),
+                    modifier = barModifier
+                        .padding(horizontal = MinputBarEdgePadding, vertical = HierarchyBarSlotPadding),
+                ) {
+                    hierarchyBarInstance(barIndex = 0)
+                    if (showBarComparison) {
+                        hierarchyBarInstance(barIndex = 1, size = MinputSize.Standard, showOverlines = false)
+                    }
                 }
             }
         }
@@ -678,8 +689,6 @@ fun RemapControlsScreen(
                 // controls. The Scaffold's default `background` role would band its own colour
                 // behind them.
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                topBar = { if (barPin.top) hierarchyBar() },
-                bottomBar = { if (!barPin.top) hierarchyBar() },
             ) { innerPadding ->
                 // surface — the screen's content plane beneath the group boxes.
                 Surface(
@@ -719,6 +728,18 @@ fun RemapControlsScreen(
                     }
                 }
             }
+            // The hierarchy bar FLOATS over the content (2026-10-14) rather than taking a slot
+            // of its own: centred on its pinned edge, the content running underneath it.
+            hierarchyBar(
+                Modifier.align(
+                    when (barPin) {
+                        BarPin.TOP -> Alignment.TopCenter
+                        BarPin.BOTTOM -> Alignment.BottomCenter
+                        BarPin.START -> Alignment.CenterStart
+                        BarPin.END -> Alignment.CenterEnd
+                    },
+                ),
+            )
         }
 
         RemapPanelOverlay(

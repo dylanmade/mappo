@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.absolutePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -53,9 +55,13 @@ import androidx.compose.ui.window.PopupProperties
  * anchor + fade (120ms in, 75ms out, the M3 values) and wears `MenuDefaults`' container colour
  * and elevation.
  *
- * Placement: below the anchor, start-aligned to it; flipped ABOVE when there is no room below
- * (a bar pinned to the screen's bottom edge), clamped into the window either way. Height is capped
- * at [maxHeight], so a list inside it scrolls — give a lazy list `Modifier.weight(1f, fill = false)`.
+ * Placement ([placement]): [MinputMenuPlacement.Below] — below the anchor, start-aligned to it,
+ * flipped ABOVE when there is no room below (a bar pinned to the screen's bottom edge); or a SIDE
+ * placement (2026-10-14, for a bar pinned down a screen side) — beside the anchor, top-aligned to
+ * it, mirrored to the other side when there is no room. Clamped into the window either way.
+ * [caret] carves the minput menus' caret into the edge facing the anchor, aimed at its centre
+ * from wherever the panel actually LANDED (after flips and clamping). Height is capped at
+ * [maxHeight], so a list inside it scrolls — give a lazy list `Modifier.weight(1f, fill = false)`.
  *
  * Place it in a `Box` alongside its anchor, like the other minput menus.
  */
@@ -66,6 +72,8 @@ fun BoxScope.MinputDropdownPanel(
     modifier: Modifier = Modifier,
     width: Dp = MinputDropdownPanelWidth,
     maxHeight: Dp = rememberMinputDropdownPanelMaxHeight(),
+    placement: MinputMenuPlacement = MinputMenuPlacement.Below,
+    caret: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val expandedState = remember { MutableTransitionState(false) }
@@ -73,13 +81,39 @@ fun BoxScope.MinputDropdownPanel(
     if (!expandedState.currentState && !expandedState.targetState) return
 
     val density = LocalDensity.current
-    var transformOrigin by remember { mutableStateOf(TransformOrigin.Center) }
-    val positionProvider = remember(density) {
+    val layoutDirection = LocalLayoutDirection.current
+    // Where the panel landed — seeded with the requested side, so the caret's inset doesn't
+    // change the panel's size once the real placement arrives.
+    var placed by remember(placement, layoutDirection) {
+        mutableStateOf(MinputPanelPlaced.predicted(placement, layoutDirection))
+    }
+    val positionProvider = remember(density, placement) {
         MinputPanelPositionProvider(
+            placement = placement,
             gapPx = with(density) { MinputDropdownPanelGap.roundToPx() },
-            onPlaced = { transformOrigin = it },
+            onPlaced = { if (it != placed) placed = it },
         )
     }
+    val caretPx = placed.caretCenterPx
+    val shape = if (caret) {
+        remember(placed.edge, caretPx) {
+            MinputCaretMenuShape(
+                corner = MinputMenuCorner,
+                edge = placed.edge,
+                caretCenterPx = caretPx,
+                caretHalfWidth = MinputMenuCaretWidth / 2,
+                caretDepth = MinputMenuCaretDepth,
+            )
+        }
+    } else RoundedCornerShape(MinputMenuCorner)
+    // The caret is carved out of the surface: the body — and the content — sit inset by its depth
+    // on that edge. Physical sides: the caret shape's Start / End are its left / right.
+    val caretInset = if (!caret) Modifier else Modifier.absolutePadding(
+        left = if (placed.edge == MinputCaretEdge.Start) MinputMenuCaretDepth else 0.dp,
+        right = if (placed.edge == MinputCaretEdge.End) MinputMenuCaretDepth else 0.dp,
+        top = if (placed.edge == MinputCaretEdge.Top) MinputMenuCaretDepth else 0.dp,
+        bottom = if (placed.edge == MinputCaretEdge.Bottom) MinputMenuCaretDepth else 0.dp,
+    )
     Popup(
         popupPositionProvider = positionProvider,
         onDismissRequest = onDismissRequest,
@@ -101,7 +135,7 @@ fun BoxScope.MinputDropdownPanel(
             label = "minputDropdownPanelAlpha",
         ) { open -> if (open) 1f else 0f }
         Surface(
-            shape = RoundedCornerShape(MinputMenuCorner),
+            shape = shape,
             color = MenuDefaults.containerColor,
             tonalElevation = MenuDefaults.TonalElevation,
             shadowElevation = MenuDefaults.ShadowElevation,
@@ -109,12 +143,14 @@ fun BoxScope.MinputDropdownPanel(
                 scaleX = scale
                 scaleY = scale
                 this.alpha = alpha
-                this.transformOrigin = transformOrigin
+                this.transformOrigin = placed.transformOrigin
             },
         ) {
             CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
                 Column(
-                    modifier = modifier
+                    modifier = Modifier
+                        .then(caretInset)
+                        .then(modifier)
                         .width(width)
                         .heightIn(max = maxHeight)
                         .padding(MinputDropdownPanelPadding),
@@ -135,14 +171,40 @@ fun rememberMinputDropdownPanelMaxHeight(): Dp {
     else (windowHeight - MinputDropdownPanelWindowMargin).coerceIn(120.dp, MinputDropdownPanelMaxHeight)
 }
 
+/** Where a panel landed: the edge its caret sits on (PHYSICAL — [MinputCaretMenuShape]'s Start is
+ *  the left), how far along that edge the anchor's centre is, and the transform origin its open
+ *  motion grows from. */
+private data class MinputPanelPlaced(
+    val edge: MinputCaretEdge,
+    val caretCenterPx: Float,
+    val transformOrigin: TransformOrigin,
+) {
+    companion object {
+        /** Before the first placement: the requested side, aimed nowhere in particular. */
+        fun predicted(placement: MinputMenuPlacement, direction: LayoutDirection): MinputPanelPlaced {
+            val endIsRight = direction == LayoutDirection.Ltr
+            val edge = when (placement) {
+                MinputMenuPlacement.Below -> MinputCaretEdge.Top
+                // A panel to the anchor's END has its caret on the edge facing back at it.
+                MinputMenuPlacement.End -> if (endIsRight) MinputCaretEdge.Start else MinputCaretEdge.End
+                MinputMenuPlacement.Start -> if (endIsRight) MinputCaretEdge.End else MinputCaretEdge.Start
+            }
+            return MinputPanelPlaced(edge, 0f, TransformOrigin.Center)
+        }
+    }
+}
+
 /**
- * Below the anchor, start-aligned; above it when below doesn't fit; clamped into the window.
- * Reports the transform origin (the anchor's start, on the edge nearest it) so the open motion
- * grows out of the control that summoned it, as M3's menus do.
+ * [MinputMenuPlacement.Below]: below the anchor, start-aligned; above it when below doesn't fit.
+ * A side placement: beside the anchor on the requested side (in reading order), top-aligned to it;
+ * the other side when the requested one doesn't fit. Clamped into the window either way. Reports
+ * where it landed ([MinputPanelPlaced]) so the caret aims at the anchor and the open motion grows
+ * out of it, as M3's menus do.
  */
 private class MinputPanelPositionProvider(
+    private val placement: MinputMenuPlacement,
     private val gapPx: Int,
-    private val onPlaced: (TransformOrigin) -> Unit,
+    private val onPlaced: (MinputPanelPlaced) -> Unit,
 ) : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -150,20 +212,49 @@ private class MinputPanelPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize,
     ): IntOffset {
-        val wantX = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left
-        else anchorBounds.right - popupContentSize.width
-        val x = wantX.coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
-        val below = anchorBounds.bottom + gapPx
-        val above = anchorBounds.top - gapPx - popupContentSize.height
-        val placeBelow = below + popupContentSize.height <= windowSize.height || above < 0
-        val y = (if (placeBelow) below else above)
-            .coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
-        val originX = if (popupContentSize.width > 0) {
-            val anchorStart = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left
-            else anchorBounds.right
-            ((anchorStart - x).toFloat() / popupContentSize.width).coerceIn(0f, 1f)
-        } else 0f
-        onPlaced(TransformOrigin(originX, if (placeBelow) 0f else 1f))
+        val w = popupContentSize.width
+        val h = popupContentSize.height
+        fun clampX(x: Int) = x.coerceIn(0, (windowSize.width - w).coerceAtLeast(0))
+        fun clampY(y: Int) = y.coerceIn(0, (windowSize.height - h).coerceAtLeast(0))
+        if (placement == MinputMenuPlacement.Below) {
+            val wantX = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right - w
+            val x = clampX(wantX)
+            val below = anchorBounds.bottom + gapPx
+            val above = anchorBounds.top - gapPx - h
+            val placeBelow = below + h <= windowSize.height || above < 0
+            val y = clampY(if (placeBelow) below else above)
+            val originX = if (w > 0) {
+                val anchorStart = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right
+                ((anchorStart - x).toFloat() / w).coerceIn(0f, 1f)
+            } else 0f
+            onPlaced(
+                MinputPanelPlaced(
+                    edge = if (placeBelow) MinputCaretEdge.Top else MinputCaretEdge.Bottom,
+                    caretCenterPx = (anchorBounds.center.x - x).toFloat(),
+                    transformOrigin = TransformOrigin(originX, if (placeBelow) 0f else 1f),
+                ),
+            )
+            return IntOffset(x, y)
+        }
+        // A side: which PHYSICAL side was asked for, then whether it fits.
+        val endIsRight = layoutDirection == LayoutDirection.Ltr
+        val wantRight = (placement == MinputMenuPlacement.End) == endIsRight
+        val right = anchorBounds.right + gapPx
+        val left = anchorBounds.left - gapPx - w
+        val fitsRight = right + w <= windowSize.width
+        val fitsLeft = left >= 0
+        val placeRight = if (wantRight) fitsRight || !fitsLeft else !(fitsLeft || !fitsRight)
+        val x = clampX(if (placeRight) right else left)
+        val y = clampY(anchorBounds.top)
+        val originY = if (h > 0) ((anchorBounds.center.y - y).toFloat() / h).coerceIn(0f, 1f) else 0.5f
+        onPlaced(
+            MinputPanelPlaced(
+                // On the right of the anchor, the caret is on the panel's LEFT edge.
+                edge = if (placeRight) MinputCaretEdge.Start else MinputCaretEdge.End,
+                caretCenterPx = (anchorBounds.center.y - y).toFloat(),
+                transformOrigin = TransformOrigin(if (placeRight) 0f else 1f, originY),
+            ),
+        )
         return IntOffset(x, y)
     }
 }

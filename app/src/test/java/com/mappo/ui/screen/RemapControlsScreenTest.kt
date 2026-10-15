@@ -2,7 +2,7 @@ package com.mappo.ui.screen
 
 import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
 import com.mappo.ui.minput.MinputBreadcrumbSize
-import com.mappo.ui.minput.recessDepth
+import com.mappo.ui.minput.depth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
@@ -878,6 +878,8 @@ class RemapControlsScreenTest {
     // ── Scope fly-out: action sets ──────────────
 
     @Test
+    // The crumb panels carry the caret: a path outline, which only NATIVE graphics hit-tests.
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun tabs_listEverySet_andSelectingInvokesCallback() {
         var selectedSetId: Long? = null
         composeRule.setContent {
@@ -992,18 +994,18 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().boundsInRoot
         val order = listOf("bar:application", "bar:layout", "bar:buttons", "bar:pin")
             .map { it to bounds(it) }
-        // Joined crumbs overlap their BOXES by up to the recess depth (the recess is cut out of
+        // Joined crumbs overlap their BOXES by up to the join depth (the recess is cut out of
         // the box; see MinputBreadcrumbRow) — never by more.
         val tolerance = with(composeRule.density) {
-            MinputBreadcrumbJoinDefault.recessDepth(MinputBreadcrumbSize.height).toPx()
+            MinputBreadcrumbJoinDefault.depth(MinputBreadcrumbSize.height).toPx()
         }
         order.zipWithNext().forEach { (left, right) ->
             assert(left.second.right - tolerance <= right.second.left + 0.5f) {
                 "${left.first} ran under ${right.first}: ${left.second} vs ${right.second}"
             }
         }
-        // Every crumb holds the same amount of button (2026-10-14): same AVERAGE width, so the
-        // round-ended outer crumbs' boxes differ from a middle one's by exactly the end adjust.
+        // Every crumb reads the same length (2026-10-14): the round-ended outer crumbs' boxes
+        // differ from a middle one's by exactly the end adjust.
         val app = order[0].second
         val layout = order[1].second
         val adjust = with(composeRule.density) {
@@ -1023,7 +1025,7 @@ class RemapControlsScreenTest {
      * screen's bottom edge with the pin button against its end.
      */
     @Test
-    fun hierarchyBar_pinnedBottomEnd_sitsInTheBottomEndCorner() {
+    fun hierarchyBar_pinnedEnd_stacksDownTheEndEdge() {
         composeRule.setContent {
             MaterialTheme {
                 Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 800.dp)) {
@@ -1031,7 +1033,7 @@ class RemapControlsScreenTest {
                         config = seedShapedConfig(),
                         onOpenInputEditor = { _, _, _ -> },
                         onBack = {},
-                        barPin = com.mappo.data.settings.BarPin.BOTTOM_END,
+                        barPin = com.mappo.data.settings.BarPin.END,
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
                 }
@@ -1043,14 +1045,20 @@ class RemapControlsScreenTest {
             .fetchSemanticsNode().boundsInRoot
         val app = composeRule.onNodeWithTag("bar:application", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        assert(root.bottom - pin.bottom < 60f) { "the bar should sit at the bottom: $pin in $root" }
-        assert(root.right - pin.right < 40f) { "the pin button should close the bar at the end: $pin" }
-        // End-aligned, not start: the first crumb sits well in from the start edge.
-        assert(app.left > root.width / 4) { "the bar should be end-aligned: $app" }
+        val buttons = composeRule.onNodeWithTag("bar:buttons", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assert(root.right - pin.right < 40f) { "the bar should sit on the end edge: $pin in $root" }
+        assert(app.left > root.width / 2) { "the crumbs should sit on the end edge: $app" }
+        // A vertical breadcrumb: the crumbs stack top to bottom (their joins nest, so the boxes
+        // may overlap), the pin button closing it.
+        assert(app.center.y < buttons.center.y && buttons.bottom <= pin.top) { "should stack: $app $buttons $pin" }
+        assert(kotlin.math.abs(app.center.x - buttons.center.x) < 1f) { "should share a column: $app $buttons" }
+        // Centred down the edge, not pinned to a corner.
+        assert(app.top > 40f && root.bottom - pin.bottom > 40f) { "should be vertically centred: $app $pin" }
     }
 
     @Test
-    fun hierarchyBar_pinMenu_offersTheSixSpots() {
+    fun hierarchyBar_pinMenu_offersTheFourEdges() {
         var picked: com.mappo.data.settings.BarPin? = null
         composeRule.setContent {
             MaterialTheme {
@@ -1071,8 +1079,8 @@ class RemapControlsScreenTest {
         com.mappo.data.settings.BarPin.entries.forEach {
             composeRule.onNodeWithText(it.label, useUnmergedTree = true).assertExists()
         }
-        clickMenuItem("Bottom middle")
-        assert(picked == com.mappo.data.settings.BarPin.BOTTOM_CENTER) { "got $picked" }
+        clickMenuItem("Pin to bottom")
+        assert(picked == com.mappo.data.settings.BarPin.BOTTOM) { "got $picked" }
     }
 
     /**
@@ -1123,11 +1131,51 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **Down a side the crumbs are always collapsed** (2026-10-14) — whatever the top / bottom
+     * bar's collapse set says, which the side pin leaves untouched; the pin menu's collapse rows
+     * are there but disabled.
+     */
+    @Test
+    fun hierarchyBar_sidePinned_forcesCollapsed_andDisablesTheToggles() {
+        var collapsed by androidx.compose.runtime.mutableStateOf(setOf<String>())
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        layoutName = "Alpha layout",
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        barPin = com.mappo.data.settings.BarPin.START,
+                        barCollapsedCrumbs = collapsed,
+                        onBarCollapsedCrumbsChange = { collapsed = it },
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onAllNodesWithText("Alpha layout", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Layout: Alpha layout").assertExists()
+
+        composeRule.onNodeWithTag("bar:pin").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNode(
+            androidx.compose.ui.test.hasClickAction() and
+                androidx.compose.ui.test.hasAnyDescendant(androidx.compose.ui.test.hasText("Collapse all")),
+            useUnmergedTree = true,
+        ).assertIsNotEnabled()
+        assert(collapsed.isEmpty()) { "the side pin must not write the collapse set: $collapsed" }
+    }
+
+    /**
      * **The Buttons crumb lists both kinds of set** (2026-10-14) — this screen IS the
      * physical-buttons editor, so its sets are physical; picking a VIRTUAL set opens the
      * virtual-buttons (overlay) editor on that set.
      */
     @Test
+    // The crumb panels carry the caret: a path outline, which only NATIVE graphics hit-tests.
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun hierarchyBar_buttonsCrumb_listsBothKinds_andAVirtualSetOpensTheOverlayEditor() {
         var opened: Long? = null
         val virtual = ActionSetGraph(
@@ -1290,6 +1338,8 @@ class RemapControlsScreenTest {
     }
 
     @Test
+    // The crumb panels carry the caret: a path outline, which only NATIVE graphics hit-tests.
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun applicationCrumb_listsApps_andPickingOneRepointsTheView() {
         // The Application crumb (2026-10-07 — the layouts drawer's applications mode before
         // it) drops a row per detected app. Picking one commits it as the viewing context.
@@ -1398,6 +1448,8 @@ class RemapControlsScreenTest {
     }
 
     @Test
+    // The crumb panels carry the caret: a path outline, which only NATIVE graphics hit-tests.
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun setRow_selectingSet_selectsSetAndDropsLayer() {
         var selectedSetId: Long? = null
         var selectedLayerId: Long? = -1L  // sentinel; null is a meaningful value

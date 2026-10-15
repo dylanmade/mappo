@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.AppWindow
@@ -49,11 +50,12 @@ import com.mappo.data.model.steam.ControllerConfig
 import com.mappo.data.repository.InstalledAppsRepository.InstalledApp
 import com.mappo.data.settings.BarPin
 import com.mappo.ui.component.rememberAppIconBitmap
-import com.mappo.ui.icons.PinSpot
+import com.mappo.ui.icons.PinEdge
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputBreadcrumbJoin
 import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
 import com.mappo.ui.minput.MinputBreadcrumbMode
+import com.mappo.ui.minput.MinputBreadcrumbOrientation
 import com.mappo.ui.minput.MinputBreadcrumbPosition
 import com.mappo.ui.minput.MinputBreadcrumbRow
 import com.mappo.ui.minput.MinputBreadcrumbSegment
@@ -65,6 +67,7 @@ import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconButton
 import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputMenuPlacement
 import com.mappo.ui.minput.MinputSegmentGap
 import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputTextField
@@ -74,13 +77,15 @@ import kotlinx.collections.immutable.ImmutableList
 /**
  * **The editors' hierarchy bar** (Dylan, 2026-10-07) — replaced the full-width top bar, the
  * layouts drawer (and its applications mode), the layout-set switch + kebab, and the
- * physical/virtual editor switch with ONE compact group that floats at a pinned spot on the
+ * physical/virtual editor switch with ONE compact group that floats at a pinned edge of the
  * screen.
  *
  * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of three joined crumbs reading the
  * hierarchy left to right — **Application › Layout › Buttons** — each an overline over the
- * current value; then, as its own circular button, the PIN button choosing which of six spots the
- * bar sits in ([BarPin]). Every crumb drops a [MinputDropdownPanel] holding that level's picker:
+ * current value; then, as its own circular button, the PIN button choosing which screen edge the
+ * bar sits on ([BarPin]) — a row on the top or bottom; down a side, a VERTICAL breadcrumb of
+ * always-collapsed crumbs, its menus opening beside it.
+ * Every crumb drops a [MinputDropdownPanel] holding that level's picker:
  *  - Application — search · sort over the applications list (was the drawer's applications mode);
  *  - Layout — search · sort over the layouts list with "+ New layout" (was the drawer's body);
  *  - Buttons — the button SET being edited, both kinds in one list: the physical sets, a divider,
@@ -90,7 +95,7 @@ import kotlinx.collections.immutable.ImmutableList
  *
  * Each crumb is EXPANDED (glyph + overline + title) or COLLAPSED to its glyph — an icon button
  * still wearing its join ([collapsed], 2026-10-14). The pin button's menu toggles each crumb and
- * collapses / expands them all, under the six spots.
+ * collapses / expands them all, under the four edges.
  *
  * The crumb whose panel is open wears the highlight plane. Which crumb is open is the CALLER's
  * state ([openCrumb]) because closing one is not a single thing: [onDismissCrumb] is a close with
@@ -150,115 +155,122 @@ internal fun RemapHierarchyBar(
     join: MinputBreadcrumbJoin = MinputBreadcrumbJoinDefault,
 ) {
     val crumbs = HierarchyCrumb.entries
+    // Down a side the crumbs are ALWAYS collapsed — a glyph stack. [collapsed] is left untouched
+    // (and the pin menu's toggles disabled), so it is still the top / bottom bar's when the bar
+    // goes back to an edge it can spread along.
+    val shownCollapsed = if (pin.sideways) crumbs.toSet() else collapsed
+    // The panels open AWAY from the edge the bar is pinned to: beside a side-pinned crumb, below
+    // (or, by its own flip, above) a top / bottom one.
+    val panelPlacement = pin.panelPlacement()
     fun toggle(crumb: HierarchyCrumb) {
         if (openCrumb == crumb) onDismissCrumb() else onOpenCrumb(crumb)
     }
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(MinputSegmentGap),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MinputBreadcrumbRow(size = size, join = join, mode = mode) {
-            crumbs.forEachIndexed { index, crumb ->
-                val position = MinputBreadcrumbPosition.of(index, crumbs.size)
-                val crumbMode = if (crumb in collapsed) MinputBreadcrumbMode.Collapsed else mode
-                // Each crumb is its panel's anchor, so the two share a Box.
-                Box {
-                    when (crumb) {
-                        HierarchyCrumb.APPLICATION -> {
-                            MinputBreadcrumbSegment(
-                                position = position,
-                                mode = crumbMode,
-                                overline = "Application".takeIf { showOverlines },
-                                title = appLabel ?: "None",
-                                selected = openCrumb == crumb,
-                                onClick = { toggle(crumb) },
-                                onClickLabel = "Choose application",
-                                icon = { iconSize -> CrumbAppIcon(appPackage, iconSize) },
-                                modifier = Modifier.testTag("bar:application"),
-                            )
-                            MinputDropdownPanel(
-                                expanded = openCrumb == crumb,
-                                onDismissRequest = onDismissCrumb,
-                            ) {
-                                ApplicationPanel(
-                                    apps = apps,
-                                    activeAppPackage = activeAppPackage,
-                                    onPreviewApplication = onPreviewApplication,
-                                    onSelectApplication = { app ->
-                                        onPreviewApplication(app.packageName)
-                                        onCommitCrumb()
-                                    },
-                                )
-                            }
-                        }
-                        HierarchyCrumb.LAYOUT -> {
-                            MinputBreadcrumbSegment(
-                                position = position,
-                                mode = crumbMode,
-                                // A non-active layout on screen says so where it is named.
-                                overline = (if (previewing) "Layout · preview" else "Layout")
-                                    .takeIf { showOverlines },
-                                title = layoutTitle,
-                                icon = { iconSize -> CrumbIcon(Icons.Outlined.SpaceDashboard, iconSize) },
-                                selected = openCrumb == crumb,
-                                onClick = { toggle(crumb) },
-                                onClickLabel = "Choose layout",
-                                modifier = Modifier.testTag("bar:layout"),
-                            )
-                            MinputDropdownPanel(
-                                expanded = openCrumb == crumb,
-                                onDismissRequest = onDismissCrumb,
-                            ) {
-                                LayoutPanel(
-                                    appPackage = appPackage,
-                                    layouts = layouts,
-                                    activeLayoutId = activeLayoutId,
-                                    onPreviewLayout = onPreviewLayout,
-                                    onActivateLayout = onActivateLayout,
-                                    onNewLayout = onNewLayout,
-                                )
-                            }
-                        }
-                        HierarchyCrumb.BUTTONS -> {
-                            MinputBreadcrumbSegment(
-                                position = position,
-                                mode = crumbMode,
-                                overline = "Buttons".takeIf { showOverlines },
-                                icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
-                                title = viewingSet?.actionSet?.title
-                                    ?: config?.setsOf(editor.setKind)?.firstOrNull()?.actionSet?.title
-                                    ?: "None",
-                                selected = openCrumb == crumb,
-                                onClick = { toggle(crumb) },
-                                onClickLabel = "Choose button set",
-                                modifier = Modifier.testTag("bar:buttons"),
-                            )
-                            MinputDropdownPanel(
-                                expanded = openCrumb == crumb,
-                                onDismissRequest = onDismissCrumb,
-                                width = SetPanelWidth,
-                            ) {
-                                SetPanel(
-                                    editor = editor,
-                                    config = config,
-                                    viewingSet = viewingSet,
-                                    onPreviewSet = onPreviewSet,
-                                    onSelectSet = { id, kind ->
-                                        onCommitCrumb()
-                                        onSelectSet(id, kind)
-                                    },
-                                    onAddSet = { kind ->
-                                        onCommitCrumb()
-                                        onAddSet(kind)
-                                    },
-                                )
-                            }
-                        }
+    // Each crumb is its panel's anchor, so the two share a Box.
+    @Composable
+    fun crumbButton(crumb: HierarchyCrumb, position: MinputBreadcrumbPosition) {
+        val crumbMode = if (crumb in shownCollapsed) MinputBreadcrumbMode.Collapsed else mode
+        Box {
+            when (crumb) {
+                HierarchyCrumb.APPLICATION -> {
+                    MinputBreadcrumbSegment(
+                        position = position,
+                        mode = crumbMode,
+                        overline = "Application".takeIf { showOverlines },
+                        title = appLabel ?: "None",
+                        selected = openCrumb == crumb,
+                        onClick = { toggle(crumb) },
+                        onClickLabel = "Choose application",
+                        icon = { iconSize -> CrumbAppIcon(appPackage, iconSize) },
+                        modifier = Modifier.testTag("bar:application"),
+                    )
+                    MinputDropdownPanel(
+                        expanded = openCrumb == crumb,
+                        onDismissRequest = onDismissCrumb,
+                        placement = panelPlacement,
+                        caret = true,
+                    ) {
+                        ApplicationPanel(
+                            apps = apps,
+                            activeAppPackage = activeAppPackage,
+                            onPreviewApplication = onPreviewApplication,
+                            onSelectApplication = { app ->
+                                onPreviewApplication(app.packageName)
+                                onCommitCrumb()
+                            },
+                        )
+                    }
+                }
+                HierarchyCrumb.LAYOUT -> {
+                    MinputBreadcrumbSegment(
+                        position = position,
+                        mode = crumbMode,
+                        // A non-active layout on screen says so where it is named.
+                        overline = (if (previewing) "Layout · preview" else "Layout")
+                            .takeIf { showOverlines },
+                        title = layoutTitle,
+                        icon = { iconSize -> CrumbIcon(Icons.Outlined.SpaceDashboard, iconSize) },
+                        selected = openCrumb == crumb,
+                        onClick = { toggle(crumb) },
+                        onClickLabel = "Choose layout",
+                        modifier = Modifier.testTag("bar:layout"),
+                    )
+                    MinputDropdownPanel(
+                        expanded = openCrumb == crumb,
+                        onDismissRequest = onDismissCrumb,
+                        placement = panelPlacement,
+                        caret = true,
+                    ) {
+                        LayoutPanel(
+                            appPackage = appPackage,
+                            layouts = layouts,
+                            activeLayoutId = activeLayoutId,
+                            onPreviewLayout = onPreviewLayout,
+                            onActivateLayout = onActivateLayout,
+                            onNewLayout = onNewLayout,
+                        )
+                    }
+                }
+                HierarchyCrumb.BUTTONS -> {
+                    MinputBreadcrumbSegment(
+                        position = position,
+                        mode = crumbMode,
+                        overline = "Buttons".takeIf { showOverlines },
+                        icon = { iconSize -> CrumbIcon(editor.icon, iconSize) },
+                        title = viewingSet?.actionSet?.title
+                            ?: config?.setsOf(editor.setKind)?.firstOrNull()?.actionSet?.title
+                            ?: "None",
+                        selected = openCrumb == crumb,
+                        onClick = { toggle(crumb) },
+                        onClickLabel = "Choose button set",
+                        modifier = Modifier.testTag("bar:buttons"),
+                    )
+                    MinputDropdownPanel(
+                        expanded = openCrumb == crumb,
+                        onDismissRequest = onDismissCrumb,
+                        width = SetPanelWidth,
+                        placement = panelPlacement,
+                        caret = true,
+                    ) {
+                        SetPanel(
+                            editor = editor,
+                            config = config,
+                            viewingSet = viewingSet,
+                            onPreviewSet = onPreviewSet,
+                            onSelectSet = { id, kind ->
+                                onCommitCrumb()
+                                onSelectSet(id, kind)
+                            },
+                            onAddSet = { kind ->
+                                onCommitCrumb()
+                                onAddSet(kind)
+                            },
+                        )
                     }
                 }
             }
         }
+    }
+    val pinButton: @Composable () -> Unit = {
         BarPinButton(
             pin = pin,
             onPinChange = onPinChange,
@@ -267,7 +279,47 @@ internal fun RemapHierarchyBar(
             size = size,
         )
     }
+    if (pin.sideways) {
+        // Pinned to a side: the crumbs stack down the edge as one VERTICAL breadcrumb — collapsed,
+        // still joined, each bulge leading down into the next — then the pin button.
+        Column(
+            modifier = modifier.then(BlockTouches),
+            verticalArrangement = Arrangement.spacedBy(MinputSegmentGap),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            MinputBreadcrumbRow(
+                size = size,
+                join = join,
+                mode = MinputBreadcrumbMode.Collapsed,
+                orientation = MinputBreadcrumbOrientation.Vertical,
+            ) {
+                crumbs.forEachIndexed { index, crumb ->
+                    crumbButton(crumb, MinputBreadcrumbPosition.of(index, crumbs.size))
+                }
+            }
+            pinButton()
+        }
+    } else {
+        Row(
+            modifier = modifier.then(BlockTouches),
+            horizontalArrangement = Arrangement.spacedBy(MinputSegmentGap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MinputBreadcrumbRow(size = size, join = join, mode = mode) {
+                crumbs.forEachIndexed { index, crumb ->
+                    crumbButton(crumb, MinputBreadcrumbPosition.of(index, crumbs.size))
+                }
+            }
+            pinButton()
+        }
+    }
 }
+
+/** The bar FLOATS over the view (2026-10-14): a touch anywhere on it — the gaps between its
+ *  controls included — is the bar's, never the view's beneath, as an M3 Surface blocks touches.
+ *  Also what keeps the crumbs tappable under Robolectric's legacy graphics, which can't hit-test
+ *  their join-cut path outlines: a near miss there lost to the content plane's direct hit. */
+private val BlockTouches = Modifier.pointerInput(Unit) {}
 
 /** The bar's crumbs, in hierarchy order — the order they read in the bar. [label] names one in
  *  the pin menu's collapse toggles. */
@@ -559,11 +611,13 @@ private fun rememberControllerFocusSeat(): FocusRequester {
 // ── The pin button ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Where the bar sits, and how much of it shows: a circular button wearing the CURRENT spot's
- * border glyph, opening the six spots as a single-choice menu — then, under a divider, a
+ * Where the bar sits, and how much of it shows: a circular button wearing the CURRENT edge's
+ * glyph, opening the four edges as a single-choice menu — then, under a divider, a
  * collapse/expand toggle per crumb, and under another, collapse all (or expand all, once every
  * crumb is collapsed). Its own button after the crumbs — the M3 button group's convention for a
- * control that is not part of the group's one silhouette.
+ * control that is not part of the group's one silhouette. Pinned to a side, the crumbs are always
+ * collapsed, so the collapse rows are shown DISABLED — still there, so the menu doesn't change
+ * shape — and the top / bottom bar's [collapsed] set is kept for when the bar goes back.
  */
 @Composable
 private fun BarPinButton(
@@ -574,11 +628,13 @@ private fun BarPinButton(
     size: MinputSize,
 ) {
     var open by remember { mutableStateOf(false) }
+    val canCollapse = !pin.sideways
     val perCrumb = HierarchyCrumb.entries.map { crumb ->
         val isCollapsed = crumb in collapsed
         MinputAction(
             label = (if (isCollapsed) "Expand " else "Collapse ") + crumb.label,
             icon = if (isCollapsed) Lucide.UnfoldHorizontal else Lucide.FoldHorizontal,
+            enabled = canCollapse,
             onClick = { onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb) },
         )
     }
@@ -586,17 +642,15 @@ private fun BarPinButton(
     val all = MinputAction(
         label = if (allCollapsed) "Expand all" else "Collapse all",
         icon = if (allCollapsed) Lucide.ChevronsLeftRight else Lucide.ChevronsRightLeft,
+        enabled = canCollapse,
         onClick = { onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet()) },
     )
     Box {
         MinputButton(
             leadingIcon = pin.icon(),
-            contentDescription = "Bar position: ${pin.label}",
+            contentDescription = "Bar pinned to ${pin.edge}",
             highlighted = open,
             size = size,
-            // The grid is solid and square-inked — more mass than the crumbs' stroked glyphs at
-            // the same size — so it sits one step under them.
-            iconSize = size.iconSize.stepDown(),
             onClick = { open = !open },
             modifier = Modifier.testTag("bar:pin"),
         )
@@ -609,24 +663,27 @@ private fun BarPinButton(
             onPick = onPinChange,
             optionIcon = { it.icon() },
             actionGroups = listOf(perCrumb, listOf(all)),
+            placement = pin.panelPlacement(),
+            caret = true,
         )
     }
 }
 
-/** The spot's glyph: the dot grid with the spot drawn as a line ([PinSpot], 2026-10-12 —
- *  replaced Material's border-style family). */
-private fun BarPin.icon(): ImageVector = when (this) {
-    BarPin.TOP_START -> PinSpot.TopStart
-    BarPin.TOP_CENTER -> PinSpot.TopCenter
-    BarPin.TOP_END -> PinSpot.TopEnd
-    BarPin.BOTTOM_START -> PinSpot.BottomStart
-    BarPin.BOTTOM_CENTER -> PinSpot.BottomCenter
-    BarPin.BOTTOM_END -> PinSpot.BottomEnd
-}.icon
+/** Where the bar's menus open from its controls: away from the edge it is pinned to. */
+private fun BarPin.panelPlacement(): MinputMenuPlacement = when (this) {
+    BarPin.START -> MinputMenuPlacement.End
+    BarPin.END -> MinputMenuPlacement.Start
+    BarPin.TOP, BarPin.BOTTOM -> MinputMenuPlacement.Below
+}
 
-/** The next size down the icon scale (the smallest stays put). */
-private fun MinputIconSize.stepDown(): MinputIconSize =
-    MinputIconSize.entries[(ordinal - 1).coerceAtLeast(0)]
+/** The edge's glyph: a square off a line on that edge ([PinEdge], 2026-10-14 — replaced the
+ *  dot-grid spots). */
+private fun BarPin.icon(): ImageVector = when (this) {
+    BarPin.TOP -> PinEdge.Top
+    BarPin.START -> PinEdge.Start
+    BarPin.END -> PinEdge.End
+    BarPin.BOTTOM -> PinEdge.Bottom
+}.icon
 
 /** Width of the button-set panel — short labels, no search row; room for "New physical set". */
 private val SetPanelWidth = 180.dp
