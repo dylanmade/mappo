@@ -1,7 +1,6 @@
 package com.mappo.ui.minput
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -45,7 +44,8 @@ import com.mappo.ui.screen.softDropShadow
  * z-order. Rows are ordinary focusables, so directional focus reaches them; build them from
  * [MinputMenuRow] to match the popup menus exactly.
  *
- * Motion mirrors M3's menu: a quick fade + scale-in from the caret side, a shorter fade out.
+ * Motion is the one minput menu motion ([MinputMenuMotion]): scale + fade, in from and out toward
+ * the caret side — the same as every other minput menu.
  */
 @Composable
 fun MinputMenuPanel(
@@ -64,10 +64,11 @@ fun MinputMenuPanel(
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
-        enter = fadeIn(tween(MinputMenuPanelEnterMillis)) +
-            scaleIn(tween(MinputMenuPanelEnterMillis), initialScale = MinputMenuPanelEnterScale, transformOrigin = origin),
-        exit = fadeOut(tween(MinputMenuPanelExitMillis)) +
-            scaleOut(tween(MinputMenuPanelExitMillis), targetScale = MinputMenuPanelEnterScale, transformOrigin = origin),
+        // The one minput menu motion (MinputMenuMotion): scale + fade, in and out.
+        enter = fadeIn(MinputMenuMotion.fadeEnter()) +
+            scaleIn(MinputMenuMotion.scaleEnter(), initialScale = MinputMenuMotion.ClosedScale, transformOrigin = origin),
+        exit = fadeOut(MinputMenuMotion.fadeExit()) +
+            scaleOut(MinputMenuMotion.scaleExit(), targetScale = MinputMenuMotion.ClosedScale, transformOrigin = origin),
     ) {
         val caretPx = with(LocalDensity.current) { caretCenter.toPx() }
         val shape = remember(caretEdge, caretPx) {
@@ -105,6 +106,3 @@ fun MinputMenuPanel(
     }
 }
 
-private const val MinputMenuPanelEnterMillis = 120
-private const val MinputMenuPanelExitMillis = 75
-private const val MinputMenuPanelEnterScale = 0.8f

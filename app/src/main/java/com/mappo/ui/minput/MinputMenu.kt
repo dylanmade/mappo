@@ -1,5 +1,7 @@
 package com.mappo.ui.minput
 
+import androidx.compose.foundation.layout.absolutePadding
+import android.view.View
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.ColumnScope
@@ -134,6 +136,8 @@ internal fun BoxScope.MinputMenuSurface(
     // the exit animation recompute its own placement from stale defaults and visibly jump the
     // dismissing popup across the screen.
     var menuScreen by remember { mutableStateOf<Rect?>(null) }
+    val popupView = remember { PopupViewRef() }
+    val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
 
     val anchorWidth = with(density) { (anchorRect?.width ?: 0f).toDp() }
     val anchorHeight = with(density) { (anchorRect?.height ?: 0f).toDp() }
@@ -187,17 +191,18 @@ internal fun BoxScope.MinputMenuSurface(
     // above the anchor.
     val wantsCaret = caret
     val vertical = side == MinputMenuPlacement.Below
-    // Derived from where the menu LANDED, not from where it was asked to go.
-    val caretGeometry = if (wantsCaret) caretGeometryFor(anchorScreen, menuScreen, vertical) else null
+    // Derived from where the menu LANDED, not from where it was asked to go — and until it has
+    // landed once, PREDICTED from the anchor (M3 lines the menu's start up with the anchor's below
+    // it, its top with the anchor's beside it), so the caret spawns aimed rather than sliding in.
+    val caretGeometry = if (!wantsCaret) null else {
+        caretGeometryFor(anchorScreen, menuScreen, vertical)
+            ?: predictedCaretGeometry(side, anchorRect, with(density) { menuWidth.toPx() }, layoutDirection, view)
+    }
     // ONE source of truth for which edge the caret is on: the measurement when we have it, the
     // predicted side until then. The shape and the content inset below BOTH read this — when
     // they disagreed (shape measured, inset predicted) the result was a band of menu-colored
     // surface on the opposite edge that no row could ever fill.
-    val caretEdge = caretGeometry?.first ?: when (side) {
-        MinputMenuPlacement.Below -> MinputCaretEdge.Top
-        MinputMenuPlacement.End -> MinputCaretEdge.Start
-        MinputMenuPlacement.Start -> MinputCaretEdge.End
-    }
+    val caretEdge = caretGeometry?.first ?: MinputCaretEdge.Top
     val shape = if (caretGeometry != null) {
         val (edge, centerAlongEdgePx) = caretGeometry
         remember(edge, centerAlongEdgePx) {
@@ -213,41 +218,91 @@ internal fun BoxScope.MinputMenuSurface(
         MenuDefaults.shape
     }
 
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismissRequest,
-        offset = offset,
-        shape = shape,
-        // The caret is carved OUT of the surface, so the body is [MinputMenuCaretDepth]
-        // narrower on the caret side and content has to be inset by the same amount — without
-        // it, rows sit flush against the body edge and read as missing their left padding.
-        // Inset and shape must agree on WHICH side (see [caretOnStart]); a mismatch is what
-        // produced the dead stripe.
-        modifier = modifier
-            // OUTERMOST of minput's additions, so it reports the menu's FINAL bounds — the
-            // caret's vertical aim is measured from this, and reading the pre-collapse box
-            // would skew it by the padding being removed.
-            .onGloballyPositioned { menuScreen = it.screenRectOrNull() }
-            // Frame inset, VERTICAL only. M3's own 8dp band is collapsed away first so this is
-            // the single value in play rather than a stack of two.
-            //
-            // Horizontal frame inset is deliberately absent: the rows own their horizontal
-            // padding, and insetting the frame instead would leave a margin down each side
-            // that no row's highlight reaches — the same dead-stripe problem the caret inset
-            // caused. Rows run the full width; the frame only holds them off the top and
-            // bottom edges.
-            .padding(vertical = framePadding)
-            .collapseMenuVerticalPadding(collapse = true)
-            .then(
-                if (!wantsCaret) Modifier else when (caretEdge) {
-                    MinputCaretEdge.Start -> Modifier.padding(start = MinputMenuCaretDepth)
-                    MinputCaretEdge.End -> Modifier.padding(end = MinputMenuCaretDepth)
-                    MinputCaretEdge.Top -> Modifier.padding(top = MinputMenuCaretDepth)
-                    MinputCaretEdge.Bottom -> Modifier.padding(bottom = MinputMenuCaretDepth)
-                },
-            ),
-        content = content,
-    )
+    // The menu motion, not the theme's expressive spring (see MinputMenuMotion).
+    MinputMenuMotionScope {
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = onDismissRequest,
+            offset = offset,
+            shape = shape,
+            // The caret is carved OUT of the surface, so the body is [MinputMenuCaretDepth]
+            // narrower on the caret side and content has to be inset by the same amount — without
+            // it, rows sit flush against the body edge and read as missing their left padding.
+            // Inset and shape must agree on WHICH side (see [caretOnStart]); a mismatch is what
+            // produced the dead stripe.
+            modifier = modifier
+                // Where the menu landed, for the caret's aim: the popup WINDOW's own bounds, read
+                // when the menu lays out. Not this node's screen rect — that is drawn through the
+                // menu's open SCALE, so it changed every frame of the animation and the caret slid
+                // across the edge as the menu grew.
+                .onGloballyPositioned { coords ->
+                    menuScreen = popupView.view?.screenRectOrNull() ?: coords.screenRectOrNull()
+                }
+                // Frame inset, VERTICAL only. M3's own 8dp band is collapsed away first so this is
+                // the single value in play rather than a stack of two.
+                //
+                // Horizontal frame inset is deliberately absent: the rows own their horizontal
+                // padding, and insetting the frame instead would leave a margin down each side
+                // that no row's highlight reaches — the same dead-stripe problem the caret inset
+                // caused. Rows run the full width; the frame only holds them off the top and
+                // bottom edges.
+                .padding(vertical = framePadding)
+                .collapseMenuVerticalPadding(collapse = true)
+                .then(
+                    // Physical sides: the caret shape's Start / End are its left / right.
+                    if (!wantsCaret) Modifier else when (caretEdge) {
+                        MinputCaretEdge.Start -> Modifier.absolutePadding(left = MinputMenuCaretDepth)
+                        MinputCaretEdge.End -> Modifier.absolutePadding(right = MinputMenuCaretDepth)
+                        MinputCaretEdge.Top -> Modifier.padding(top = MinputMenuCaretDepth)
+                        MinputCaretEdge.Bottom -> Modifier.padding(bottom = MinputMenuCaretDepth)
+                    },
+                ),
+            content = {
+                // The popup's own window (its root view): where the menu landed, unscaled.
+                popupView.view = LocalView.current
+                content()
+            },
+        )
+    }
+}
+
+/** Holds the menu popup's root view — written as the popup composes, read as it lays out. */
+private class PopupViewRef {
+    var view: View? = null
+}
+
+private fun View.screenRectOrNull(): Rect? {
+    if (width <= 0 || height <= 0) return null
+    val location = IntArray(2)
+    getLocationOnScreen(location)
+    return Rect(location[0].toFloat(), location[1].toFloat(), (location[0] + width).toFloat(), (location[1] + height).toFloat())
+}
+
+/**
+ * The caret before the menu has landed once: M3 places a [MinputMenuPlacement.Below] menu with
+ * its start against the anchor's start — below it, or above it when there isn't room (judged
+ * here by the roomier side; the measurement corrects a miss) — and a side menu (our offset) with
+ * its top against the anchor's top. So the aim is the anchor's own centre from that corner.
+ */
+private fun predictedCaretGeometry(
+    side: MinputMenuPlacement,
+    anchor: Rect?,
+    menuWidthPx: Float,
+    layoutDirection: LayoutDirection,
+    hostView: View,
+): Pair<MinputCaretEdge, Float>? {
+    if (anchor == null) return null
+    val endIsRight = layoutDirection == LayoutDirection.Ltr
+    return when (side) {
+        MinputMenuPlacement.Below -> {
+            val roomBelow = hostView.rootView.height - anchor.bottom
+            val edge = if (roomBelow >= anchor.top) MinputCaretEdge.Top else MinputCaretEdge.Bottom
+            edge to (if (endIsRight) anchor.width / 2 else menuWidthPx - anchor.width / 2)
+        }
+        // A menu to the anchor's END faces back at it with its start edge (physical left in LTR).
+        MinputMenuPlacement.End -> (if (endIsRight) MinputCaretEdge.Start else MinputCaretEdge.End) to anchor.height / 2
+        MinputMenuPlacement.Start -> (if (endIsRight) MinputCaretEdge.End else MinputCaretEdge.Start) to anchor.height / 2
+    }
 }
 
 /**

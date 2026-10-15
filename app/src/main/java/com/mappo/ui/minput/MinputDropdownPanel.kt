@@ -1,11 +1,14 @@
 package com.mappo.ui.minput
 
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxScope
+import kotlin.math.roundToInt
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.absolutePadding
@@ -51,8 +54,8 @@ import androidx.compose.ui.window.PopupProperties
  * its column at `IntrinsicSize.Max` inside a `verticalScroll`, and a `LazyColumn` supports
  * neither (intrinsics throw; an unbounded scroll parent gives it infinite height). Everything
  * else is reproduced from M3 rather than reinvented: the popup is focusable (back / outside tap /
- * gamepad B dismiss, d-pad focus is trapped inside it), it opens with the menu's scale-from-the-
- * anchor + fade (120ms in, 75ms out, the M3 values) and wears `MenuDefaults`' container colour
+ * gamepad B dismiss, d-pad focus is trapped inside it), it opens and closes with the one minput
+ * menu motion ([MinputMenuMotion]) from the anchor, and wears `MenuDefaults`' container colour
  * and elevation.
  *
  * Placement ([placement]): [MinputMenuPlacement.Below] — below the anchor, start-aligned to it,
@@ -76,16 +79,43 @@ fun BoxScope.MinputDropdownPanel(
     caret: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // The anchor's bounds in its window, measured while the panel is closed, so the panel's first
+    // frame can already be placed — caret aimed — rather than corrected a frame later.
+    var anchorBounds by remember { mutableStateOf<IntRect?>(null) }
+    Box(
+        Modifier.matchParentSize().onGloballyPositioned {
+            val b = it.boundsInWindow()
+            anchorBounds = IntRect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt())
+        },
+    )
     val expandedState = remember { MutableTransitionState(false) }
     expandedState.targetState = expanded
     if (!expandedState.currentState && !expandedState.targetState) return
 
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
-    // Where the panel landed — seeded with the requested side, so the caret's inset doesn't
-    // change the panel's size once the real placement arrives.
+    val rootView = LocalView.current.rootView
+    // Where the panel lands. Seeded with a PREDICTION from the anchor, the window and the panel's
+    // known width — exact unless the panel's height forces a clamp — so the caret SPAWNS aimed at
+    // the anchor; the position provider corrects it only when the prediction missed.
     var placed by remember(placement, layoutDirection) {
-        mutableStateOf(MinputPanelPlaced.predicted(placement, layoutDirection))
+        val gapPx = with(density) { MinputDropdownPanelGap.roundToPx() }
+        val caretPx = if (caret && placement != MinputMenuPlacement.Below) {
+            with(density) { MinputMenuCaretDepth.roundToPx() }
+        } else 0
+        val predicted = anchorBounds?.takeIf { rootView.width > 0 }?.let { anchor ->
+            placeMinputPanel(
+                placement = placement,
+                gapPx = gapPx,
+                anchorBounds = anchor,
+                windowSize = IntSize(rootView.width, rootView.height),
+                layoutDirection = layoutDirection,
+                popupContentSize = IntSize(with(density) { width.roundToPx() } + caretPx, 0),
+                // No height yet: open toward the roomier side, as the fit test will.
+                preferBelow = rootView.height - anchor.bottom >= anchor.top,
+            ).second
+        }
+        mutableStateOf(predicted ?: MinputPanelPlaced.predicted(placement, layoutDirection))
     }
     val positionProvider = remember(density, placement) {
         MinputPanelPositionProvider(
@@ -120,18 +150,13 @@ fun BoxScope.MinputDropdownPanel(
         properties = PopupProperties(focusable = true),
     ) {
         val transition = rememberTransition(expandedState, label = "minputDropdownPanel")
+        // The one minput menu motion (MinputMenuMotion) — shared with the popup menus.
         val scale by transition.animateFloat(
-            transitionSpec = {
-                if (targetState) tween(MinputPanelInMillis, easing = LinearOutSlowInEasing)
-                // Exit is a pure fade, as M3's: hold the scale until the fade has finished.
-                else tween(1, delayMillis = MinputPanelOutMillis - 1)
-            },
+            transitionSpec = { MinputMenuMotion.scale() },
             label = "minputDropdownPanelScale",
-        ) { open -> if (open) 1f else MinputPanelClosedScale }
+        ) { open -> if (open) 1f else MinputMenuMotion.ClosedScale }
         val alpha by transition.animateFloat(
-            transitionSpec = {
-                if (targetState) tween(MinputPanelFadeInMillis) else tween(MinputPanelOutMillis)
-            },
+            transitionSpec = { MinputMenuMotion.fade() },
             label = "minputDropdownPanelAlpha",
         ) { open -> if (open) 1f else 0f }
         Surface(
@@ -195,7 +220,8 @@ private data class MinputPanelPlaced(
 }
 
 /**
- * [MinputMenuPlacement.Below]: below the anchor, start-aligned; above it when below doesn't fit.
+ * The popup's placement ([placeMinputPanel]): [MinputMenuPlacement.Below] — below the anchor,
+ * start-aligned; above it when below doesn't fit.
  * A side placement: beside the anchor on the requested side (in reading order), top-aligned to it;
  * the other side when the requested one doesn't fit. Clamped into the window either way. Reports
  * where it landed ([MinputPanelPlaced]) so the caret aims at the anchor and the open motion grows
@@ -212,51 +238,65 @@ private class MinputPanelPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize,
     ): IntOffset {
-        val w = popupContentSize.width
-        val h = popupContentSize.height
-        fun clampX(x: Int) = x.coerceIn(0, (windowSize.width - w).coerceAtLeast(0))
-        fun clampY(y: Int) = y.coerceIn(0, (windowSize.height - h).coerceAtLeast(0))
-        if (placement == MinputMenuPlacement.Below) {
-            val wantX = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right - w
-            val x = clampX(wantX)
-            val below = anchorBounds.bottom + gapPx
-            val above = anchorBounds.top - gapPx - h
-            val placeBelow = below + h <= windowSize.height || above < 0
-            val y = clampY(if (placeBelow) below else above)
-            val originX = if (w > 0) {
-                val anchorStart = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right
-                ((anchorStart - x).toFloat() / w).coerceIn(0f, 1f)
-            } else 0f
-            onPlaced(
-                MinputPanelPlaced(
-                    edge = if (placeBelow) MinputCaretEdge.Top else MinputCaretEdge.Bottom,
-                    caretCenterPx = (anchorBounds.center.x - x).toFloat(),
-                    transformOrigin = TransformOrigin(originX, if (placeBelow) 0f else 1f),
-                ),
-            )
-            return IntOffset(x, y)
-        }
-        // A side: which PHYSICAL side was asked for, then whether it fits.
-        val endIsRight = layoutDirection == LayoutDirection.Ltr
-        val wantRight = (placement == MinputMenuPlacement.End) == endIsRight
-        val right = anchorBounds.right + gapPx
-        val left = anchorBounds.left - gapPx - w
-        val fitsRight = right + w <= windowSize.width
-        val fitsLeft = left >= 0
-        val placeRight = if (wantRight) fitsRight || !fitsLeft else !(fitsLeft || !fitsRight)
-        val x = clampX(if (placeRight) right else left)
-        val y = clampY(anchorBounds.top)
-        val originY = if (h > 0) ((anchorBounds.center.y - y).toFloat() / h).coerceIn(0f, 1f) else 0.5f
-        onPlaced(
-            MinputPanelPlaced(
-                // On the right of the anchor, the caret is on the panel's LEFT edge.
-                edge = if (placeRight) MinputCaretEdge.Start else MinputCaretEdge.End,
-                caretCenterPx = (anchorBounds.center.y - y).toFloat(),
-                transformOrigin = TransformOrigin(if (placeRight) 0f else 1f, originY),
-            ),
-        )
-        return IntOffset(x, y)
+        val (offset, placed) = placeMinputPanel(placement, gapPx, anchorBounds, windowSize, layoutDirection, popupContentSize)
+        onPlaced(placed)
+        return offset
     }
+}
+
+/**
+ * Where a [MinputDropdownPanel] goes, and how it is aimed — ONE computation for the position
+ * provider (the real popup size) and the first-frame prediction (the known width; no height yet,
+ * so [preferBelow] decides the vertical side a real height would).
+ */
+private fun placeMinputPanel(
+    placement: MinputMenuPlacement,
+    gapPx: Int,
+    anchorBounds: IntRect,
+    windowSize: IntSize,
+    layoutDirection: LayoutDirection,
+    popupContentSize: IntSize,
+    preferBelow: Boolean? = null,
+): Pair<IntOffset, MinputPanelPlaced> {
+    val w = popupContentSize.width
+    val h = popupContentSize.height
+    fun clampX(x: Int) = x.coerceIn(0, (windowSize.width - w).coerceAtLeast(0))
+    fun clampY(y: Int) = y.coerceIn(0, (windowSize.height - h).coerceAtLeast(0))
+    if (placement == MinputMenuPlacement.Below) {
+        val wantX = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right - w
+        val x = clampX(wantX)
+        val below = anchorBounds.bottom + gapPx
+        val above = anchorBounds.top - gapPx - h
+        val placeBelow = preferBelow ?: (below + h <= windowSize.height || above < 0)
+        val y = clampY(if (placeBelow) below else above)
+        val originX = if (w > 0) {
+            val anchorStart = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left else anchorBounds.right
+            ((anchorStart - x).toFloat() / w).coerceIn(0f, 1f)
+        } else 0f
+        return IntOffset(x, y) to MinputPanelPlaced(
+            edge = if (placeBelow) MinputCaretEdge.Top else MinputCaretEdge.Bottom,
+            caretCenterPx = (anchorBounds.center.x - x).toFloat(),
+            transformOrigin = TransformOrigin(originX, if (placeBelow) 0f else 1f),
+        )
+    }
+    // A side: which PHYSICAL side was asked for, then whether it fits.
+    val endIsRight = layoutDirection == LayoutDirection.Ltr
+    val wantRight = (placement == MinputMenuPlacement.End) == endIsRight
+    val right = anchorBounds.right + gapPx
+    val left = anchorBounds.left - gapPx - w
+    val fitsRight = right + w <= windowSize.width
+    val fitsLeft = left >= 0
+    val placeRight = if (wantRight) fitsRight || !fitsLeft else !(fitsLeft || !fitsRight)
+    val x = clampX(if (placeRight) right else left)
+    val y = clampY(anchorBounds.top)
+    // Unknown height (the prediction): the anchor's own centre, a quarter of the way down.
+    val originY = if (h > 0) ((anchorBounds.center.y - y).toFloat() / h).coerceIn(0f, 1f) else 0.25f
+    return IntOffset(x, y) to MinputPanelPlaced(
+        // On the right of the anchor, the caret is on the panel's LEFT edge.
+        edge = if (placeRight) MinputCaretEdge.Start else MinputCaretEdge.End,
+        caretCenterPx = (anchorBounds.center.y - y).toFloat(),
+        transformOrigin = TransformOrigin(if (placeRight) 0f else 1f, originY),
+    )
 }
 
 /** Default panel width — wide enough for a search row over a list of names. */
@@ -274,10 +314,3 @@ val MinputDropdownPanelGap = 4.dp
 /** Inset between the panel's edge and its content — rows run inside it, so their highlight
  *  keeps the panel's corners clear. */
 val MinputDropdownPanelPadding = 6.dp
-
-/** M3's menu motion (DropdownMenu's InTransitionDuration / OutTransitionDuration, the closed
- *  scale, and the 30ms fade-in), reproduced because the panel can't be that composable. */
-private const val MinputPanelInMillis = 120
-private const val MinputPanelOutMillis = 75
-private const val MinputPanelFadeInMillis = 30
-private const val MinputPanelClosedScale = 0.8f
