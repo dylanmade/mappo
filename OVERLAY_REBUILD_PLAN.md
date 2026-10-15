@@ -306,6 +306,44 @@ model; Steam configs map onto the physical sets alone.
 - Not yet: virtual-set LAYERS at run time (no runtime layer stack for the overlay), and overlay
   buttons can't themselves fire `CHANGE_PRESET` (they emit `RemapTarget`s — the FC1 seam).
 
+### Decision 2026-10-15 — the virtual editor moves INTO Mappo, under the shared hierarchy bar — 🔨 CODE COMPLETE (awaiting device verify)
+
+Dylan: switching between the physical and virtual set editors must be seamless — the hierarchy
+bar is common to both, and the "Exit overlay editing?" confirm goes. Picked (of three options)
+"inside Mappo": the virtual editor is the controls screen's SECOND BODY.
+
+- `RemapControlsScreen(virtualEditorOpen, virtualEditorSetId, onCloseVirtualEditor,
+  virtualEditor = slot)`: the body CROSSFADES between the physical controls view and the slot;
+  the bar stays mounted (`editor = VIRTUAL` while open, its Buttons crumb titled by the virtual
+  set). A physical set in the crumb = switch back; back = switch back. No confirm anywhere.
+- `VirtualEditorSession` (@Singleton) replaces `OverlayLiveEditController` + `OverlayEditActivity`
+  (both DELETED, with `Theme.Mappo.Translucent`): open/close flag + the editing set, the
+  over-game entry (`openOverGame`: screenshot the game → Mappo on the controls screen, editor
+  open, the shot as backdrop), and run-overlay hiding tied to the editor being ON SCREEN.
+- `ui/screen/virtualset/`: the old controller ported to ONE composition — `VirtualSetEditor`
+  (stage + one geometric gesture layer: handles → resize, button → tap/drag+snap, empty → tap
+  deselect / marquee; drags preview then commit once), `VirtualEditorMenu` (core panel + cascading
+  fly-outs placed by Layout, outside-press seen at the root's Initial pass, MinputMenuMotion),
+  `VirtualEditorMenuEntries` (unchanged contents minus "Exit"), `Positioner`, config drawer,
+  `VirtualSetEditorViewModel` (selection / clipboard / align / nudge), `EditCanvas` geometry.
+- **The STAGE:** Mappo's screen is the ScreenFrame canvas (compact 1:1 or expanded above the
+  bottom bar), NOT the display — so the canvas is laid out at the DISPLAY's size and scaled to fit
+  (`graphicsLayer`), centred. Buttons render exactly as run mode draws them, smaller; handles /
+  hairlines counter-scale. Menus, Positioner, drawer stay full size around the stage.
+- `OverlayEditor.setLayout` — the editor edits the VIEWED layout (the bar can preview one), not
+  only the active one.
+- Paste style now also copies `appearanceJson` (it only copied the legacy shape/colour fields,
+  so it did nothing visible on a layered button).
+- Lost vs the old editor: the LIVE game behind the canvas when entered from inside Mappo (the old
+  route backgrounded Mappo over the game); the over-game entry keeps a frozen shot. The rotate
+  morph is a plain AnimatedContent size-transform now.
+- Follow-up (same day, device): "Add new" crashed every time — a closed fly-out's
+  AnimatedVisibility drops its content, and its placement Layout called `first()` on the empty
+  frame (fixed; regression test `addNew_closesItsFlyout_withoutCrashing`). The ScreenFrame bottom
+  bar was RETIRED so the editor gets the whole display: its fullscreen toggle is a drawer row
+  (`ScreenSizeSettings`, default FULLSCREEN), the drawer opens by its edge swipe only; auto-detect
+  now defaults ON.
+
 ---
 
 ## Verification (end-to-end)

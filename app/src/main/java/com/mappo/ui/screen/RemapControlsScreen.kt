@@ -4,6 +4,7 @@ import com.mappo.ui.minput.MinputIconSize
 import com.mappo.ui.minput.MinputIcon
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -42,8 +43,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -93,10 +94,10 @@ import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputInteractiveMotion
 import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.minput.minputOverlineTextStyle
-import com.mappo.ui.screen.remap.AddLayoutModalContent
 import com.mappo.ui.component.AppIconCache
-import com.mappo.ui.screen.remap.AddLayoutModalHeight
+import com.mappo.ui.screen.remap.AddLayoutModalContent
 import com.mappo.ui.screen.remap.ApplicationSort
+import com.mappo.ui.screen.remap.AddLayoutModalHeight
 import com.mappo.ui.screen.remap.EditorKind
 import com.mappo.ui.screen.remap.HierarchyCrumb
 import com.mappo.ui.screen.remap.RemapGroupEditorCallbacks
@@ -239,10 +240,17 @@ fun RemapControlsScreen(
     viewedAppPackage: String? = null,
     // ── Layout settings panel (physical Start) ─────────────────────────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
-    // The bar's Edit overlay button (2026-08-29): enters live overlay editing, which
-    // returns HERE on exit (see OverlayLiveEditController.requestEdit).
-    /** Opens the virtual (overlay) editor — on the given virtual set, else on its default. */
+    /** Opens the virtual set editor — on the given virtual set, else on its current one. */
     onEditOverlay: (virtualSetId: Long?) -> Unit = {},
+    // ── The virtual set editor (2026-10-15): this screen's SECOND body, under the same bar ──
+    /** True while the body is the virtual editor rather than the physical controls view. */
+    virtualEditorOpen: Boolean = false,
+    /** The virtual set the editor is on — the bar's Buttons crumb title while it is open. */
+    virtualEditorSetId: Long? = null,
+    /** Back to the physical editor (picking a physical set, or back). */
+    onCloseVirtualEditor: () -> Unit = {},
+    /** The virtual editor itself, supplied by the host (it is ViewModel-backed). */
+    virtualEditor: @Composable (Modifier) -> Unit = {},
     // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
     // True when the layout on screen IS the runtime-active layout (the home state);
     // false = a layout under inspection — the bar grows the Activate pill.
@@ -290,7 +298,7 @@ fun RemapControlsScreen(
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
     // only fires when nothing else is dismissable.
-    BackHandler { onBack() }
+    BackHandler { if (virtualEditorOpen) onCloseVirtualEditor() else onBack() }
 
     // Whether the options panel is open. User intent — survives the navigation round-trips
     // the options entries launch.
@@ -363,14 +371,6 @@ fun RemapControlsScreen(
     // The device app list loads at entry — the bar's application widget needs labels
     // (and the applications drawer its cards) from the first frame.
     LaunchedEffect(Unit) { onLoadInstalledApps() }
-
-    // Stash an analog-mode pick if Shizuku isn't ready AND the explainer hasn't been
-    // acknowledged. `Pair(bindingGroupId, mode)`. Once Shizuku is Granted OR the user has acked,
-    // picks proceed silently.
-    var pendingAnalogPick by remember { mutableStateOf<Pair<Long, BindingMode>?>(null) }
-
-    val gatedSetBindingGroupMode: (Long, BindingMode) -> Unit = { bindingGroupId, mode ->
-        // Resolve the source for this binding group so the gate can be source-aware: NONE on a
     // …and their launcher icons decode in the background as soon as it arrives, in the
     // Application crumb's default (Recent) order, so its panel opens on icons already decoded.
     val iconContext = LocalContext.current
@@ -380,6 +380,14 @@ fun RemapControlsScreen(
             installedApps.sortedWith(ApplicationSort.RECENT.comparator).map { it.packageName },
         )
     }
+
+    // Stash an analog-mode pick if Shizuku isn't ready AND the explainer hasn't been
+    // acknowledged. `Pair(bindingGroupId, mode)`. Once Shizuku is Granted OR the user has acked,
+    // picks proceed silently.
+    var pendingAnalogPick by remember { mutableStateOf<Pair<Long, BindingMode>?>(null) }
+
+    val gatedSetBindingGroupMode: (Long, BindingMode) -> Unit = { bindingGroupId, mode ->
+        // Resolve the source for this binding group so the gate can be source-aware: NONE on a
         // stick / trigger / dpad needs Shizuku (EVIOCGRAB silences); NONE on a button doesn't.
         val source: InputSource? = config?.actionSets?.firstNotNullOfOrNull { set ->
             set.preset.firstOrNull { it.group.group.id == bindingGroupId }?.inputSource
@@ -408,6 +416,14 @@ fun RemapControlsScreen(
             ?: cfg.activeActionSet
     }
     val viewingLayer = viewingSet?.layers?.firstOrNull { it.layer.id == viewingLayerId }
+    // The virtual set on screen while the virtual editor is open (its own scope, set by the bar).
+    val viewingVirtualSet = config?.virtualSets?.let { sets ->
+        sets.firstOrNull { it.actionSet.id == virtualEditorSetId } ?: sets.firstOrNull()
+    }
+    // Nothing to edit (no layout at all, or the app has none): the virtual editor can't stay open.
+    LaunchedEffect(showNoLayoutState, virtualEditorOpen) {
+        if (showNoLayoutState && virtualEditorOpen) onCloseVirtualEditor()
+    }
 
     // ── The hierarchy bar's open / dismiss / commit ──────────────────────────────────────────
     // A crumb's rows PREVIEW on focus (the controls view behind follows the d-pad), so opening
@@ -433,6 +449,10 @@ fun RemapControlsScreen(
                 onSelectActionSet(snap.setId)
                 onSelectLayer(null)
             }
+            // A virtual set focus-previewed in the virtual editor goes back too.
+            if (snap.virtualSetId != null && snap.virtualSetId != virtualEditorSetId) {
+                onEditOverlay(snap.virtualSetId)
+            }
         }
         commitCrumb()
     }
@@ -444,6 +464,7 @@ fun RemapControlsScreen(
             previewLayoutId = viewedLayoutId,
             followsActive = isActiveLayout,
             setId = viewingSet?.actionSet?.id,
+            virtualSetId = if (virtualEditorOpen) viewingVirtualSet?.actionSet?.id else null,
         )
         openCrumb = crumb
         openBarIndex = barIndex
@@ -624,23 +645,30 @@ fun RemapControlsScreen(
                     addLayoutOpen = true
                 },
                 config = config,
-                viewingSet = viewingSet,
+                viewingSet = if (virtualEditorOpen) viewingVirtualSet else viewingSet,
+                // A focus-preview is always of the hosting editor's own kind of set.
                 onPreviewSet = { id ->
-                    onSelectActionSet(id)
-                    onSelectLayer(null)
-                },
-                // This screen IS the physical editor; a virtual set opens the overlay editor,
-                // its own activity over the game, on that set.
-                onSelectSet = { id, kind ->
-                    if (kind == ActionSetKind.VIRTUAL) {
+                    if (virtualEditorOpen) {
                         onEditOverlay(id)
                     } else {
                         onSelectActionSet(id)
                         onSelectLayer(null)
                     }
                 },
+                // Both editors are this screen: a set of the other kind just swaps the body
+                // under the bar (2026-10-15 — it used to leave for the overlay editor's own
+                // activity, and come back through an exit confirm).
+                onSelectSet = { id, kind ->
+                    if (kind == ActionSetKind.VIRTUAL) {
+                        onEditOverlay(id)
+                    } else {
+                        onSelectActionSet(id)
+                        onSelectLayer(null)
+                        onCloseVirtualEditor()
+                    }
+                },
                 onAddSet = { kind -> dialog = ActionSetDialogState.Add(kind) },
-                editor = EditorKind.PHYSICAL,
+                editor = if (virtualEditorOpen) EditorKind.VIRTUAL else EditorKind.PHYSICAL,
                 pin = barPin,
                 onPinChange = onBarPinChange,
                 collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
@@ -695,48 +723,59 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
         ) {
-            Scaffold(
-                modifier = Modifier.fillMaxSize(),
-                // The view sits on the LOWEST plane — the bar's crumbs ride it as surface-1
-                // controls. The Scaffold's default `background` role would band its own colour
-                // behind them.
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            ) { innerPadding ->
-                // surface — the screen's content plane beneath the group boxes.
-                Surface(
-                    modifier = Modifier.fillMaxSize().padding(innerPadding),
-                    // The lowest plane — see the Scaffold container above.
-                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                ) {
-                    // The viewed application has no layout — the ACTIVE app fresh from
-                    // detection (the core flow: shortcut-open Mappo over a new game), a
-                    // bar pick of an unbound app, or one whose bound layout was deleted: the
-                    // content plane shows the no-layout state instead of another app's
-                    // controls — tiles route into layout creation and the bar's Layout crumb
-                    // (which holds the Community section once sharing lands).
-                    if (showNoLayoutState) {
-                        NoLayoutAssignedView(
-                            appLabel = effectiveAppLabel,
-                            onCreateLayout = { addLayoutOpen = true },
-                            onBrowseLayouts = { openCrumbAt(0, HierarchyCrumb.LAYOUT) },
-                        )
-                    } else Column(modifier = Modifier.fillMaxSize()) {
-                        if (hasAnalogModeInConfig && !shizukuReady) {
-                            ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
+            // The body: the physical controls view, or the virtual set editor — swapped IN PLACE
+            // under the bar (2026-10-15), a crossfade rather than a trip to another activity.
+            Crossfade(
+                targetState = virtualEditorOpen && !showNoLayoutState,
+                label = "editor-body",
+            ) { virtualBody ->
+                if (virtualBody) {
+                    virtualEditor(Modifier.fillMaxSize())
+                } else {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        // The view sits on the LOWEST plane — the bar's crumbs ride it as surface-1
+                        // controls. The Scaffold's default `background` role would band its own colour
+                        // behind them.
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    ) { innerPadding ->
+                        // surface — the screen's content plane beneath the group boxes.
+                        Surface(
+                            modifier = Modifier.fillMaxSize().padding(innerPadding),
+                            // The lowest plane — see the Scaffold container above.
+                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        ) {
+                            // The viewed application has no layout — the ACTIVE app fresh from
+                            // detection (the core flow: shortcut-open Mappo over a new game), a
+                            // bar pick of an unbound app, or one whose bound layout was deleted: the
+                            // content plane shows the no-layout state instead of another app's
+                            // controls — tiles route into layout creation and the bar's Layout crumb
+                            // (which holds the Community section once sharing lands).
+                            if (showNoLayoutState) {
+                                NoLayoutAssignedView(
+                                    appLabel = effectiveAppLabel,
+                                    onCreateLayout = { addLayoutOpen = true },
+                                    onBrowseLayouts = { openCrumbAt(0, HierarchyCrumb.LAYOUT) },
+                                )
+                            } else Column(modifier = Modifier.fillMaxSize()) {
+                                if (hasAnalogModeInConfig && !shizukuReady) {
+                                    ShizukuUnavailableBanner(onOpenSetup = onOpenShizukuSetup)
+                                }
+                                RemapSimpleView(
+                                    viewingSet = viewingSet,
+                                    viewingLayer = viewingLayer,
+                                    config = config,
+                                    editorCallbacks = editorCallbacks,
+                                    // While a crumb's dropdown is open, controller focus lives in it;
+                                    // browsing can remount this view (no-layout ↔ controls flip), and
+                                    // an ungated entry-seat would steal focus from the dropdown.
+                                    focusSeatEnabled = { openCrumb == null },
+                                    seatCommand = seatCommandId,
+                                    onSeatCommand = { seatCommandId = it },
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                )
+                            }
                         }
-                        RemapSimpleView(
-                            viewingSet = viewingSet,
-                            viewingLayer = viewingLayer,
-                            config = config,
-                            editorCallbacks = editorCallbacks,
-                            // While a crumb's dropdown is open, controller focus lives in it;
-                            // browsing can remount this view (no-layout ↔ controls flip), and
-                            // an ungated entry-seat would steal focus from the dropdown.
-                            focusSeatEnabled = { openCrumb == null },
-                            seatCommand = seatCommandId,
-                            onSeatCommand = { seatCommandId = it },
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                        )
                     }
                 }
             }
@@ -1314,4 +1353,6 @@ private data class CrumbSnapshot(
     val previewLayoutId: Long?,
     val followsActive: Boolean,
     val setId: Long?,
+    // The virtual editor's set when the crumb opened over it (null over the physical editor).
+    val virtualSetId: Long? = null,
 )

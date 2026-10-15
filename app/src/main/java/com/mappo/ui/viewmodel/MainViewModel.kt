@@ -55,7 +55,7 @@ import com.mappo.service.input.CompiledConfig
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.input.toCompiled
 import com.mappo.service.keyboard.KeyboardController
-import com.mappo.service.overlay.element.OverlayLiveEditController
+import com.mappo.service.overlay.element.VirtualEditorSession
 import com.mappo.service.overlay.element.OverlayPresenter
 import com.mappo.service.overlay.element.ToolbarOverlayManager
 import com.mappo.ui.screen.keyboard.KeyboardHostState
@@ -112,6 +112,7 @@ class MainViewModel @Inject constructor(
     private val moveSettings: com.mappo.data.settings.MoveSettings,
     private val tileRevealSettings: com.mappo.data.settings.TileRevealSettings,
     private val barPinSettings: com.mappo.data.settings.BarPinSettings,
+    private val screenSizeSettings: com.mappo.data.settings.ScreenSizeSettings,
     private val shizukuRequiredPreferences: ShizukuRequiredPreferences,
     shizukuConnection: ShizukuConnection,
     private val autoSwitcher: ApplicationAutoSwitcher,
@@ -120,7 +121,7 @@ class MainViewModel @Inject constructor(
     private val keyboardTemplateRepository: KeyboardTemplateRepository,
     private val inputDispatcher: InputDispatcher,
     private val overlayPresenter: OverlayPresenter,
-    private val overlayLiveEditController: OverlayLiveEditController,
+    private val virtualEditorSession: VirtualEditorSession,
     private val toolbarOverlayManager: ToolbarOverlayManager,
     private val keyboardController: KeyboardController,
     steamCredentialStore: SteamCredentialStore,
@@ -230,6 +231,11 @@ class MainViewModel @Inject constructor(
         tileRevealSettings.reveal
 
     val textSize: StateFlow<TextSize> = textSizeSettings.size
+
+    /** Mappo's screen canvas fills the display (vs the 1:1 compact square). See ScreenSizeSettings. */
+    val screenFullscreen: StateFlow<Boolean> = screenSizeSettings.fullscreen
+
+    fun setScreenFullscreen(fullscreen: Boolean) = screenSizeSettings.setFullscreen(fullscreen)
 
     /** Where the editors' hierarchy bar is pinned. See BarPinSettings. */
     val barPin: StateFlow<com.mappo.data.settings.BarPin> = barPinSettings.pin
@@ -443,9 +449,11 @@ class MainViewModel @Inject constructor(
             // Viewed-layout change → forget the previous controller's set + layer
             // selection. Keyed on the resolved viewed id, so ACTIVATING the viewed layout
             // (activeLayout flips to it, viewed id unchanged) keeps the selections.
-            viewedLayout.map { it?.id }.distinctUntilChanged().collect {
+            viewedLayout.map { it?.id }.distinctUntilChanged().collect { id ->
                 _viewingActionSetId.value = null
                 _viewingLayerId.value = null
+                // The virtual editor edits the layout on screen, like the physical one.
+                virtualEditorSession.editLayout(id)
             }
         }
         viewModelScope.launch {
@@ -1854,15 +1862,23 @@ class MainViewModel @Inject constructor(
         toolbarOverlayManager.toggle()
     }
 
-    /**
-     * Brick C spike: launch the live on-overlay editor (candidate C2). The in-app canvas
-     * editor (C1) is reached by navigation instead; both write the same elements.
-     *
-     * [returnToApp] — the caller backgrounded Mappo to get out of the editor's way, so
-     * exiting the editor should hand the user back to the screen they left.
-     */
-    fun startLiveOverlayEdit(returnToApp: Boolean = false, virtualSetId: Long? = null) {
-        overlayLiveEditController.requestEdit(returnToApp, virtualSetId)
+    /** Whether the controls screen shows the virtual set editor (vs the physical one). */
+    val virtualEditorOpen: StateFlow<Boolean> = virtualEditorSession.open
+
+    /** The game shot behind the virtual editor when it was summoned over one; else null. */
+    val virtualEditorBackdrop: StateFlow<android.graphics.Bitmap?> = virtualEditorSession.backdrop
+
+    /** The virtual set the editor is on (the bar's Buttons crumb title while it is open). */
+    val virtualEditorSetId: StateFlow<Long?> = virtualEditorSession.setId
+
+    /** Switch the controls screen to the virtual editor — on [virtualSetId] when given. */
+    fun openVirtualEditor(virtualSetId: Long? = null) {
+        virtualEditorSession.open(virtualSetId)
+    }
+
+    /** Switch the controls screen back to the physical editor. */
+    fun closeVirtualEditor() {
+        virtualEditorSession.close()
     }
 
     /**

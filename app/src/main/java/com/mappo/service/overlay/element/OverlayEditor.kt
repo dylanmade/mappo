@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -47,12 +48,11 @@ data class ScopeOption(
 
 /**
  * Shared edit operations on the rebuilt overlay's [OverlayElement]s (Brick C of
- * `OVERLAY_REBUILD_PLAN.md`). `@Singleton` so the live editor (`OverlayLiveEditController`,
- * which runs outside the activity and can't reach a `ViewModel`) writes through a single
+ * `OVERLAY_REBUILD_PLAN.md`). `@Singleton` so the virtual set editor writes through a single
  * source of truth that the run-mode [OverlayPresenter] also observes.
  *
  * Operations target the **current [editingScope]** — a single action set or layer of the
- * active layout, chosen via the editor's scope dropdown. [availableScopes] enumerates the
+ * viewed layout ([setLayout]), chosen via the hierarchy bar or the editor's scope menu. [availableScopes] enumerates the
  * layout's sets + layers for that dropdown.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -67,9 +67,18 @@ class OverlayEditor @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private val activeLayoutId: StateFlow<Long?> = layoutRepository.activeLayout
-        .map { it?.id }
-        .stateIn(scope, SharingStarted.Eagerly, null)
+    // The layout the controls screen is VIEWING (it can preview a non-active one), set through
+    // [setLayout]; null follows the active layout. The editor edits what the hierarchy bar shows.
+    private val layoutOverride = MutableStateFlow<Long?>(null)
+
+    private val activeLayoutId: StateFlow<Long?> =
+        combine(layoutOverride, layoutRepository.activeLayout) { override, active -> override ?: active?.id }
+            .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Edit layout [layoutId]'s virtual sets; null = follow the active layout. */
+    fun setLayout(layoutId: Long?) {
+        layoutOverride.value = layoutId
+    }
 
     /** The active layout's VIRTUAL button sets + their layers, flattened for the scope dropdown
      *  (overlay buttons live only on virtual sets — see [com.mappo.data.model.steam.ActionSetKind]). */
@@ -107,6 +116,17 @@ class OverlayEditor @Inject constructor(
     private val _editingScope = MutableStateFlow<OverlayScope?>(null)
     /** The scope the editor is currently editing (defaults to the first set; see init). */
     val editingScope: StateFlow<OverlayScope?> = _editingScope.asStateFlow()
+
+    /** The virtual set [editingScope] belongs to (its own set, or a layer's parent). */
+    val editingSetId: StateFlow<Long?> = _editingScope
+        .map { s ->
+            when (s) {
+                is OverlayScope.Set -> s.actionSetId
+                is OverlayScope.Layer -> s.parentActionSetId
+                null -> null
+            }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
     // A set asked for before it was among [availableScopes] — one created a moment ago, whose
     // config reload hasn't landed yet. Applied when it shows up; any explicit scope change drops it.
@@ -328,7 +348,7 @@ class OverlayEditor @Inject constructor(
         scope.launch {
             val base = elements.value.size
             val b = editBounds()
-            // ONE batched insert → a single flow emission → renderElements/raiseToolbar run ONCE
+            // ONE batched insert → a single flow emission, so the editor re-renders ONCE
             // (inserting the clones one-by-one storms the toolbar recreation and can crash it).
             val clones = sources.mapIndexed { i, src ->
                 clampGeometry(

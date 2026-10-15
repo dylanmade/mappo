@@ -25,7 +25,7 @@ class AutoSwitchSettings @Inject constructor(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _autoSwitchEnabled = MutableStateFlow(
-        prefs.getBoolean(KEY_AUTO_SWITCH_ENABLED, false)
+        prefs.getBoolean(KEY_AUTO_SWITCH_ENABLED, DEFAULT_AUTO_SWITCH_ENABLED)
     )
     val autoSwitchEnabled: StateFlow<Boolean> = _autoSwitchEnabled.asStateFlow()
 
@@ -44,7 +44,7 @@ class AutoSwitchSettings @Inject constructor(
     private val listener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
         when (key) {
             KEY_AUTO_SWITCH_ENABLED ->
-                _autoSwitchEnabled.value = sp.getBoolean(KEY_AUTO_SWITCH_ENABLED, false)
+                _autoSwitchEnabled.value = sp.getBoolean(KEY_AUTO_SWITCH_ENABLED, DEFAULT_AUTO_SWITCH_ENABLED)
             KEY_IGNORED_PACKAGES ->
                 _ignoredPackages.value =
                     sp.getStringSet(KEY_IGNORED_PACKAGES, emptySet())?.toSet() ?: emptySet()
@@ -97,6 +97,8 @@ class AutoSwitchSettings @Inject constructor(
     companion object {
         private const val PREFS_NAME = "mappo_settings"
         private const val KEY_AUTO_SWITCH_ENABLED = "auto_switch_enabled"
+        // On by default (2026-10-15, Dylan): following the foreground game is the point.
+        const val DEFAULT_AUTO_SWITCH_ENABLED = true
         private const val KEY_IGNORED_PACKAGES = "ignored_packages"
         private const val KEY_BLOCKLIST_SEEDED = "blocklist_seeded_v1"
         private const val KEY_ACTIVATE_WARNING_SUPPRESSED = "activate_warning_suppressed"

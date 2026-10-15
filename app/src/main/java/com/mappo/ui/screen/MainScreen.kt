@@ -159,6 +159,7 @@ import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
+import com.mappo.ui.screen.virtualset.VirtualSetEditor
 import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
 import com.mappo.ui.screen.keyboard.TabActionDialog
@@ -258,6 +259,7 @@ fun MainScreen(
     val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
     val barPin by viewModel.barPin.collectAsStateWithLifecycle()
     val barCollapsedCrumbs by viewModel.barCollapsedCrumbs.collectAsStateWithLifecycle()
+    val screenFullscreen by viewModel.screenFullscreen.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val activeAppPackage by viewModel.activeAppPackage.collectAsStateWithLifecycle()
@@ -270,14 +272,14 @@ fun MainScreen(
     // on launch. `frameVisible` drives its fade-in entrance / fade-out exit; dismissing it on
     // MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
     var frameVisible by remember { mutableStateOf(true) }
-    // Entering live overlay editing (the controls bar's Edit overlay button and the Layout
-    // settings panel's entry both land here): editing happens over the GAME, so Mappo slides
-    // away first — dismissing the frame backgrounds the task via the frameVisible effect
-    // below. `returnToApp` makes the editor hand the user back here on exit rather than
-    // leaving them on whatever was underneath.
+    // The virtual set editor (2026-10-15) is the controls screen's second body, swapped in under
+    // the same hierarchy bar — every entry (the bar's Buttons crumb, the Layout settings panel, a
+    // just-created virtual set) just flips it open, in place. Mappo no longer steps aside for it.
+    val virtualEditorOpen by viewModel.virtualEditorOpen.collectAsStateWithLifecycle()
+    val virtualEditorSetId by viewModel.virtualEditorSetId.collectAsStateWithLifecycle()
+    val virtualEditorBackdrop by viewModel.virtualEditorBackdrop.collectAsStateWithLifecycle()
     val startOverlayEdit: (virtualSetId: Long?) -> Unit = { virtualSetId ->
-        viewModel.startLiveOverlayEdit(returnToApp = true, virtualSetId = virtualSetId)
-        frameVisible = false
+        viewModel.openVirtualEditor(virtualSetId)
     }
     // Dev tooling: the floating Theme Studio font picker (wordmark-drawer toggle).
     // Saveable so the text-size recreate doesn't drop it mid-test session.
@@ -507,6 +509,12 @@ fun MainScreen(
                     // The controls bar's Edit overlay button (2026-08-29) — the same entry
                     // the panel carries, given a real home.
                     onEditOverlay = startOverlayEdit,
+                    virtualEditorOpen = virtualEditorOpen,
+                    virtualEditorSetId = virtualEditorSetId,
+                    onCloseVirtualEditor = viewModel::closeVirtualEditor,
+                    virtualEditor = { editorModifier ->
+                        VirtualSetEditor(backdrop = virtualEditorBackdrop, modifier = editorModifier)
+                    },
                     // ── Viewing vs active (2026-08-20) ──
                     isActiveLayout = isActiveLayout,
                     autoSwitchEnabled = autoSwitchEnabled,
@@ -1103,6 +1111,7 @@ fun MainScreen(
             shown = frameVisible,
             dismissEnabled = isHomeRoute,
             onDismissRequest = { frameVisible = false },
+            expanded = screenFullscreen,
             // The wordmark drawer: the GLOBAL app options — master power, text size,
             // and the destinations that used to live in the controls options panel
             // (that panel is layout-scoped "Layout settings" now).
@@ -1122,6 +1131,8 @@ fun MainScreen(
                     // until 2026-08-30.
                     autoDetectEnabled = autoSwitchEnabled,
                     onAutoDetectChange = viewModel::setAutoSwitchEnabled,
+                    fullscreen = screenFullscreen,
+                    onFullscreenChange = viewModel::setScreenFullscreen,
                     moveCommit = moveCommitGesture,
                     onMoveCommitChange = viewModel::setMoveCommitGesture,
                     tileReveal = tileReveal,

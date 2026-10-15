@@ -5,11 +5,4 @@
          Compose transitions or partial-transparency moments while in dark mode. -->
     <style name="Theme.Mappo" parent="android:Theme.Material.NoActionBar" />
 
-    <!-- Translucent variant for MainActivity (dark). See values/themes.xml for rationale. -->
-    <style name="Theme.Mappo.Translucent" parent="Theme.Mappo">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:backgroundDimEnabled">false</item>
-    </style>
 </resources>

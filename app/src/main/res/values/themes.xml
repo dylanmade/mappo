@@ -5,17 +5,6 @@
          moments. Dark variant lives in values-night/themes.xml. -->
     <style name="Theme.Mappo" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <!-- Translucent variant for OverlayEditActivity ONLY (2026-08-16 — MainActivity is a
-         normal opaque app now; the drawer-over-the-game concept is retired): with no captured
-         backdrop the editor reveals the live content behind it, so overlay editing stays
-         WYSIWYG over the real game. -->
-    <style name="Theme.Mappo.Translucent" parent="Theme.Mappo">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:backgroundDimEnabled">false</item>
-    </style>
-
     <!-- Window enter/exit animation for the overlay editor's scope dropdown (its own
          WindowManager window). Conventional dropdown motion: scale-from-top-start + fade.
          Set via WindowManager.LayoutParams.windowAnimations; the exit plays only when the

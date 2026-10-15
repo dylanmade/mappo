@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
         // concept. Those two were only ever bundled: what was retired that day was rendering
         // OVER the game (translucency, the frozen backdrop, the true over-the-game drawer), and
         // NONE of that comes back here. The window stays opaque `Theme.Mappo`; only the bars
-        // are gone. `Theme.Mappo.Translucent` still serves OverlayEditActivity alone.
+        // are gone.
         //
         // Bars return transiently on a swipe, so nothing becomes unreachable, and re-hide when
         // the window takes focus again (see onWindowFocusChanged) — returning from another app

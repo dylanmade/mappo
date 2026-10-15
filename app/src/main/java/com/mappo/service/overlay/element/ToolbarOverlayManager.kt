@@ -70,7 +70,7 @@ class ToolbarOverlayManager @Inject constructor(
     private val steamCredentialStore: SteamCredentialStore,
     private val keyboardController: KeyboardController,
     private val overlayPresenter: OverlayPresenter,
-    private val overlayLiveEditController: OverlayLiveEditController,
+    private val virtualEditorSession: VirtualEditorSession,
     private val inputDispatcher: InputDispatcher,
 ) {
 
@@ -215,7 +215,7 @@ class ToolbarOverlayManager @Inject constructor(
                 if (remapEnabled != target) keyboardController.toggleRemap()
                 if (overlayShowing != target) overlayPresenter.toggle()
             },
-            onEditOverlay = { overlayLiveEditController.requestEdit() },
+            onEditOverlay = { virtualEditorSession.openOverGame() },
             // Brick 2: deep-screen items launch the config host straight to their route.
             // remapControls() (no app context) — the REMAP_CONTROLS const is a pattern
             // with arg placeholders now, not a navigable string.

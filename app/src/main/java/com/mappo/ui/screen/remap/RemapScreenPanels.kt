@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -572,6 +573,46 @@ internal fun AutoDetectRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit)
         Spacer(Modifier.weight(1f))
         // Strip the 48dp interactive halo + scale down so the switch fits the compact row.
         // The row owns the tap target; the switch itself stays interactive for thumb drags.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.scaledLayout(0.8f),
+            )
+        }
+    }
+}
+
+/**
+ * Fullscreen (2026-10-15): Mappo's screen fills the display, or rests as the 1:1 preview square.
+ * It was the frame's bottom-bar toggle until that bar retired. Same switch treatment as
+ * [AutoDetectRow] — the drawer's switch rows read as siblings.
+ */
+@Composable
+internal fun FullscreenRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PanelPowerRowHeight)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onEnabledChange(!enabled) }
+            .padding(horizontal = MinputSize.Standard.contentPadding),
+    ) {
+        MinputIcon(
+            Icons.Filled.Fullscreen,
+            contentDescription = null,
+            size = PanelRowGlyphSize,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            slot = true,
+        )
+        Spacer(Modifier.width(MinputGlyphLabelGap))
+        Text(
+            text = "Fullscreen",
+            style = minputMiniTextStyle(),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.weight(1f))
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
             Switch(
                 checked = enabled,

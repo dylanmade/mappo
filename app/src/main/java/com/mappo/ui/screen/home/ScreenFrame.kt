@@ -67,19 +67,19 @@ val LocalScreenAspect = compositionLocalOf<Float?> { null }
 private const val ExpandMillis = 320
 
 /**
- * The Mappo screen frame: the canvas every route renders into, plus the bottom bar carrying
- * the Mappo button and the screen-size toggle. Replaces the skeuomorphic [HandheldFrame] as the
- * mounted home chrome (2026-08-14 — the handheld shell is TABLED, not deleted: real estate
- * won over form; its code stays for a possible return).
+ * The Mappo screen frame: the canvas every route renders into. Replaces the skeuomorphic
+ * [HandheldFrame] as the mounted home chrome (2026-08-14 — the handheld shell is TABLED, not
+ * deleted: real estate won over form; its code stays for a possible return).
  *
- * Two screen states, toggled by the bottom bar's trailing button: **compact** (default) pins
- * the canvas to a 1:1 aspect — the standing preview of how the UI reads on 1:1 target
- * screens — and **expanded** fills the entire display. The resize is animated.
+ * Two screen states ([expanded]): **fullscreen** (the default since 2026-10-15) fills the entire
+ * display, and **compact** pins the canvas to a 1:1 aspect — the standing preview of how the UI
+ * reads on 1:1 target screens. The resize is animated.
  *
- * 2026-08-20: the bottom bar's Mappo button opens the global-options drawer ([drawerContent],
- * hosted here inside the canvas so it slides within Mappo's screen); the active-context
- * shortcut it used to carry retired — that context lives in the controls home's top bar now.
- * The rest of the bar is reserved for future contextual button controls.
+ * The global-options drawer ([drawerContent]) is hosted here inside the canvas so it slides
+ * within Mappo's screen. 2026-10-15: the bottom bar that carried its Mappo button and the
+ * screen-size toggle is GONE — it took layout space from the routes (the virtual set editor
+ * needs the whole display). The drawer opens by its swipe from the leading edge; the size
+ * toggle is one of its rows.
  *
  * Enter/exit is the quick modal fade (alpha + settle-scale on the same spec as
  * [com.mappo.ui.minput.MinputModal]) instead of the old slide; a tap outside the compact
@@ -91,8 +91,11 @@ fun ScreenFrame(
     // Only the home route treats a tap outside the screen as "leave Mappo".
     dismissEnabled: Boolean,
     onDismissRequest: () -> Unit,
+    // Fullscreen = the screen fills the display; else the resting 1:1 preview square. Persisted
+    // (ScreenSizeSettings), toggled from the drawer since the bottom bar retired.
+    expanded: Boolean,
     modifier: Modifier = Modifier,
-    // The wordmark drawer's sheet content; receives the close action for its rows.
+    // The drawer's sheet content; receives the close action for its rows.
     drawerContent: @Composable (closeDrawer: () -> Unit) -> Unit = {},
     screenContent: @Composable () -> Unit,
 ) {
@@ -105,9 +108,6 @@ fun ScreenFrame(
             fade.animateTo(0f, tween(MinputModalExitMillis, easing = FastOutLinearInEasing))
         }
     }
-
-    // Expanded = the screen fills the display; compact = the resting 1:1 preview square.
-    var expanded by rememberSaveable { mutableStateOf(false) }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
         val availW = maxWidth
@@ -158,7 +158,7 @@ fun ScreenFrame(
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest),
         ) {
             // The global-options drawer lives INSIDE the canvas: the sheet slides within
-            // Mappo's screen and its scrim covers the routes AND the bottom bar.
+            // Mappo's screen and its scrim covers the routes.
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val drawerScope = rememberCoroutineScope()
             val closeDrawer: () -> Unit = { drawerScope.launch { drawerState.close() } }
@@ -168,60 +168,13 @@ fun ScreenFrame(
                 drawerState = drawerState,
                 drawerContent = { drawerContent(closeDrawer) },
             ) {
-                Column(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        screenContent()
-                    }
-                    FrameBottomBar(
-                        expanded = expanded,
-                        onToggleExpanded = { expanded = !expanded },
-                        onOpenDrawer = { drawerScope.launch { drawerState.open() } },
-                    )
+                // No bottom bar any more (2026-10-15): the routes get the whole canvas, and the
+                // drawer is reached by its swipe from the leading edge.
+                Box(Modifier.fillMaxSize()) {
+                    screenContent()
                 }
             }
             }
         }
-    }
-}
-
-/**
- * The frame's bottom bar — the Mappo button at the start (opens the global-options drawer),
- * the compact ↔ expanded toggle at the end; the middle is reserved for future contextual
- * button controls. The active-context shortcut that used to sit here retired 2026-08-20 —
- * the controls home's top bar carries that context now.
- *
- * **2026-09-26 (Dylan):** the bar is a SURFACE again — a [MinputBar] strip with a lit TOP
- * edge, mirroring the controls top bar's lit bottom one, so the two read as the top and
- * bottom faces of the device's front panel. The pods that carried its buttons from
- * 2026-08-30 are gone with the transparent bar they floated over, and the buttons are bare:
- * no fill, no ring. (That pairing is not cosmetic — a pod wears a plane BELOW the bar plane,
- * so one on a filled strip reads as a hole punched in it. Both bars change together.)
- *
- * The Mappo button keeps its `filled` label strength — it summons the app-wide drawer and is
- * the one control down here that earns extra presence — while the fullscreen toggle stays a
- * recessive glyph: a temporary affordance for previewing the UI at 1:1, not permanent chrome.
- */
-@Composable
-private fun FrameBottomBar(
-    expanded: Boolean,
-    onToggleExpanded: () -> Unit,
-    onOpenDrawer: () -> Unit,
-) {
-    MinputBar(edge = MinputEdge.TOP) {
-        MinputButton(
-            text = "Mappo",
-            onClick = onOpenDrawer,
-            bare = true,
-            filled = true,
-            contentDescription = "Open Mappo options",
-            modifier = Modifier.align(Alignment.CenterStart),
-        )
-        MinputButton(
-            onClick = onToggleExpanded,
-            bare = true,
-            leadingIcon = if (expanded) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
-            contentDescription = if (expanded) "Compact screen" else "Expand screen",
-            modifier = Modifier.align(Alignment.CenterEnd),
-        )
     }
 }

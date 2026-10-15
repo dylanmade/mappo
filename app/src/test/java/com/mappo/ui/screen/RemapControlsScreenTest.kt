@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -1214,6 +1215,59 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("Touch pad", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
         assert(opened == 30L) { "the overlay editor should have opened on set 30, got $opened" }
+    }
+
+    /**
+     * **The virtual editor is this screen's second body** (2026-10-15) — open, it replaces the
+     * controls view UNDER the same bar (the Buttons crumb then names the virtual set), and picking
+     * a physical set in that crumb switches straight back: no other activity, no exit confirm.
+     */
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun virtualEditor_sharesTheBar_andAPhysicalSetSwitchesBack() {
+        var closed = 0
+        var selected: Long? = null
+        val virtual = ActionSetGraph(
+            actionSet = ActionSet(
+                id = 30L, controllerProfileId = 1L, name = "virtual_1", title = "Touch pad",
+                kind = ActionSetKind.VIRTUAL,
+            ),
+            layers = emptyList(),
+            preset = emptyList(),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = twoSetConfig(
+                            setAButtonA = BindingOutput.Unbound,
+                            setBButtonA = BindingOutput.Unbound,
+                        ).copy(virtualSets = listOf(virtual)),
+                        viewingActionSetId = 1L,
+                        onSelectActionSet = { selected = it },
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        virtualEditorOpen = true,
+                        virtualEditorSetId = 30L,
+                        onCloseVirtualEditor = { closed++ },
+                        virtualEditor = { m ->
+                            androidx.compose.foundation.layout.Box(m.testTag("virtual-body"))
+                        },
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("virtual-body").assertExists()
+        // The same bar, now titled by the virtual set.
+        composeRule.onNodeWithText("Touch pad", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("bar:buttons").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Menu", useUnmergedTree = true).performClick()
+        composeRule.waitForIdle()
+        assert(closed == 1) { "picking a physical set should close the virtual editor, closed=$closed" }
+        assert(selected == 2L) { "the physical set should become the viewed one, got $selected" }
     }
 
     @Test

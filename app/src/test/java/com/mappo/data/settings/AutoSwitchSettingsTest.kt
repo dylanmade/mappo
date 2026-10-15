@@ -45,9 +45,9 @@ class AutoSwitchSettingsTest {
     }
 
     @Test
-    fun defaults_autoSwitchOff_blocklistSeededWithLaunchers() {
-        // Auto-switch ships OFF until the user opts in via the bar's Auto switch.
-        assertFalse(settings.autoSwitchEnabled.value)
+    fun defaults_autoSwitchOn_blocklistSeededWithLaunchers() {
+        // Auto-detect ships ON (2026-10-15) — following the foreground game is the point.
+        assertTrue(settings.autoSwitchEnabled.value)
         // Seed includes AOSP launcher3 and Pixel Launcher; spot-check both.
         assertTrue(
             "com.android.launcher3 should be seeded into the blocklist",

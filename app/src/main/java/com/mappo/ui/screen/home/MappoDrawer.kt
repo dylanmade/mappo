@@ -27,6 +27,7 @@ import com.mappo.ui.minput.MinputPanelHeaderHeight
 import com.mappo.ui.minput.MinputPanelTitleInset
 import com.mappo.ui.screen.remap.AutoDetectRow
 import com.mappo.ui.screen.remap.FontDebugRow
+import com.mappo.ui.screen.remap.FullscreenRow
 import com.mappo.ui.screen.remap.OptionEntryRow
 import com.mappo.ui.screen.remap.PanelContentPadding
 import com.mappo.ui.screen.remap.PanelDivider
@@ -37,8 +38,9 @@ import com.mappo.ui.screen.remap.TextSizeRow
 import com.mappo.ui.screen.remap.TileRevealRow
 
 /**
- * The wordmark drawer (2026-08-20 flow re-imagining): the traditional left navigation
- * drawer opened from the bottom bar's Mappo wordmark, holding the GLOBAL app options —
+ * The Mappo drawer (2026-08-20 flow re-imagining): the traditional left navigation drawer —
+ * opened by its swipe from the leading edge since the bottom bar's Mappo wordmark retired
+ * (2026-10-15) — holding the GLOBAL app options —
  * master power, auto-detect, text size, and the destination rows that used to live in the
  * controls screen's options panel (that panel is now the layout-scoped "Layout settings").
  * Content rows reuse the panel row family so the two surfaces read as siblings.
@@ -51,6 +53,9 @@ fun MappoDrawerContent(
     // lives here rather than on the controls view's bar (moved 2026-08-30).
     autoDetectEnabled: Boolean,
     onAutoDetectChange: (Boolean) -> Unit,
+    // Fullscreen vs the 1:1 compact screen — the retired bottom bar's toggle (2026-10-15).
+    fullscreen: Boolean,
+    onFullscreenChange: (Boolean) -> Unit,
     textSize: TextSize,
     onTextSizeChange: (TextSize) -> Unit,
     // How a controller move is confirmed. Global, and not layout-scoped, so it lives here.
@@ -104,6 +109,9 @@ fun MappoDrawerContent(
                 }
                 item(key = "auto_detect") {
                     AutoDetectRow(enabled = autoDetectEnabled, onEnabledChange = onAutoDetectChange)
+                }
+                item(key = "fullscreen") {
+                    FullscreenRow(enabled = fullscreen, onEnabledChange = onFullscreenChange)
                 }
                 item(key = "move_commit") {
                     MoveCommitRow(current = moveCommit, onPick = onMoveCommitChange)
