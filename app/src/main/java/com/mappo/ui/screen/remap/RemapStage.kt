@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.focus.FocusRequester
@@ -1149,8 +1150,11 @@ internal fun RemapStage(
  * rectangle per group that runs off the screen edge reads as the panel's own flanks — the shape
  * a handheld's face actually has.
  *
+ * **Its fill is the surface-1 button plane** ([minputBoxContainer] — the accent tint the hierarchy
+ * bar's crumbs and every resting button wear; Dylan, 2026-10-16), not a bare surface container.
+ *
  * **It is also the group's FOCUS affordance.** Holding the controller cursor steps the fill one
- * plane up (`surfaceContainerLow` → `surfaceContainer`), which replaces the lift the box used to
+ * plane up (the same tint over `surfaceContainer`), which replaces the lift the box used to
  * take. A lit surface says "the cursor is here" at any distance, where a two-pixel rise had to be
  * looked for; the group's inner edge line still goes accent alongside it, which Dylan kept
  * explicitly. The fill animates, so arriving and leaving read as movement rather than as a jump.
@@ -1198,8 +1202,13 @@ private fun StageGroupBacking(
     /** Held — the group's own action menu (see [GroupActionMenu]). */
     onOpenMenu: () -> Unit,
 ) {
-    val base = MaterialTheme.colorScheme.surfaceContainerLow
-    val lit = MaterialTheme.colorScheme.surfaceContainer
+    // The surface-1 plane the hierarchy bar's crumbs and every resting button wear
+    // (Dylan, 2026-10-16), so a group reads as the same raised material as the chrome above
+    // it. Lit = that same accent tint one plane up, keeping the focus step the old
+    // surfaceContainerLow → surfaceContainer travel had.
+    val base = minputBoxContainer()
+    val lit = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
     val interaction = remember { MutableInteractionSource() }
     Box(
         Modifier
