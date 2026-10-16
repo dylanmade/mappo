@@ -166,7 +166,11 @@ fun Modifier.minputPressIndication(interactionSource: InteractionSource): Modifi
     return this.indication(pressOnly, minputIndication())
 }
 
-/** Bevel stroke width for boxes + pill controls (slightly under the original 1dp). */
+/** Bevel stroke width for boxes + pill controls (slightly under the original 1dp) — THE
+ *  width knob for every button's bevel ring ([minputBevelBorder]), the bars' lit edges
+ *  ([minputBevelEdge]) and the field / checkbox / switch outlines, and the inset
+ *  [minputStrokeInset] applies, so retuning it moves the strokes and their content together.
+ *  (The remap stage's group panels carry their own width — `GroupBevelStroke`.) */
 val MinputBoxStroke = 0.75.dp
 
 /**
@@ -212,9 +216,13 @@ enum class MinputEdge { TOP, BOTTOM, START, END }
  *
  * Derived from the fill it sits on, boosted on light planes exactly as the border's layers
  * are, so a bar and a button wear the same light source.
+ *
+ * [strength] defaults to the button bevel's top highlight; a surface tuned apart from the
+ * buttons (the remap stage's group panels, Dylan 2026-10-16) passes its own, keeping the same
+ * derivation and luminance boost.
  */
-fun minputBevelHighlight(base: Color): Color =
-    lerp(base, Color.White, (BevelTopHighlightStrength * bevelStrengthBoost(base)).coerceAtMost(1f))
+fun minputBevelHighlight(base: Color, strength: Float = BevelTopHighlightStrength): Color =
+    lerp(base, Color.White, (strength * bevelStrengthBoost(base)).coerceAtMost(1f))
 
 /** Draw a [width] line of [color] along one [edge] of this node — the flat-surface companion
  *  to [minputBevelBorder]. Place it AFTER the fill in the chain so it lands on top. It insets

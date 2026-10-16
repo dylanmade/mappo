@@ -93,6 +93,7 @@ import com.mappo.ui.minput.MinputOverflowScroll
 import com.mappo.ui.minput.MinputScrollbar
 import com.mappo.ui.minput.MinputPodGap
 import com.mappo.ui.minput.minputBevelBorder
+import com.mappo.ui.minput.minputBevelHighlight
 import com.mappo.ui.minput.minputBoxContainer
 import com.mappo.ui.minput.minputIndication
 import com.mappo.ui.minput.minputPressIndication
@@ -1153,6 +1154,13 @@ internal fun RemapStage(
  * **Its fill is the surface-1 button plane** ([minputBoxContainer] — the accent tint the hierarchy
  * bar's crumbs and every resting button wear; Dylan, 2026-10-16), not a bare surface container.
  *
+ * **Its top and bottom edges are lit like a button's bevel** (Dylan, 2026-10-16): the same
+ * white-nudge off the fill ([minputBevelHighlight]), drawn as two inner strokes, but on the
+ * group's OWN knobs ([GroupBevelTopStrength] and friends, [GroupBevelStroke]) so retuning the
+ * button bevel doesn't move the panels. No side ring: the panel runs off the screen on one side
+ * and carries the accent line on the other — and the strokes end where that line begins, so they
+ * read as running beneath it.
+ *
  * **It is also the group's FOCUS affordance.** Holding the controller cursor steps the fill one
  * plane up (the same tint over `surfaceContainer`), which replaces the lift the box used to
  * take. A lit surface says "the cursor is here" at any distance, where a two-pixel rise had to be
@@ -1216,7 +1224,39 @@ private fun StageGroupBacking(
             .testTag(groupBackingTestTag(group))
             // Everything here is a DRAW-phase read — the plane, and the zoom's fade — so a
             // group lighting up repaints one rectangle and recomposes nothing.
-            .drawBehind { drawRect(color = lerp(base, lit, light.value)) }
+            .drawBehind {
+                val fill = lerp(base, lit, light.value)
+                drawRect(color = fill)
+                // The panel's lit top and bottom faces — the button bevel's derivation off the
+                // LIVE fill, so the lines brighten with the focus step, on the group's own knobs.
+                //
+                // They tuck UNDER the group's edge line (Dylan, 2026-10-16): the rectangle stops at
+                // that line's outer face, so its last [GroupOutlineWidth] lies beneath the line —
+                // and the line is translucent at rest, so a stroke running the full width showed
+                // through it and read as crossing over it. Each stroke ends at the line's inner
+                // face instead.
+                val stroke = GroupBevelStroke.toPx()
+                val top = stroke / 2f
+                val bottom = size.height - stroke / 2f
+                val underLine = GroupOutlineWidth.toPx()
+                val (from, to) = when (group.controllerEdge()) {
+                    GroupEdge.START -> underLine to size.width
+                    GroupEdge.END -> 0f to size.width - underLine
+                    GroupEdge.TOP -> 0f to size.width
+                }
+                drawLine(
+                    color = minputBevelHighlight(fill, GroupBevelTopStrength).copy(alpha = GroupBevelTopAlpha),
+                    start = Offset(from, top),
+                    end = Offset(to, top),
+                    strokeWidth = stroke,
+                )
+                drawLine(
+                    color = minputBevelHighlight(fill, GroupBevelBottomStrength).copy(alpha = GroupBevelBottomAlpha),
+                    start = Offset(from, bottom),
+                    end = Offset(to, bottom),
+                    strokeWidth = stroke,
+                )
+            }
             .then(
                 if (interactive) {
                     Modifier
@@ -1399,8 +1439,12 @@ private fun StageBasicContent(
             // hand-picked padding left the outermost tiles all but touching the panel's ends while
             // their neighbours inside had a clear gap. Carrying the trim in the padding is what
             // makes the VISIBLE air equal [rowTileGap] at any density, rather than at the one this
-            // number was chosen on.
-            .padding(horizontal = GroupBoxPaddingX, vertical = rowTileGap() + GroupOutlineEndInset),
+            // number was chosen on. The panel's bevel stroke comes off it too (the stroke rule:
+            // air is measured from the stroke's inner face).
+            .padding(
+                horizontal = GroupBoxPaddingX,
+                vertical = rowTileGap() + GroupOutlineEndInset + GroupBevelStroke,
+            ),
         // Every box wraps its own rows now, so centring costs nothing and covers the case where
         // one is ever given more room than it asked for.
         contentAlignment = Alignment.Center,
@@ -2168,6 +2212,20 @@ private const val GroupOutlineAlpha = 0.55f
  * highlight lagging the cursor. Leaving can take its time; a slower decay is what stops a column
  * walked quickly from strobing.
  */
+/**
+ * **The group panel's bevel** (Dylan, 2026-10-16) — its lit top and bottom edges, tuned APART
+ * from the button bevel in `MinputDefaults.kt` so the two can diverge. Strength = how far each
+ * line is nudged toward white from the panel's live fill (the button bevel's derivation, with
+ * its luminance boost); alpha = the line's opacity; [GroupBevelStroke] = its width (drawn
+ * inside the panel, and carried in the box's padding — the stroke rule). Start values match
+ * the buttons'.
+ */
+private const val GroupBevelTopStrength = 0.10f
+private const val GroupBevelTopAlpha = 1f
+private const val GroupBevelBottomStrength = 0.10f
+private const val GroupBevelBottomAlpha = 1f
+private val GroupBevelStroke = 0.75.dp
+
 private const val GroupBackingLightMillis = 70
 private const val GroupBackingDarkMillis = 150
 
