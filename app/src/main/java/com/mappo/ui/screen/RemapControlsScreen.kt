@@ -597,6 +597,8 @@ fun RemapControlsScreen(
         // own): a compact group centred along that edge, HierarchyBarSlotPadding off it — a row
         // on the top or bottom, a vertical breadcrumb down a side.
         // One instance per bar shown (see showBarComparison), each with its own open crumb.
+        // The bar menu's Settings row opens the frame's global-options drawer.
+        val openAppDrawer = com.mappo.ui.screen.home.LocalOpenAppDrawer.current
         @Composable
         fun hierarchyBarInstance(
             barIndex: Int,
@@ -673,6 +675,7 @@ fun RemapControlsScreen(
                 onPinChange = onBarPinChange,
                 collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
                 onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
+                onOpenSettings = openAppDrawer,
             )
         }
         val hierarchyBar: @Composable (Modifier) -> Unit = { barModifier ->

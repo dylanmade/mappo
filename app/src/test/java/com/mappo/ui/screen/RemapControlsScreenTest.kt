@@ -852,6 +852,13 @@ class RemapControlsScreenTest {
         composeRule.waitForIdle()
     }
 
+    /** The bar menu → its Move cascade (2026-10-16 — what the pin button's menu was). */
+    private fun openMoveMenu() {
+        composeRule.onNodeWithTag("bar:menu").performClick()
+        composeRule.waitForIdle()
+        clickMenuItem("Move")
+    }
+
     private fun clickMenuItem(label: String) {
         composeRule.onNode(
             androidx.compose.ui.test.hasClickAction() and
@@ -993,7 +1000,7 @@ class RemapControlsScreenTest {
 
         fun bounds(tag: String) = composeRule.onNodeWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        val order = listOf("bar:application", "bar:layout", "bar:buttons", "bar:pin")
+        val order = listOf("bar:menu", "bar:application", "bar:layout", "bar:buttons")
             .map { it to bounds(it) }
         // Joined crumbs overlap their BOXES by up to the join depth (the recess is cut out of
         // the box; see MinputBreadcrumbRow) — never by more.
@@ -1007,8 +1014,8 @@ class RemapControlsScreenTest {
         }
         // Every crumb reads the same length (2026-10-14): the round-ended outer crumbs' boxes
         // differ from a middle one's by exactly the end adjust.
-        val app = order[0].second
-        val layout = order[1].second
+        val app = order[1].second
+        val layout = order[2].second
         val adjust = with(composeRule.density) {
             com.mappo.ui.minput.minputBreadcrumbEndAdjust(
                 com.mappo.ui.minput.MinputBreadcrumbPosition.First,
@@ -1022,8 +1029,8 @@ class RemapControlsScreenTest {
     }
 
     /**
-     * **The pin button moves the bar** (2026-10-07): pinned to the bottom end, the bar sits at the
-     * screen's bottom edge with the pin button against its end.
+     * **The bar sits where it is pinned** (2026-10-07): pinned to the end edge, the bar stacks down
+     * that edge, the menu button leading the crumbs (2026-10-16).
      */
     @Test
     fun hierarchyBar_pinnedEnd_stacksDownTheEndEdge() {
@@ -1042,20 +1049,20 @@ class RemapControlsScreenTest {
         }
 
         val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
-        val pin = composeRule.onNodeWithTag("bar:pin", useUnmergedTree = true)
+        val menu = composeRule.onNodeWithTag("bar:menu", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
         val app = composeRule.onNodeWithTag("bar:application", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
         val buttons = composeRule.onNodeWithTag("bar:buttons", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
-        assert(root.right - pin.right < 40f) { "the bar should sit on the end edge: $pin in $root" }
+        assert(root.right - menu.right < 40f) { "the bar should sit on the end edge: $menu in $root" }
         assert(app.left > root.width / 2) { "the crumbs should sit on the end edge: $app" }
         // A vertical breadcrumb: the crumbs stack top to bottom (their joins nest, so the boxes
-        // may overlap), the pin button closing it.
-        assert(app.center.y < buttons.center.y && buttons.bottom <= pin.top) { "should stack: $app $buttons $pin" }
+        // may overlap), the menu button leading it.
+        assert(menu.bottom <= app.top && app.center.y < buttons.center.y) { "should stack: $menu $app $buttons" }
         assert(kotlin.math.abs(app.center.x - buttons.center.x) < 1f) { "should share a column: $app $buttons" }
         // Centred down the edge, not pinned to a corner.
-        assert(app.top > 40f && root.bottom - pin.bottom > 40f) { "should be vertically centred: $app $pin" }
+        assert(menu.top > 40f && root.bottom - buttons.bottom > 40f) { "should be vertically centred: $menu $buttons" }
     }
 
     @Test
@@ -1075,13 +1082,72 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag("bar:pin").performClick()
-        composeRule.waitForIdle()
+        openMoveMenu()
         com.mappo.data.settings.BarPin.entries.forEach {
             composeRule.onNodeWithText(it.label, useUnmergedTree = true).assertExists()
         }
         clickMenuItem("Pin to bottom")
         assert(picked == com.mappo.data.settings.BarPin.BOTTOM) { "got $picked" }
+    }
+
+    /**
+     * **Every label ends before the cascade arrow's column** (2026-10-16): the menu is as wide as
+     * its longest label plus the arrow it reserves, whichever row carries the arrow — so the short
+     * "Move" row's label box (which ends where its arrow begins) still clears the longer
+     * "Settings" text. (Where the cascade OPENS is screen math Robolectric can't show — popups
+     * all report at their own origin; the side rule is covered by MinputCascadeTest.)
+     */
+    @Test
+    fun hierarchyBar_menu_labelsClearTheCascadeArrow() {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("bar:menu").performClick()
+        composeRule.waitForIdle()
+        val settingsInk = composeRule.onNodeWithText("Settings", useUnmergedTree = true).fetchSemanticsNode().let { node ->
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            node.config[SemanticsActions.GetTextLayoutResult].action?.invoke(layouts)
+            layouts.single().getLineRight(0)
+        }
+        val moveBox = composeRule.onNodeWithText("Move", useUnmergedTree = true).fetchSemanticsNode().size.width
+        assert(moveBox >= settingsInk - 0.5f) { "Move's arrow column ($moveBox) cuts into \"Settings\" ($settingsInk)" }
+    }
+
+    /** **The bar menu's Settings row opens the app drawer** (2026-10-16). */
+    @Test
+    fun hierarchyBar_menu_settingsOpensTheAppDrawer() {
+        var opened = 0
+        composeRule.setContent {
+            MaterialTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.mappo.ui.screen.home.LocalOpenAppDrawer provides { opened++ },
+                ) {
+                    Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                        RemapControlsScreen(
+                            config = seedShapedConfig(),
+                            onOpenInputEditor = { _, _, _ -> },
+                            onBack = {},
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("bar:menu").performClick()
+        composeRule.waitForIdle()
+        clickMenuItem("Settings")
+        assert(opened == 1) { "drawer opened $opened times" }
     }
 
     /**
@@ -1107,8 +1173,7 @@ class RemapControlsScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag("bar:pin").performClick()
-        composeRule.waitForIdle()
+        openMoveMenu()
         clickMenuItem("Collapse layout")
         composeRule.waitForIdle()
         assert(collapsed == setOf("LAYOUT")) { "got $collapsed" }
@@ -1116,15 +1181,13 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Alpha layout", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onNodeWithContentDescription("Layout: Alpha layout").assertExists()
 
-        composeRule.onNodeWithTag("bar:pin").performClick()
-        composeRule.waitForIdle()
+        openMoveMenu()
         composeRule.onNodeWithText("Expand layout", useUnmergedTree = true).assertExists()
         clickMenuItem("Collapse all")
         composeRule.waitForIdle()
         assert(collapsed == setOf("APPLICATION", "LAYOUT", "BUTTONS")) { "got $collapsed" }
 
-        composeRule.onNodeWithTag("bar:pin").performClick()
-        composeRule.waitForIdle()
+        openMoveMenu()
         clickMenuItem("Expand all")
         composeRule.waitForIdle()
         assert(collapsed.isEmpty()) { "got $collapsed" }
@@ -1159,8 +1222,7 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Alpha layout", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onNodeWithContentDescription("Layout: Alpha layout").assertExists()
 
-        composeRule.onNodeWithTag("bar:pin").performClick()
-        composeRule.waitForIdle()
+        openMoveMenu()
         composeRule.onNode(
             androidx.compose.ui.test.hasClickAction() and
                 androidx.compose.ui.test.hasAnyDescendant(androidx.compose.ui.test.hasText("Collapse all")),

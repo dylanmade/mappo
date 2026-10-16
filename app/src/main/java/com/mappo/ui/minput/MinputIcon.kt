@@ -262,6 +262,14 @@ val MinputDropdownArrowSize = MinputIconSize.Xxs
 private val inkCache = WeakHashMap<ImageVector, ImageVector>()
 
 /** The same vector with its viewport cropped to its ink (cached; the original on failure). */
+/** The WIDTH [MinputIcon] draws this glyph at for [inkSize] (its longer inked side) — for layout
+ *  math that must reserve exactly a glyph's footprint before it is composed (a menu's predicted
+ *  width reserving its cascade arrow). */
+internal fun ImageVector.minputInkWidth(inkSize: Dp): Dp {
+    val inked = croppedToInk()
+    return inkSize * (inked.viewportWidth / max(inked.viewportWidth, inked.viewportHeight))
+}
+
 internal fun ImageVector.croppedToInk(): ImageVector = synchronized(inkCache) {
     inkCache.getOrPut(this) { runCatching { cropToInk(this) }.getOrNull() ?: this }
 }

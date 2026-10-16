@@ -26,6 +26,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,13 @@ const val ScreenFrameFadeMillis = MinputModalExitMillis
  * frame is heading FOR, so it switches once when toggled rather than on every frame of the resize.
  */
 val LocalScreenAspect = compositionLocalOf<Float?> { null }
+
+/**
+ * Opens the global-options drawer [ScreenFrame] hosts, for a route that summons it from its own
+ * chrome (the hierarchy bar's menu → Settings, 2026-10-16) rather than by the edge swipe. A no-op
+ * outside a [ScreenFrame].
+ */
+val LocalOpenAppDrawer = staticCompositionLocalOf<() -> Unit> { {} }
 
 /** Duration of the resize between the compact 1:1 screen and the full display. */
 private const val ExpandMillis = 320
@@ -162,8 +170,12 @@ fun ScreenFrame(
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val drawerScope = rememberCoroutineScope()
             val closeDrawer: () -> Unit = { drawerScope.launch { drawerState.close() } }
+            // Remembered: a static local's new value recomposes everything under it.
+            val openDrawer: () -> Unit = remember(drawerState, drawerScope) {
+                { drawerScope.launch { drawerState.open() } }
+            }
             val aspect = if (expanded && availH.value > 0f) availW / availH else 1f
-            CompositionLocalProvider(LocalScreenAspect provides aspect) {
+            CompositionLocalProvider(LocalScreenAspect provides aspect, LocalOpenAppDrawer provides openDrawer) {
             ModalNavigationDrawer(
                 drawerState = drawerState,
                 drawerContent = { drawerContent(closeDrawer) },

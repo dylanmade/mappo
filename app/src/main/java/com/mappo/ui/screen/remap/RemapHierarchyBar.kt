@@ -2,6 +2,7 @@ package com.mappo.ui.screen.remap
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -40,8 +41,11 @@ import com.composables.icons.lucide.ChevronsRightLeft
 import com.composables.icons.lucide.FoldHorizontal
 import com.composables.icons.lucide.Gamepad2
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Menu
+import com.composables.icons.lucide.Move
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.UnfoldHorizontal
 import com.mappo.data.model.Layout
 import com.mappo.data.model.steam.ActionSetGraph
@@ -52,6 +56,7 @@ import com.mappo.data.settings.BarPin
 import com.mappo.ui.component.rememberAppIconBitmap
 import com.mappo.ui.icons.PinEdge
 import com.mappo.ui.minput.MinputAction
+import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputBreadcrumbJoin
 import com.mappo.ui.minput.MinputBreadcrumbJoinDefault
 import com.mappo.ui.minput.MinputBreadcrumbMode
@@ -144,9 +149,12 @@ internal fun RemapHierarchyBar(
     /** The crumbs collapsed to their glyph; the rest show [mode]. */
     collapsed: Set<HierarchyCrumb>,
     onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
+    // ── Menu ──
+    /** The bar menu's Settings row: opens the app's global-options drawer. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     // ── Presentation (2026-10-07: tunable while the design settles) ──
-    /** The crumbs' and pin button's control variant. */
+    /** The crumbs' and menu button's control variant. */
     size: MinputSize = MinputBreadcrumbSize,
     /** Whether the crumbs carry their small-caps level labels over the titles. */
     showOverlines: Boolean = true,
@@ -270,23 +278,25 @@ internal fun RemapHierarchyBar(
             }
         }
     }
-    val pinButton: @Composable () -> Unit = {
-        BarPinButton(
+    val menuButton: @Composable () -> Unit = {
+        BarMenuButton(
             pin = pin,
             onPinChange = onPinChange,
             collapsed = collapsed,
             onCollapsedChange = onCollapsedChange,
+            onOpenSettings = onOpenSettings,
             size = size,
         )
     }
     if (pin.sideways) {
-        // Pinned to a side: the crumbs stack down the edge as one VERTICAL breadcrumb — collapsed,
-        // still joined, each bulge leading down into the next — then the pin button.
+        // Pinned to a side: the menu button, then the crumbs stacked down the edge as one VERTICAL
+        // breadcrumb — collapsed, still joined, each bulge leading down into the next.
         Column(
             modifier = modifier.then(BlockTouches),
             verticalArrangement = Arrangement.spacedBy(MinputSegmentGap),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            menuButton()
             MinputBreadcrumbRow(
                 size = size,
                 join = join,
@@ -297,7 +307,6 @@ internal fun RemapHierarchyBar(
                     crumbButton(crumb, MinputBreadcrumbPosition.of(index, crumbs.size))
                 }
             }
-            pinButton()
         }
     } else {
         Row(
@@ -305,12 +314,12 @@ internal fun RemapHierarchyBar(
             horizontalArrangement = Arrangement.spacedBy(MinputSegmentGap),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            menuButton()
             MinputBreadcrumbRow(size = size, join = join, mode = mode) {
                 crumbs.forEachIndexed { index, crumb ->
                     crumbButton(crumb, MinputBreadcrumbPosition.of(index, crumbs.size))
                 }
             }
-            pinButton()
         }
     }
 }
@@ -608,26 +617,79 @@ private fun rememberControllerFocusSeat(): FocusRequester {
     return requester
 }
 
-// ── The pin button ────────────────────────────────────────────────────────────────────────────
+// ── The menu button ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Where the bar sits, and how much of it shows: a circular button wearing the CURRENT edge's
- * glyph, opening the four edges as a single-choice menu — then, under a divider, a
- * collapse/expand toggle per crumb, and under another, collapse all (or expand all, once every
- * crumb is collapsed). Its own button after the crumbs — the M3 button group's convention for a
- * control that is not part of the group's one silhouette. Pinned to a side, the crumbs are always
- * collapsed, so the collapse rows are shown DISABLED — still there, so the menu doesn't change
- * shape — and the top / bottom bar's [collapsed] set is kept for when the bar goes back.
+ * The bar's own menu (2026-10-16 — it was the pin button, wearing the current edge's glyph): a
+ * circular button opening Move and Settings. Its own button LEADING the crumbs (2026-10-16 — it
+ * trailed them as the pin button), apart from their one silhouette as the M3 button group keeps a
+ * control that is not part of it.
+ *
+ * **Move** cascades into what the pin button's menu was: the four edges as a single choice, then,
+ * under a divider, a collapse/expand toggle per crumb, and under another, collapse all (or expand
+ * all, once every crumb is collapsed). Pinned to a side, the crumbs are always collapsed, so the
+ * collapse rows are shown DISABLED — still there, so the menu doesn't change shape — and the top /
+ * bottom bar's [collapsed] set is kept for when the bar goes back.
+ *
+ * **Settings** opens the app's global-options drawer.
  */
 @Composable
-private fun BarPinButton(
+private fun BarMenuButton(
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
     collapsed: Set<HierarchyCrumb>,
     onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
+    onOpenSettings: () -> Unit,
     size: MinputSize,
 ) {
     var open by remember { mutableStateOf(false) }
+    val move = MinputAction(
+        label = "Move",
+        icon = Lucide.Move,
+        submenu = { submenu ->
+            BarMoveMenu(
+                expanded = submenu.expanded,
+                onDismissRequest = submenu.onDismissRequest,
+                onFinished = submenu.onFinished,
+                pin = pin,
+                onPinChange = onPinChange,
+                collapsed = collapsed,
+                onCollapsedChange = onCollapsedChange,
+            )
+        },
+    )
+    val settings = MinputAction(label = "Settings", icon = Lucide.Settings, onClick = onOpenSettings)
+    Box {
+        MinputButton(
+            leadingIcon = Lucide.Menu,
+            contentDescription = "Bar menu",
+            highlighted = open,
+            size = size,
+            onClick = { open = !open },
+            modifier = Modifier.testTag("bar:menu"),
+        )
+        MinputActionMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            actions = listOf(move, settings),
+            placement = pin.panelPlacement(),
+            caret = true,
+        )
+    }
+}
+
+/** The bar menu's Move cascade: where the bar sits, and how much of it shows (see [BarMenuButton]).
+ *  Any choice here closes the whole cascade ([onFinished]); Back steps out to the bar menu. */
+@Composable
+private fun BoxScope.BarMoveMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    onFinished: () -> Unit,
+    pin: BarPin,
+    onPinChange: (BarPin) -> Unit,
+    collapsed: Set<HierarchyCrumb>,
+    onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
+) {
     val canCollapse = !pin.sideways
     val perCrumb = HierarchyCrumb.entries.map { crumb ->
         val isCollapsed = crumb in collapsed
@@ -635,7 +697,10 @@ private fun BarPinButton(
             label = (if (isCollapsed) "Expand " else "Collapse ") + crumb.label,
             icon = if (isCollapsed) Lucide.UnfoldHorizontal else Lucide.FoldHorizontal,
             enabled = canCollapse,
-            onClick = { onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb) },
+            onClick = {
+                onFinished()
+                onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb)
+            },
         )
     }
     val allCollapsed = collapsed.containsAll(HierarchyCrumb.entries)
@@ -643,30 +708,21 @@ private fun BarPinButton(
         label = if (allCollapsed) "Expand all" else "Collapse all",
         icon = if (allCollapsed) Lucide.ChevronsLeftRight else Lucide.ChevronsRightLeft,
         enabled = canCollapse,
-        onClick = { onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet()) },
+        onClick = {
+            onFinished()
+            onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet())
+        },
     )
-    Box {
-        MinputButton(
-            leadingIcon = pin.icon(),
-            contentDescription = "Bar pinned to ${pin.edge}",
-            highlighted = open,
-            size = size,
-            onClick = { open = !open },
-            modifier = Modifier.testTag("bar:pin"),
-        )
-        MinputDropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            current = pin,
-            options = BarPin.entries,
-            optionLabel = { it.label },
-            onPick = onPinChange,
-            optionIcon = { it.icon() },
-            actionGroups = listOf(perCrumb, listOf(all)),
-            placement = pin.panelPlacement(),
-            caret = true,
-        )
-    }
+    MinputDropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        current = pin,
+        options = BarPin.entries,
+        optionLabel = { it.label },
+        onPick = { onFinished(); onPinChange(it) },
+        optionIcon = { it.icon() },
+        actionGroups = listOf(perCrumb, listOf(all)),
+    )
 }
 
 /** Where the bar's menus open from its controls: away from the edge it is pinned to. */

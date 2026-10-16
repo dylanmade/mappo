@@ -72,6 +72,10 @@ import androidx.compose.ui.unit.dp
 import com.mappo.ui.compact.CompactCheckbox
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconSize
+import com.mappo.ui.minput.MinputCascadeSide
+import com.mappo.ui.minput.MinputSubmenuArrow
+import com.mappo.ui.minput.minputCascadeLeft
+import com.mappo.ui.minput.minputCascadeSide
 import com.mappo.ui.minput.MinputMenuMotion
 import kotlin.math.roundToInt
 
@@ -130,8 +134,6 @@ internal sealed interface FlyoutAnchor {
     data class Vertical(val left: Float, val edgeY: Float, val growUp: Boolean) : FlyoutAnchor
 }
 
-internal enum class MenuSide { LEFT, RIGHT }
-
 internal class MenuLevel(
     val id: Int,
     val depth: Int,
@@ -146,7 +148,7 @@ internal class MenuLevel(
     // Where the level was last placed (visible surface, editor-local px). Plain fields: written in
     // placement, read by press handlers — never by composition.
     var bounds: Rect = Rect.Zero
-    var side: MenuSide? = null
+    var side: MinputCascadeSide? = null
 }
 
 /**
@@ -161,7 +163,7 @@ internal class CascadeMenuState {
 
     // Which way the current cascade opens — decided by its FIRST side-placed level, inherited by
     // deeper ones so they don't fold back over their parents. Reset by a fresh root submenu.
-    var cascadeSide: MenuSide? = null
+    var cascadeSide: MinputCascadeSide? = null
 
     /** The editor root's coordinates, so rows can report their bounds editor-local. */
     var editorCoords: LayoutCoordinates? = null
@@ -443,7 +445,7 @@ private fun RootRow(state: CascadeMenuState, item: MenuEntry.Item) {
             color = contentColor,
         )
         if (item.submenu != null) {
-            MinputIcon(Icons.AutoMirrored.Filled.ArrowRight, contentDescription = null, size = MinputIconSize.Xxs, tint = contentColor)
+            MinputSubmenuArrow(tint = contentColor)
         }
     }
 }
@@ -547,24 +549,16 @@ private fun placeFlyout(
 }
 
 /**
- * x for a level beside its parent. The cascade's first level picks a side — RIGHT if it fits, else
- * LEFT (else RIGHT and clamp); deeper levels inherit it, flipping fully only when it doesn't fit.
+ * x for a level beside its parent, by the shared minput cascade rule ([minputCascadeSide]): the
+ * cascade's first level picks a side, deeper levels inherit it. Decided once per level.
  */
 private fun placeSide(state: CascadeMenuState, level: MenuLevel, a: FlyoutAnchor.Side, width: Float, b: Rect): Float {
-    val side = level.side ?: run {
-        val rightFits = a.parentRight + width <= b.right
-        val leftFits = a.parentLeft - width >= b.left
-        when (state.cascadeSide) {
-            MenuSide.RIGHT -> if (rightFits || !leftFits) MenuSide.RIGHT else MenuSide.LEFT
-            MenuSide.LEFT -> if (leftFits || !rightFits) MenuSide.LEFT else MenuSide.RIGHT
-            null -> if (rightFits || !leftFits) MenuSide.RIGHT else MenuSide.LEFT
-        }.also {
+    val side = level.side ?: minputCascadeSide(a.parentLeft, a.parentRight, width, b.left, b.right, state.cascadeSide)
+        .also {
             level.side = it
             if (state.cascadeSide == null) state.cascadeSide = it
         }
-    }
-    val x = if (side == MenuSide.RIGHT) a.parentRight else a.parentLeft - width
-    return EditCanvas.clamp(x, width, b.left, b.right)
+    return EditCanvas.clamp(minputCascadeLeft(side, a.parentLeft, a.parentRight, width), width, b.left, b.right)
 }
 
 @Composable
@@ -680,10 +674,7 @@ private fun MenuRow(state: CascadeMenuState, level: MenuLevel, item: MenuEntry.I
                     slot = true,
                 )
             } else {
-                MinputIcon(
-                    arrow,
-                    contentDescription = null,
-                    size = MinputIconSize.Xxs,
+                MinputSubmenuArrow(
                     tint = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
             }
