@@ -243,6 +243,9 @@ class MainViewModel @Inject constructor(
     /** Names of the hierarchy bar's collapsed crumbs. See BarPinSettings. */
     val barCollapsedCrumbs: StateFlow<Set<String>> = barPinSettings.collapsedCrumbs
 
+    /** The hierarchy bar's compact mode. See BarPinSettings. */
+    val barCompact: StateFlow<Boolean> = barPinSettings.compact
+
     val appLayoutBindings: StateFlow<ImmutableList<AppLayoutBinding>> =
         appLayoutBindingRepository.getAll()
             .map { it.toImmutableList() }
@@ -648,6 +651,8 @@ class MainViewModel @Inject constructor(
     fun setBarPin(pin: com.mappo.data.settings.BarPin) = barPinSettings.setPin(pin)
 
     fun setBarCollapsedCrumbs(names: Set<String>) = barPinSettings.setCollapsedCrumbs(names)
+
+    fun setBarCompact(compact: Boolean) = barPinSettings.setCompact(compact)
 
     /** Re-fire auto-switch against the cached foreground package; called on activity resume. */
     fun reevaluateAutoSwitch() {

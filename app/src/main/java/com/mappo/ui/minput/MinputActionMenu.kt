@@ -20,6 +20,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
  * row. The slot composes the nested menu (any minput menu) inside a `Box` around the row, so it
  * anchors to the row; see [MinputSubmenu] for what it is handed.
  *
+ * [checked] (2026-10-16) makes the row a TOGGLE: it wears a trailing [MinputCheckbox] showing
+ * the state, and activating it invokes [onClick] WITHOUT closing the menu — the box ticks in
+ * place, the conventional checkable menu item. The caller flips the state; the row only reads it.
+ *
  * The menu that renders these lives in `MinputMenu.kt`, alongside [MinputDropdownMenu] — the
  * two share one surface, type scale, row height and disabled treatment.
  */
@@ -30,6 +34,7 @@ class MinputAction(
     val enabled: Boolean = true,
     val destructive: Boolean = false,
     val submenu: (@Composable BoxScope.(MinputSubmenu) -> Unit)? = null,
+    val checked: Boolean? = null,
     val onClick: () -> Unit = {},
 )
 
@@ -39,7 +44,9 @@ class MinputAction(
  * @property expanded pass straight to the nested menu's `expanded`.
  * @property onDismissRequest the nested menu's `onDismissRequest`: closes it ALONE, back to the
  *   parent (Back / B / an outside tap / d-pad back toward the parent each step out one level).
- * @property onFinished call after a choice in the nested menu lands, to close the WHOLE cascade.
+ * @property onFinished call after a choice in the nested menu lands, to close the WHOLE cascade —
+ *   every menu up to the root, at any depth. A minput menu composed here already does this for its
+ *   own rows and options; this is for content that isn't one.
  *
  * WHERE it opens is not the slot's call: any minput menu composed here knows it is nested and
  * opens beside its parent menu by [minputCascadeSide] — its own `placement` and `caret` are ignored.

@@ -259,6 +259,7 @@ fun MainScreen(
     val tileReveal by viewModel.tileReveal.collectAsStateWithLifecycle()
     val barPin by viewModel.barPin.collectAsStateWithLifecycle()
     val barCollapsedCrumbs by viewModel.barCollapsedCrumbs.collectAsStateWithLifecycle()
+    val barCompact by viewModel.barCompact.collectAsStateWithLifecycle()
     val screenFullscreen by viewModel.screenFullscreen.collectAsStateWithLifecycle()
     // Feeds the layout panel's new-layout form (name + auto-switch app associations).
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
@@ -553,9 +554,8 @@ fun MainScreen(
                     onBarPinChange = viewModel::setBarPin,
                     barCollapsedCrumbs = barCollapsedCrumbs,
                     onBarCollapsedCrumbsChange = viewModel::setBarCollapsedCrumbs,
-                    // TEMPORARY: the no-overline / Standard-size bar under the real one, for a
-                    // side-by-side comparison on the device (2026-10-07).
-                    showBarComparison = true,
+                    barCompact = barCompact,
+                    onBarCompactChange = viewModel::setBarCompact,
                     viewingActionSetId = viewingActionSetId,
                     onSelectActionSet = viewModel::setViewingActionSet,
                     onAddActionSet = { title, inheritFromSetId, kind ->

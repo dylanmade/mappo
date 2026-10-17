@@ -80,9 +80,6 @@ import com.mappo.service.input.modes.requiresShizuku
 import com.mappo.service.input.modes.requiresShizukuOnSource
 import com.mappo.ui.compact.scaledLayout
 import com.mappo.ui.minput.MinputDialog
-import com.mappo.ui.minput.MinputBreadcrumbMode
-import com.mappo.ui.minput.MinputBreadcrumbSize
-import com.mappo.ui.minput.MinputSize
 import com.mappo.ui.minput.MinputBarEdgePadding
 import com.mappo.ui.minput.MinputGlyphLabelGap
 import com.mappo.ui.minput.MinputModal
@@ -291,9 +288,9 @@ fun RemapControlsScreen(
     /** Names of the bar's collapsed crumbs ([HierarchyCrumb.name]) — persisted with the pin. */
     barCollapsedCrumbs: Set<String> = emptySet(),
     onBarCollapsedCrumbsChange: (Set<String>) -> Unit = {},
-    // TEMPORARY (2026-10-07): render the comparison bar variant (no overlines, Standard controls)
-    // under the real one, for a side-by-side read on the device.
-    showBarComparison: Boolean = false,
+    /** The bar's compact mode (smaller, no overlines) — persisted with the pin. */
+    barCompact: Boolean = false,
+    onBarCompactChange: (Boolean) -> Unit = {},
 ) {
     // Physical/gesture back returns to the layouts view. The expanded group editor and the
     // options panel overlay install their own (more-recent) BackHandlers while open, so this
@@ -333,10 +330,6 @@ fun RemapControlsScreen(
     // remember — a dropdown is a popup window, and nothing should reopen one after a
     // navigation round-trip.
     var openCrumb by remember { mutableStateOf<HierarchyCrumb?>(null) }
-    // Which bar instance that crumb belongs to — 0 is THE bar; 1 is the side-by-side comparison
-    // variant rendered under it (see HierarchyBarComparison). Two bars sharing one open crumb
-    // would drop two dropdowns at once.
-    var openBarIndex by remember { mutableStateOf(0) }
     // The application chosen in the bar's Application crumb — overrides the viewed layout's own
     // application for the bar's crumbs, the Layout crumb's list, and new-layout association.
     // Unlike the drawer's browsing context it PERSISTS once committed (a tap on an application):
@@ -456,7 +449,7 @@ fun RemapControlsScreen(
         }
         commitCrumb()
     }
-    val openCrumbAt: (Int, HierarchyCrumb) -> Unit = { barIndex, crumb ->
+    val openCrumbAt: (HierarchyCrumb) -> Unit = { crumb ->
         // Switching crumbs: the one being left closes WITHOUT a choice.
         if (openCrumb != null) dismissCrumb()
         crumbSnapshot = CrumbSnapshot(
@@ -467,7 +460,6 @@ fun RemapControlsScreen(
             virtualSetId = if (virtualEditorOpen) viewingVirtualSet?.actionSet?.id else null,
         )
         openCrumb = crumb
-        openBarIndex = barIndex
     }
 
     // Inline editor: which command (Binding) is awaiting a picker result. Survives the
@@ -596,118 +588,87 @@ fun RemapControlsScreen(
         // button — floating OVER the content at the pinned edge (it takes no layout space of its
         // own): a compact group centred along that edge, HierarchyBarSlotPadding off it — a row
         // on the top or bottom, a vertical breadcrumb down a side.
-        // One instance per bar shown (see showBarComparison), each with its own open crumb.
         // The bar menu's Settings row opens the frame's global-options drawer.
         val openAppDrawer = com.mappo.ui.screen.home.LocalOpenAppDrawer.current
-        @Composable
-        fun hierarchyBarInstance(
-            barIndex: Int,
-            size: MinputSize = MinputBreadcrumbSize,
-            showOverlines: Boolean = true,
-            mode: MinputBreadcrumbMode = MinputBreadcrumbMode.Expanded,
-        ) {
-            RemapHierarchyBar(
-                size = size,
-                showOverlines = showOverlines,
-                mode = mode,
-                openCrumb = openCrumb.takeIf { openBarIndex == barIndex },
-                onOpenCrumb = { openCrumbAt(barIndex, it) },
-                onDismissCrumb = dismissCrumb,
-                onCommitCrumb = commitCrumb,
-                appPackage = effectiveAppPackage,
-                appLabel = effectiveAppLabel,
-                apps = installedApps,
-                activeAppPackage = detectedAppPackage,
-                // Focus-preview and tap-select are VIEWING moves only (2026-08-27): they
-                // repoint the browsing context (and the controls view behind), never the
-                // active application — auto detection only turns off when a non-active
-                // app's LAYOUT is actually activated (requestActivate above).
-                onPreviewApplication = { pkg ->
-                    viewingAppOverride = pkg
-                    onPreviewApplication(pkg)
-                },
-                // The layout being viewed; an application with no layout reads "None" —
-                // not the stale name of another app's layout (2026-08-26 audit).
-                layoutTitle = if (showNoLayoutState) "None" else layoutName ?: "Layout",
-                previewing = !isActiveLayout && !showNoLayoutState,
-                layouts = layouts,
-                activeLayoutId = activeLayoutId,
-                onPreviewLayout = onPreviewLayout,
-                onActivateLayout = { layout ->
-                    commitCrumb()
-                    requestActivate(layout.packageName) {
-                        onActivateLayoutCard(layout)
-                        // The activated layout IS the active one now: back to following it.
-                        viewingAppOverride = null
-                        onDrawersClosed()
-                    }
-                },
-                onNewLayout = {
-                    commitCrumb()
-                    addLayoutOpen = true
-                },
-                config = config,
-                viewingSet = if (virtualEditorOpen) viewingVirtualSet else viewingSet,
-                // A focus-preview is always of the hosting editor's own kind of set.
-                onPreviewSet = { id ->
-                    if (virtualEditorOpen) {
-                        onEditOverlay(id)
-                    } else {
-                        onSelectActionSet(id)
-                        onSelectLayer(null)
-                    }
-                },
-                // Both editors are this screen: a set of the other kind just swaps the body
-                // under the bar (2026-10-15 — it used to leave for the overlay editor's own
-                // activity, and come back through an exit confirm).
-                onSelectSet = { id, kind ->
-                    if (kind == ActionSetKind.VIRTUAL) {
-                        onEditOverlay(id)
-                    } else {
-                        onSelectActionSet(id)
-                        onSelectLayer(null)
-                        onCloseVirtualEditor()
-                    }
-                },
-                onAddSet = { kind -> dialog = ActionSetDialogState.Add(kind) },
-                editor = if (virtualEditorOpen) EditorKind.VIRTUAL else EditorKind.PHYSICAL,
-                pin = barPin,
-                onPinChange = onBarPinChange,
-                collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
-                onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
-                onOpenSettings = openAppDrawer,
-            )
-        }
         val hierarchyBar: @Composable (Modifier) -> Unit = { barModifier ->
-            // THE bar, then — temporarily, for a side-by-side read on the device (Dylan,
-            // 2026-10-07) — the comparison variant beside it: no overlines, Standard controls.
-            // Delete the second instance (and openBarIndex) once the comparison is settled.
             // Sized to the bar alone (it FLOATS over the content), so the screen around it
-            // still takes touches.
-            if (barPin.sideways) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(HierarchyBarSlotPadding),
-                    modifier = barModifier
-                        .padding(horizontal = HierarchyBarSlotPadding, vertical = MinputBarEdgePadding),
-                ) {
-                    hierarchyBarInstance(barIndex = 0)
-                    if (showBarComparison) {
-                        hierarchyBarInstance(barIndex = 1, size = MinputSize.Standard, showOverlines = false)
-                    }
-                }
-            } else {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(HierarchyBarSlotPadding),
-                    modifier = barModifier
-                        .padding(horizontal = MinputBarEdgePadding, vertical = HierarchyBarSlotPadding),
-                ) {
-                    hierarchyBarInstance(barIndex = 0)
-                    if (showBarComparison) {
-                        hierarchyBarInstance(barIndex = 1, size = MinputSize.Standard, showOverlines = false)
-                    }
-                }
+            // still takes touches — the inset off the edge included.
+            Box(
+                modifier = barModifier.padding(
+                    horizontal = if (barPin.sideways) HierarchyBarSlotPadding else MinputBarEdgePadding,
+                    vertical = if (barPin.sideways) MinputBarEdgePadding else HierarchyBarSlotPadding,
+                ),
+            ) {
+                RemapHierarchyBar(
+                    openCrumb = openCrumb,
+                    onOpenCrumb = openCrumbAt,
+                    onDismissCrumb = dismissCrumb,
+                    onCommitCrumb = commitCrumb,
+                    appPackage = effectiveAppPackage,
+                    appLabel = effectiveAppLabel,
+                    apps = installedApps,
+                    activeAppPackage = detectedAppPackage,
+                    // Focus-preview and tap-select are VIEWING moves only (2026-08-27): they
+                    // repoint the browsing context (and the controls view behind), never the
+                    // active application — auto detection only turns off when a non-active
+                    // app's LAYOUT is actually activated (requestActivate above).
+                    onPreviewApplication = { pkg ->
+                        viewingAppOverride = pkg
+                        onPreviewApplication(pkg)
+                    },
+                    // The layout being viewed; an application with no layout reads "None" —
+                    // not the stale name of another app's layout (2026-08-26 audit).
+                    layoutTitle = if (showNoLayoutState) "None" else layoutName ?: "Layout",
+                    previewing = !isActiveLayout && !showNoLayoutState,
+                    layouts = layouts,
+                    activeLayoutId = activeLayoutId,
+                    onPreviewLayout = onPreviewLayout,
+                    onActivateLayout = { layout ->
+                        commitCrumb()
+                        requestActivate(layout.packageName) {
+                            onActivateLayoutCard(layout)
+                            // The activated layout IS the active one now: back to following it.
+                            viewingAppOverride = null
+                            onDrawersClosed()
+                        }
+                    },
+                    onNewLayout = {
+                        commitCrumb()
+                        addLayoutOpen = true
+                    },
+                    config = config,
+                    viewingSet = if (virtualEditorOpen) viewingVirtualSet else viewingSet,
+                    // A focus-preview is always of the hosting editor's own kind of set.
+                    onPreviewSet = { id ->
+                        if (virtualEditorOpen) {
+                            onEditOverlay(id)
+                        } else {
+                            onSelectActionSet(id)
+                            onSelectLayer(null)
+                        }
+                    },
+                    // Both editors are this screen: a set of the other kind just swaps the body
+                    // under the bar (2026-10-15 — it used to leave for the overlay editor's own
+                    // activity, and come back through an exit confirm).
+                    onSelectSet = { id, kind ->
+                        if (kind == ActionSetKind.VIRTUAL) {
+                            onEditOverlay(id)
+                        } else {
+                            onSelectActionSet(id)
+                            onSelectLayer(null)
+                            onCloseVirtualEditor()
+                        }
+                    },
+                    onAddSet = { kind -> dialog = ActionSetDialogState.Add(kind) },
+                    editor = if (virtualEditorOpen) EditorKind.VIRTUAL else EditorKind.PHYSICAL,
+                    pin = barPin,
+                    onPinChange = onBarPinChange,
+                    collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
+                    onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
+                    onOpenSettings = openAppDrawer,
+                    compact = barCompact,
+                    onCompactChange = onBarCompactChange,
+                )
             }
         }
         Box(
@@ -758,7 +719,7 @@ fun RemapControlsScreen(
                                 NoLayoutAssignedView(
                                     appLabel = effectiveAppLabel,
                                     onCreateLayout = { addLayoutOpen = true },
-                                    onBrowseLayouts = { openCrumbAt(0, HierarchyCrumb.LAYOUT) },
+                                    onBrowseLayouts = { openCrumbAt(HierarchyCrumb.LAYOUT) },
                                 )
                             } else Column(modifier = Modifier.fillMaxSize()) {
                                 if (hasAnalogModeInConfig && !shizukuReady) {

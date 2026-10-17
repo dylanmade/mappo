@@ -42,6 +42,7 @@ import com.composables.icons.lucide.FoldHorizontal
 import com.composables.icons.lucide.Gamepad2
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Menu
+import com.composables.icons.lucide.Minimize2
 import com.composables.icons.lucide.Move
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -99,8 +100,9 @@ import kotlinx.collections.immutable.ImmutableList
  *    the editor switch; see [ActionSetKind]).
  *
  * Each crumb is EXPANDED (glyph + overline + title) or COLLAPSED to its glyph — an icon button
- * still wearing its join ([collapsed], 2026-10-14). The pin button's menu toggles each crumb and
- * collapses / expands them all, under the four edges.
+ * still wearing its join ([collapsed], 2026-10-14). The bar menu's Move cascade toggles each crumb
+ * and collapses / expands them all, under the four edges, and switches [compact] mode — the
+ * smaller bar, its crumbs' overlines dropped (2026-10-16; was a temporary second bar).
  *
  * The crumb whose panel is open wears the highlight plane. Which crumb is open is the CALLER's
  * state ([openCrumb]) because closing one is not a single thing: [onDismissCrumb] is a close with
@@ -152,17 +154,21 @@ internal fun RemapHierarchyBar(
     // ── Menu ──
     /** The bar menu's Settings row: opens the app's global-options drawer. */
     onOpenSettings: () -> Unit,
+    // ── Compact ──
+    /** The smaller bar: [BarCompactSize] controls, no overlines over the crumbs' titles,
+     *  and a smaller menu glyph. */
+    compact: Boolean,
+    onCompactChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    // ── Presentation (2026-10-07: tunable while the design settles) ──
-    /** The crumbs' and menu button's control variant. */
-    size: MinputSize = MinputBreadcrumbSize,
-    /** Whether the crumbs carry their small-caps level labels over the titles. */
-    showOverlines: Boolean = true,
     /** Every crumb's mode unless it is [collapsed]. */
     mode: MinputBreadcrumbMode = MinputBreadcrumbMode.Expanded,
     join: MinputBreadcrumbJoin = MinputBreadcrumbJoinDefault,
 ) {
     val crumbs = HierarchyCrumb.entries
+    // The crumbs' and menu button's control variant, and whether the crumbs carry their
+    // small-caps level labels over the titles.
+    val size = if (compact) BarCompactSize else MinputBreadcrumbSize
+    val showOverlines = !compact
     // Down a side the crumbs are ALWAYS collapsed — a glyph stack. [collapsed] is left untouched
     // (and the pin menu's toggles disabled), so it is still the top / bottom bar's when the bar
     // goes back to an edge it can spread along.
@@ -285,6 +291,8 @@ internal fun RemapHierarchyBar(
             collapsed = collapsed,
             onCollapsedChange = onCollapsedChange,
             onOpenSettings = onOpenSettings,
+            compact = compact,
+            onCompactChange = onCompactChange,
             size = size,
         )
     }
@@ -625,9 +633,10 @@ private fun rememberControllerFocusSeat(): FocusRequester {
  * trailed them as the pin button), apart from their one silhouette as the M3 button group keeps a
  * control that is not part of it.
  *
- * **Move** cascades into what the pin button's menu was: the four edges as a single choice, then,
- * under a divider, a collapse/expand toggle per crumb, and under another, collapse all (or expand
- * all, once every crumb is collapsed). Pinned to a side, the crumbs are always collapsed, so the
+ * **Move** cascades into what the pin button's menu was: the four edges as a single choice; under
+ * a divider, the COLLAPSE section — a collapse/expand toggle per crumb, then collapse all (or expand
+ * all, once every crumb is collapsed); and under another, the Compact mode checkbox (2026-10-16),
+ * which leaves the menu up so the tick shows. Pinned to a side, the crumbs are always collapsed, so the
  * collapse rows are shown DISABLED — still there, so the menu doesn't change shape — and the top /
  * bottom bar's [collapsed] set is kept for when the bar goes back.
  *
@@ -640,6 +649,8 @@ private fun BarMenuButton(
     collapsed: Set<HierarchyCrumb>,
     onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
     onOpenSettings: () -> Unit,
+    compact: Boolean,
+    onCompactChange: (Boolean) -> Unit,
     size: MinputSize,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -650,11 +661,12 @@ private fun BarMenuButton(
             BarMoveMenu(
                 expanded = submenu.expanded,
                 onDismissRequest = submenu.onDismissRequest,
-                onFinished = submenu.onFinished,
                 pin = pin,
                 onPinChange = onPinChange,
                 collapsed = collapsed,
                 onCollapsedChange = onCollapsedChange,
+                compact = compact,
+                onCompactChange = onCompactChange,
             )
         },
     )
@@ -665,6 +677,9 @@ private fun BarMenuButton(
             contentDescription = "Bar menu",
             highlighted = open,
             size = size,
+            // A step under the variant's glyph on the compact bar, where the S hamburger read
+            // heavy beside the smaller crumbs (Dylan, 2026-10-16).
+            iconSize = if (compact) MinputIconSize.Xs else null,
             onClick = { open = !open },
             modifier = Modifier.testTag("bar:menu"),
         )
@@ -679,16 +694,18 @@ private fun BarMenuButton(
 }
 
 /** The bar menu's Move cascade: where the bar sits, and how much of it shows (see [BarMenuButton]).
- *  Any choice here closes the whole cascade ([onFinished]); Back steps out to the bar menu. */
+ *  Any choice here closes the whole cascade (the minput menu does that itself); Back steps out to
+ *  the bar menu. */
 @Composable
 private fun BoxScope.BarMoveMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
-    onFinished: () -> Unit,
     pin: BarPin,
     onPinChange: (BarPin) -> Unit,
     collapsed: Set<HierarchyCrumb>,
     onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
+    compact: Boolean,
+    onCompactChange: (Boolean) -> Unit,
 ) {
     val canCollapse = !pin.sideways
     val perCrumb = HierarchyCrumb.entries.map { crumb ->
@@ -697,10 +714,7 @@ private fun BoxScope.BarMoveMenu(
             label = (if (isCollapsed) "Expand " else "Collapse ") + crumb.label,
             icon = if (isCollapsed) Lucide.UnfoldHorizontal else Lucide.FoldHorizontal,
             enabled = canCollapse,
-            onClick = {
-                onFinished()
-                onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb)
-            },
+            onClick = { onCollapsedChange(if (isCollapsed) collapsed - crumb else collapsed + crumb) },
         )
     }
     val allCollapsed = collapsed.containsAll(HierarchyCrumb.entries)
@@ -708,10 +722,14 @@ private fun BoxScope.BarMoveMenu(
         label = if (allCollapsed) "Expand all" else "Collapse all",
         icon = if (allCollapsed) Lucide.ChevronsLeftRight else Lucide.ChevronsRightLeft,
         enabled = canCollapse,
-        onClick = {
-            onFinished()
-            onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet())
-        },
+        onClick = { onCollapsedChange(if (allCollapsed) emptySet() else HierarchyCrumb.entries.toSet()) },
+    )
+    // A toggle: flips in place, the menu staying up (see MinputAction.checked).
+    val compactMode = MinputAction(
+        label = "Compact mode",
+        icon = Lucide.Minimize2,
+        checked = compact,
+        onClick = { onCompactChange(!compact) },
     )
     MinputDropdownMenu(
         expanded = expanded,
@@ -719,9 +737,9 @@ private fun BoxScope.BarMoveMenu(
         current = pin,
         options = BarPin.entries,
         optionLabel = { it.label },
-        onPick = { onFinished(); onPinChange(it) },
+        onPick = onPinChange,
         optionIcon = { it.icon() },
-        actionGroups = listOf(perCrumb, listOf(all)),
+        actionGroups = listOf(perCrumb + all, listOf(compactMode)),
     )
 }
 
@@ -740,6 +758,9 @@ private fun BarPin.icon(): ImageVector = when (this) {
     BarPin.END -> PinEdge.End
     BarPin.BOTTOM -> PinEdge.Bottom
 }.icon
+
+/** The compact bar's control variant (the old comparison bar's). */
+private val BarCompactSize = MinputSize.Standard
 
 /** Width of the button-set panel — short labels, no search row; room for "New physical set". */
 private val SetPanelWidth = 180.dp

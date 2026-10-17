@@ -34,8 +34,9 @@ enum class BarPin(
 }
 
 /** Persisted home for [BarPin] — one class per setting in the app's one settings file, like
- *  [TileRevealSettings] — and for which of the bar's crumbs are COLLAPSED to their glyph
- *  (2026-10-14; set from the pin button's menu). Crumbs are stored by name, so this layer stays
+ *  [TileRevealSettings] — for which of the bar's crumbs are COLLAPSED to their glyph
+ *  (2026-10-14; set from the bar menu's Move cascade), and for COMPACT mode (2026-10-16: the
+ *  smaller bar, no overlines — was a temporary second bar shown under the real one). Crumbs are stored by name, so this layer stays
  *  ignorant of the UI's crumb enum. */
 @Singleton
 class BarPinSettings @Inject constructor(
@@ -52,10 +53,15 @@ class BarPinSettings @Inject constructor(
     /** Names of the collapsed crumbs; empty = every crumb expanded (the default). */
     val collapsedCrumbs: StateFlow<Set<String>> = _collapsedCrumbs.asStateFlow()
 
+    private val _compact = MutableStateFlow(prefs.getBoolean(KEY_COMPACT, false))
+    /** The compact bar: smaller controls, no overlines over the crumbs' titles. Off by default. */
+    val compact: StateFlow<Boolean> = _compact.asStateFlow()
+
     private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             KEY_BAR_PIN -> _pin.value = read()
             KEY_COLLAPSED_CRUMBS -> _collapsedCrumbs.value = readCollapsed()
+            KEY_COMPACT -> _compact.value = prefs.getBoolean(KEY_COMPACT, false)
         }
     }
 
@@ -70,6 +76,10 @@ class BarPinSettings @Inject constructor(
     fun setCollapsedCrumbs(names: Set<String>) {
         // A copy: SharedPreferences must not be handed a set the caller may mutate.
         prefs.edit().putStringSet(KEY_COLLAPSED_CRUMBS, names.toSet()).apply()
+    }
+
+    fun setCompact(compact: Boolean) {
+        prefs.edit().putBoolean(KEY_COMPACT, compact).apply()
     }
 
     private fun readCollapsed(): Set<String> =
@@ -88,5 +98,6 @@ class BarPinSettings @Inject constructor(
         private const val PREFS_NAME = "mappo_settings"
         private const val KEY_BAR_PIN = "bar_pin"
         private const val KEY_COLLAPSED_CRUMBS = "bar_collapsed_crumbs"
+        private const val KEY_COMPACT = "bar_compact"
     }
 }

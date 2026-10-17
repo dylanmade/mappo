@@ -1195,6 +1195,142 @@ class RemapControlsScreenTest {
     }
 
     /**
+     * **Compact mode is a checkbox in the Move menu** (2026-10-16 — replaced the temporary second
+     * bar): toggling it drops the crumbs' overlines and leaves the menu up so the tick shows.
+     */
+    @Test
+    fun hierarchyBar_moveMenu_compactMode_dropsOverlines_andStaysOpen() {
+        var compact by androidx.compose.runtime.mutableStateOf(false)
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        layoutName = "Alpha layout",
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        barCompact = compact,
+                        onBarCompactChange = { compact = it },
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        // One bar, wearing its overlines.
+        composeRule.onAllNodesWithTag("bar:menu").assertCountEquals(1)
+        composeRule.onAllNodesWithText("APPLICATION", useUnmergedTree = true)
+            .assertCountEquals(1)
+
+        openMoveMenu()
+        clickMenuItem("Compact mode")
+        composeRule.waitForIdle()
+        assert(compact) { "compact not set" }
+        composeRule.onAllNodesWithText("APPLICATION", useUnmergedTree = true)
+            .assertCountEquals(0)
+        // Still up: the toggle doesn't close the cascade.
+        composeRule.onNodeWithText("Compact mode", useUnmergedTree = true).assertExists()
+
+        clickMenuItem("Compact mode")
+        composeRule.waitForIdle()
+        assert(!compact) { "compact not cleared" }
+    }
+
+    /** The app's popup windows (menus), oldest first — a cascade's nested menu is the last. */
+    private fun popupWindows(): List<android.view.View> {
+        val global = Class.forName("android.view.WindowManagerGlobal").getMethod("getInstance").invoke(null)
+        val views = global.javaClass.getDeclaredField("mViews").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        return (views.get(global) as List<android.view.View>).filter { it.javaClass.simpleName == "PopupLayout" }
+    }
+
+    /** A tap delivered to [window] at a SCREEN point (raw coordinates), as the topmost focusable
+     *  popup receives every touch — including the ones that land outside it. */
+    private fun tapWindowAt(window: android.view.View, screenX: Float, screenY: Float) {
+        val location = IntArray(2).also(window::getLocationOnScreen)
+        val time = android.os.SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            val event = android.view.MotionEvent.obtain(time, time, action, screenX, screenY, 0)
+            event.setLocation(screenX - location[0], screenY - location[1])
+            window.dispatchTouchEvent(event)
+            event.recycle()
+        }
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.waitForIdle()
+    }
+
+    private fun setBarScreen(compact: Boolean, pin: com.mappo.data.settings.BarPin) {
+        composeRule.setContent {
+            MaterialTheme {
+                Surface(modifier = androidx.compose.ui.Modifier.size(1200.dp, 1600.dp)) {
+                    RemapControlsScreen(
+                        config = seedShapedConfig(),
+                        layoutName = "Alpha layout",
+                        onOpenInputEditor = { _, _, _ -> },
+                        onBack = {},
+                        barPin = pin,
+                        barCompact = compact,
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * **The bar menu hangs off its button, however near the edge** (2026-10-16) — M3's
+     * `DropdownMenu` kept 48dp off the window's top and bottom, which pushed the compact bar's
+     * menu a gap away from its (shorter) button; the minput surface places it itself now.
+     */
+    @Test
+    fun hierarchyBar_menu_opensFlushAgainstItsButton_topCompact() = assertMenuFlush(compact = true, top = true)
+
+    @Test
+    fun hierarchyBar_menu_opensFlushAgainstItsButton_top() = assertMenuFlush(compact = false, top = true)
+
+    @Test
+    fun hierarchyBar_menu_opensFlushAgainstItsButton_bottomCompact() = assertMenuFlush(compact = true, top = false)
+
+    @Test
+    fun hierarchyBar_menu_opensFlushAgainstItsButton_bottom() = assertMenuFlush(compact = false, top = false)
+
+    private fun assertMenuFlush(compact: Boolean, top: Boolean) {
+        setBarScreen(compact, if (top) com.mappo.data.settings.BarPin.TOP else com.mappo.data.settings.BarPin.BOTTOM)
+        val button = composeRule.onNodeWithTag("bar:menu").fetchSemanticsNode()
+        composeRule.onNodeWithTag("bar:menu").performClick()
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.waitForIdle()
+        val menu = popupWindows().single()
+        val y = (menu.layoutParams as android.view.WindowManager.LayoutParams).y
+        val gap = with(composeRule.density) { 6.dp.roundToPx() } // the caret's depth
+        val buttonTop = button.positionOnScreen.y.toInt()
+        val expected = if (top) buttonTop + button.size.height + gap else buttonTop - gap - menu.height
+        assert(y == expected) { "top=$top compact=$compact: menu at y=$y, expected $expected" }
+    }
+
+    /**
+     * **An outside tap closes the whole cascade** (2026-10-16) — the open submenu's popup takes
+     * every touch, so it alone used to close, leaving the bar menu up. A tap on the PARENT menu
+     * still steps back out to it.
+     */
+    @Test
+    fun hierarchyBar_moveSubmenu_outsideTapClosesBothMenus_parentTapClosesOnlyTheSubmenu() {
+        setBarScreen(compact = false, pin = com.mappo.data.settings.BarPin.TOP)
+        openMoveMenu()
+        assert(popupWindows().size == 2) { "expected the bar menu + Move, got ${popupWindows().size}" }
+
+        val parent = popupWindows().first()
+        val parentAt = IntArray(2).also(parent::getLocationOnScreen)
+        tapWindowAt(popupWindows().last(), parentAt[0] + 20f, parentAt[1] + parent.height - 15f)
+        assert(popupWindows().size == 1) { "a tap on the bar menu should close only Move: ${popupWindows().size}" }
+        composeRule.onNodeWithText("Move", useUnmergedTree = true).assertExists()
+
+        clickMenuItem("Move")
+        tapWindowAt(popupWindows().last(), 1_100f, 700f)
+        assert(popupWindows().isEmpty()) { "an outside tap should close both menus: ${popupWindows().size}" }
+    }
+
+    /**
      * **Down a side the crumbs are always collapsed** (2026-10-14) — whatever the top / bottom
      * bar's collapse set says, which the side pin leaves untouched; the pin menu's collapse rows
      * are there but disabled.

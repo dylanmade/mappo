@@ -1,5 +1,10 @@
 package com.mappo.ui.minput
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.foundation.layout.absolutePadding
 import android.view.View
 import androidx.compose.foundation.layout.Box
@@ -16,7 +21,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuPopup
+import androidx.compose.material3.DropdownMenuPopupPositionProvider
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.window.PopupProperties
+import android.os.SystemClock
+import android.view.MotionEvent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
@@ -49,7 +69,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -83,10 +102,14 @@ enum class MinputMenuPlacement { Below, Start, End }
  * verb-list [MinputActionMenu] both render through it, so their placement, caret and item
  * treatment cannot drift apart.
  *
- * **This is a thin layer over M3's `DropdownMenu`, deliberately.** How the menu measures,
- * animates, positions and dismisses is all M3's; minput contributes exactly two things — an
- * optional side placement expressed through M3's own `offset` parameter, and an optional
- * caret expressed as the surface's `shape`.
+ * **This is a thin layer over M3's `DropdownMenuPopup`, deliberately.** How the menu animates and
+ * dismisses is M3's, and its surface is `DropdownMenu`'s own (container color, elevation, shape
+ * defaults); minput contributes an optional side placement expressed as an anchor-relative
+ * offset, an optional caret expressed as the surface's `shape`, and — since 2026-10-16 — the
+ * POSITIONING itself ([MinputMenuPositionProvider]). `DropdownMenu` hard-codes a 48dp margin off
+ * the window's top and bottom and won't take a provider: a menu hung off a control nearer the
+ * edge than that (the hierarchy bar's menu button, compact) was shoved down to the margin, a
+ * visible gap away from its button.
  *
  * In particular the menu gets NO fixed width, NO fixed row height and NO overridden text
  * style. An earlier pass added all three and each one backfired: M3's menu item stretches its
@@ -102,6 +125,7 @@ enum class MinputMenuPlacement { Below, Start, End }
  * even when M3 flips the menu above the control to fit it on screen. (Predicting it is what
  * left the caret stranded above tall menus, always pointing at the first row.)
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun BoxScope.MinputMenuSurface(
     expanded: Boolean,
@@ -156,6 +180,10 @@ internal fun BoxScope.MinputMenuSurface(
     // This menu as a PARENT: where its body landed and which way its cascade runs, for its rows'
     // nested menus.
     val frame = remember { MinputMenuFrame() }
+    // How a choice made anywhere in this menu closes the WHOLE cascade: a root menu just closes;
+    // a nested one hands it up to its parent, which hands it up in turn — so it reaches the root
+    // from any depth, never stopping one level up.
+    frame.closeCascade = cascadeParent?.finish ?: onDismissRequest
 
     val anchorWidth = with(density) { (anchorRect?.width ?: 0f).toDp() }
     val anchorHeight = with(density) { (anchorRect?.height ?: 0f).toDp() }
@@ -273,85 +301,206 @@ internal fun BoxScope.MinputMenuSurface(
     val stepOut = cascadeParent?.stepOut
     val towardParent = if (layoutDirection == LayoutDirection.Ltr) Key.DirectionLeft else Key.DirectionRight
 
+    // A NESTED menu's popup takes every touch while it is up (it is the topmost focusable window),
+    // so an outside tap only ever reached it — and closed it alone, leaving its parent open. Where
+    // the tap LANDED decides (2026-10-16): on the parent menu, step back out to it (Back does the
+    // same); anywhere else, the tap was a dismissal of the whole cascade.
+    val outsideTap = remember { OutsideTapRef() }
+    val dismiss: () -> Unit = if (cascadeParent == null) onDismissRequest else {
+        {
+            val tap = outsideTap.take()
+            val parentBody = cascadeParent.frame.body
+            if (tap == null || (parentBody != null && parentBody.contains(tap))) onDismissRequest()
+            else cascadeParent.finish()
+        }
+    }
+
+    val positionProvider = remember(offset, density) { MinputMenuPositionProvider(offset, density) }
+
     // The menu motion, not the theme's expressive spring (see MinputMenuMotion).
     MinputMenuMotionScope {
-        DropdownMenu(
+        DropdownMenuPopup(
             expanded = expanded,
-            onDismissRequest = onDismissRequest,
-            offset = offset,
-            shape = shape,
-            // The caret is carved OUT of the surface, so the body is [MinputMenuCaretDepth]
-            // narrower on the caret side and content has to be inset by the same amount — without
-            // it, rows sit flush against the body edge and read as missing their left padding.
-            // Inset and shape must agree on WHICH side (see [caretOnStart]); a mismatch is what
-            // produced the dead stripe.
-            modifier = modifier
-                // The PREDICTED width, enforced (2026-10-16): placement already assumes it, and
-                // every row's trailing glyph (check, cascade arrow) then sits at the end of a width
-                // reserved PAST the longest label — so no row's glyph can sit over another row's
-                // label, whichever row carries it. Measured intrinsically instead, a menu took its
-                // longest ROW's width, and a short row's arrow landed over a long row's text. Plus
-                // the caret's depth when it is carved out of a side.
-                .width(
-                    menuWidth + if (wantsCaret && (caretEdge == MinputCaretEdge.Start || caretEdge == MinputCaretEdge.End)) {
-                        MinputMenuCaretDepth
-                    } else 0.dp,
-                )
-                .then(
-                    if (stepOut == null) Modifier else Modifier.onPreviewKeyEvent { event ->
-                        if (event.key != towardParent) return@onPreviewKeyEvent false
-                        if (event.type == KeyEventType.KeyDown) stepOut()
-                        true
-                    },
-                )
-                // Where the menu landed, for the caret's aim: the popup WINDOW's own bounds, read
-                // when the menu lays out. Not this node's screen rect — that is drawn through the
-                // menu's open SCALE, so it changed every frame of the animation and the caret slid
-                // across the edge as the menu grew.
-                .onGloballyPositioned { coords ->
-                    val landed = popupView.view?.screenRectOrNull() ?: coords.screenRectOrNull()
-                    menuScreen = landed
-                    // The BODY, for nested menus to sit flush against: the caret's carve excluded.
-                    frame.body = landed?.let { r ->
-                        val depth = MinputMenuCaretDepth.toPxIn(density)
-                        when {
-                            !wantsCaret -> r
-                            caretEdge == MinputCaretEdge.Start -> r.copy(left = r.left + depth)
-                            caretEdge == MinputCaretEdge.End -> r.copy(right = r.right - depth)
-                            else -> r
-                        }
-                    }
+            onDismissRequest = dismiss,
+            popupPositionProvider = positionProvider,
+            properties = PopupProperties(focusable = true),
+        ) {
+            // The popup's own window (its root view): where the menu landed, unscaled.
+            val popupRoot = LocalView.current
+            popupView.view = popupRoot
+            // The popup window's root sees the touch that falls outside it, before it dismisses.
+            DisposableEffect(popupRoot) {
+                val window = popupRoot.parent as? View
+                window?.setOnTouchListener { _, event ->
+                    outsideTap.record(event)
+                    false
                 }
-                // Frame inset, VERTICAL only. M3's own 8dp band is collapsed away first so this is
-                // the single value in play rather than a stack of two.
-                //
-                // Horizontal frame inset is deliberately absent: the rows own their horizontal
-                // padding, and insetting the frame instead would leave a margin down each side
-                // that no row's highlight reaches — the same dead-stripe problem the caret inset
-                // caused. Rows run the full width; the frame only holds them off the top and
-                // bottom edges.
-                .padding(vertical = framePadding)
-                .collapseMenuVerticalPadding(collapse = true)
-                .then(
-                    // Physical sides: the caret shape's Start / End are its left / right.
-                    if (!wantsCaret) Modifier else when (caretEdge) {
-                        MinputCaretEdge.Start -> Modifier.absolutePadding(left = MinputMenuCaretDepth)
-                        MinputCaretEdge.End -> Modifier.absolutePadding(right = MinputMenuCaretDepth)
-                        MinputCaretEdge.Top -> Modifier.padding(top = MinputMenuCaretDepth)
-                        MinputCaretEdge.Bottom -> Modifier.padding(bottom = MinputMenuCaretDepth)
-                    },
-                ),
-            content = {
-                // The popup's own window (its root view): where the menu landed, unscaled.
-                popupView.view = LocalView.current
-                CompositionLocalProvider(
-                    LocalMinputMenuFrame provides frame,
-                    LocalMinputCascadeParent provides null,
-                ) { content() }
-            },
-        )
+                onDispose { window?.setOnTouchListener(null) }
+            }
+            Surface(
+                shape = shape,
+                color = MenuDefaults.containerColor,
+                tonalElevation = MenuDefaults.TonalElevation,
+                shadowElevation = MenuDefaults.ShadowElevation,
+            ) {
+                Column(
+                    // The caret is carved OUT of the surface, so the body is [MinputMenuCaretDepth]
+                    // narrower on the caret side and content has to be inset by the same amount — without
+                    // it, rows sit flush against the body edge and read as missing their left padding.
+                    // Inset and shape must agree on WHICH side (see [caretOnStart]); a mismatch is what
+                    // produced the dead stripe.
+                    modifier = modifier
+                        // The PREDICTED width, enforced (2026-10-16): placement already assumes it, and
+                        // every row's trailing glyph (check, cascade arrow) then sits at the end of a width
+                        // reserved PAST the longest label — so no row's glyph can sit over another row's
+                        // label, whichever row carries it. Measured intrinsically instead, a menu took its
+                        // longest ROW's width, and a short row's arrow landed over a long row's text. Plus
+                        // the caret's depth when it is carved out of a side.
+                        .width(
+                            menuWidth + if (wantsCaret && (caretEdge == MinputCaretEdge.Start || caretEdge == MinputCaretEdge.End)) {
+                                MinputMenuCaretDepth
+                            } else 0.dp,
+                        )
+                        .then(
+                            if (stepOut == null) Modifier else Modifier.onPreviewKeyEvent { event ->
+                                if (event.key != towardParent) return@onPreviewKeyEvent false
+                                if (event.type == KeyEventType.KeyDown) stepOut()
+                                true
+                            },
+                        )
+                        // Where the menu landed, for the caret's aim: the popup WINDOW's own bounds, read
+                        // when the menu lays out. Not this node's screen rect — that is drawn through the
+                        // menu's open SCALE, so it changed every frame of the animation and the caret slid
+                        // across the edge as the menu grew.
+                        .onGloballyPositioned { coords ->
+                            val landed = popupView.view?.screenRectOrNull() ?: coords.screenRectOrNull()
+                            menuScreen = landed
+                            // The BODY, for nested menus to sit flush against: the caret's carve excluded.
+                            frame.body = landed?.let { r ->
+                                val depth = MinputMenuCaretDepth.toPxIn(density)
+                                when {
+                                    !wantsCaret -> r
+                                    caretEdge == MinputCaretEdge.Start -> r.copy(left = r.left + depth)
+                                    caretEdge == MinputCaretEdge.End -> r.copy(right = r.right - depth)
+                                    else -> r
+                                }
+                            }
+                        }
+                        // Frame inset, VERTICAL only — the single value in play (M3's own 8dp band was
+                        // collapsed away while this hosted `DropdownMenu`; the popup has none).
+                        //
+                        // Horizontal frame inset is deliberately absent: the rows own their horizontal
+                        // padding, and insetting the frame instead would leave a margin down each side
+                        // that no row's highlight reaches — the same dead-stripe problem the caret inset
+                        // caused. Rows run the full width; the frame only holds them off the top and
+                        // bottom edges.
+                        .padding(vertical = framePadding)
+                        .then(
+                            // Physical sides: the caret shape's Start / End are its left / right.
+                            if (!wantsCaret) Modifier else when (caretEdge) {
+                                MinputCaretEdge.Start -> Modifier.absolutePadding(left = MinputMenuCaretDepth)
+                                MinputCaretEdge.End -> Modifier.absolutePadding(right = MinputMenuCaretDepth)
+                                MinputCaretEdge.Top -> Modifier.padding(top = MinputMenuCaretDepth)
+                                MinputCaretEdge.Bottom -> Modifier.padding(bottom = MinputMenuCaretDepth)
+                            },
+                        )
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    CompositionLocalProvider(
+                        LocalMinputMenuFrame provides frame,
+                        LocalMinputCascadeParent provides null,
+                    ) { content() }
+                }
+            }
+        }
     }
 }
+
+/**
+ * Where every minput menu goes: [offset] from the anchor exactly as `DropdownMenu` reads one — x
+ * from the anchor's START (its end in RTL), y from its BOTTOM — then, when that runs off the
+ * window, M3's own fallbacks: the end-aligned x, the flipped-above y (the same offset upward).
+ * Clamped into the window with NO margin: `DropdownMenu`'s 48dp off the top and bottom is the
+ * reason this exists (see [MinputMenuSurface]). Feeds the open motion its transform origin, as
+ * M3's provider does.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private class MinputMenuPositionProvider(
+    offset: DpOffset,
+    density: Density,
+) : DropdownMenuPopupPositionProvider {
+    override val transformOriginState = mutableStateOf(TransformOrigin.Center)
+    private val dx = with(density) { offset.x.roundToPx() }
+    private val dy = with(density) { offset.y.roundToPx() }
+
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val w = popupContentSize.width
+        val h = popupContentSize.height
+        fun fitsX(x: Int) = x >= 0 && x + w <= windowSize.width
+        val ltr = layoutDirection == LayoutDirection.Ltr
+        val startAligned = if (ltr) anchorBounds.left + dx else anchorBounds.right - dx - w
+        val endAligned = if (ltr) anchorBounds.right - dx - w else anchorBounds.left + dx
+        val x = (if (fitsX(startAligned) || !fitsX(endAligned)) startAligned else endAligned)
+            .coerceIn(0, (windowSize.width - w).coerceAtLeast(0))
+        val below = anchorBounds.bottom + dy
+        val above = anchorBounds.top - dy - h
+        val y = (if (below + h <= windowSize.height || above < 0) below else above)
+            .coerceIn(0, (windowSize.height - h).coerceAtLeast(0))
+        val menu = IntRect(IntOffset(x, y), popupContentSize)
+        transformOriginState.value = menuTransformOrigin(anchorBounds, menu)
+        return IntOffset(x, y)
+    }
+}
+
+/** M3's menu transform origin: the middle of where the anchor and menu overlap on each axis, or
+ *  the menu edge nearest the anchor when they don't — the menu grows out of its control. */
+private fun menuTransformOrigin(anchor: IntRect, menu: IntRect): TransformOrigin {
+    fun pivot(anchorStart: Int, anchorEnd: Int, menuStart: Int, menuEnd: Int): Float {
+        val size = menuEnd - menuStart
+        return when {
+            menuStart >= anchorEnd -> 0f
+            menuEnd <= anchorStart -> 1f
+            size == 0 -> 0f
+            else -> {
+                val mid = (maxOf(anchorStart, menuStart) + minOf(anchorEnd, menuEnd)) / 2
+                (mid - menuStart).toFloat() / size
+            }
+        }
+    }
+    return TransformOrigin(
+        pivot(anchor.left, anchor.right, menu.left, menu.right),
+        pivot(anchor.top, anchor.bottom, menu.top, menu.bottom),
+    )
+}
+
+/** The last touch the menu popup's window saw (screen space), for a nested menu to tell an
+ *  outside tap on its parent from one anywhere else. Good only for the dismissal that touch
+ *  causes — Back dismisses with nothing recent, and steps out one level. */
+private class OutsideTapRef {
+    private var point: Offset? = null
+    private var at = 0L
+
+    fun record(event: MotionEvent) {
+        if (event.actionMasked != MotionEvent.ACTION_DOWN && event.actionMasked != MotionEvent.ACTION_OUTSIDE) return
+        point = Offset(event.rawX, event.rawY)
+        at = event.eventTime
+    }
+
+    fun take(): Offset? {
+        val recent = point?.takeIf { SystemClock.uptimeMillis() - at < OutsideTapWindowMillis }
+        point = null
+        return recent
+    }
+}
+
+/** How old a recorded touch may be and still be the one that caused a dismissal — it is
+ *  synchronous in practice; this only rules out a stale touch meeting a later Back. */
+private const val OutsideTapWindowMillis = 250L
 
 /** Holds the menu popup's root view — written as the popup composes, read as it lays out. */
 private class PopupViewRef {
@@ -426,27 +575,6 @@ private fun rememberMinputMenuWidth(
             .coerceIn(MinputMenuMinWidth, MinputMenuMaxWidth)
     }
 }
-
-/**
- * Remove the 8dp band `DropdownMenuContent` pads above the first row and below the last.
- *
- * M3 applies it to the menu's inner Column, INSIDE the slot the `modifier` parameter reaches,
- * so it can't simply be left out — but every minput modifier does wrap it, and a measure pass
- * can give the space back: measure the padded child, report a box two insets shorter, and
- * place the child lifted by one inset. The padding then falls outside the Surface (which
- * sizes to what this reports) and is clipped away, leaving the rows flush with the menu's
- * rounded ends.
- *
- * Always applied: minput supplies its own frame inset instead (`framePadding`), so leaving
- * M3's band in place would stack two values that no call site can tell apart.
- */
-private fun Modifier.collapseMenuVerticalPadding(collapse: Boolean = true): Modifier =
-    if (!collapse) this else layout { measurable, constraints ->
-        val inset = M3MenuVerticalPadding.roundToPx()
-        val placeable = measurable.measure(constraints)
-        val height = (placeable.height - inset * 2).coerceAtLeast(0)
-        layout(placeable.width, height) { placeable.place(0, -inset) }
-    }
 
 /**
  * Which edge the caret belongs on, and how far along that edge it points, from the menu's and
@@ -675,11 +803,14 @@ fun BoxScope.MinputActionMenu(
  * One [MinputAction] as a menu row — THE action row, shared by [MinputActionMenu] and
  * [MinputDropdownMenu]'s action groups so a verb (and a cascade) reads the same in both.
  *
- * A plain verb dismisses its menu FIRST, then invokes. A [MinputAction.submenu] row instead opens
- * its nested menu beside itself and leaves [onDismissMenu]'s menu up: the trailing
- * [MinputSubmenuArrow] is drawn HERE (the primitive owns the cascade affordance, never the call
- * site), the row stays lit while the nested menu shows, and the d-pad toward the arrow opens it too. A choice landing in
- * the nested menu ([MinputSubmenu.onFinished]) closes both.
+ * A plain verb closes the WHOLE cascade first (its own menu and every menu above it, however
+ * deep it sits — [MinputMenuFrame.closeCascade]), then invokes; a [MinputAction.checked] toggle
+ * invokes and leaves the menus up. A [MinputAction.submenu] row instead opens its nested menu
+ * beside itself and leaves its own menu up: the trailing [MinputSubmenuArrow] is drawn HERE (the
+ * primitive owns the cascade affordance, never the call site), the row stays lit while the nested
+ * menu shows, and the d-pad toward the arrow opens it too. A choice landing in the nested menu —
+ * or [MinputSubmenu.onFinished] — closes the whole cascade too; stepping OUT (Back, an outside tap
+ * on this menu) closes only the nested one.
  */
 @Composable
 internal fun MinputActionRow(
@@ -698,6 +829,26 @@ internal fun MinputActionRow(
     val leading: @Composable () -> Unit = {
         MinputIcon(action.icon, contentDescription = null, size = MinputMenuIconSize, slot = true)
     }
+    // The menu this row sits in. Read when a choice lands, so it is the current one.
+    val menuFrame = LocalMinputMenuFrame.current
+    val closeCascade: () -> Unit = { menuFrame?.closeCascade?.invoke() ?: onDismissMenu() }
+    val checked = action.checked
+    if (checked != null) {
+        MinputMenuRow(
+            label = action.label,
+            enabled = action.enabled,
+            colors = colors,
+            leadingIcon = leading,
+            // The row is the target; the box only shows the state.
+            trailingIcon = { MinputCheckbox(checked = checked, onCheckedChange = null, enabled = action.enabled) },
+            onClick = action.onClick,
+            modifier = Modifier.semantics {
+                role = Role.Checkbox
+                toggleableState = ToggleableState(checked)
+            },
+        )
+        return
+    }
     val submenu = action.submenu
     if (submenu == null) {
         MinputMenuRow(
@@ -705,7 +856,7 @@ internal fun MinputActionRow(
             enabled = action.enabled,
             colors = colors,
             leadingIcon = leading,
-            onClick = { onDismissMenu(); action.onClick() },
+            onClick = { closeCascade(); action.onClick() },
         )
         return
     }
@@ -726,15 +877,18 @@ internal fun MinputActionRow(
                 true
             },
         )
-        val parentFrame = LocalMinputMenuFrame.current
-        val cascadeParent = remember(parentFrame) { parentFrame?.let { MinputCascadeParent(it) { open = false } } }
+        val cascadeParent = remember(menuFrame) {
+            menuFrame?.let {
+                MinputCascadeParent(it, stepOut = { open = false }, finish = { open = false; closeCascade() })
+            }
+        }
         CompositionLocalProvider(LocalMinputCascadeParent provides cascadeParent) {
             submenu(
                 MinputSubmenu(
                     // Never outlives its parent, whatever closed that.
                     expanded = open && menuExpanded,
                     onDismissRequest = { open = false },
-                    onFinished = { open = false; onDismissMenu() },
+                    onFinished = { open = false; closeCascade() },
                 ),
             )
         }
@@ -775,11 +929,16 @@ internal fun minputSubmenuArrowWidth(): Dp =
 private class MinputMenuFrame {
     var body by mutableStateOf<Rect?>(null)
     var cascadeSide: MinputCascadeSide? = null
+    /** Closes every menu from this one up to the root — set by [MinputMenuSurface] each
+     *  composition: the root's own dismissal, or (nested) its parent's [MinputCascadeParent.finish],
+     *  which closes this level and calls the parent frame's [closeCascade] in turn. */
+    var closeCascade: () -> Unit = {}
 }
 
-/** What a nested menu knows of its parent: its [frame], and how to step back out to it (the d-pad
- *  key pointing back at the parent, bound by [MinputMenuSurface]). */
-private class MinputCascadeParent(val frame: MinputMenuFrame, val stepOut: () -> Unit)
+/** What a nested menu knows of its parent: its [frame], how to step back out to it (the d-pad
+ *  key pointing back at the parent, bound by [MinputMenuSurface]), and how to close the whole
+ *  cascade from the root down ([finish] — a choice, or an outside tap that missed the parent). */
+private class MinputCascadeParent(val frame: MinputMenuFrame, val stepOut: () -> Unit, val finish: () -> Unit)
 
 /** Provided by every [MinputMenuSurface] to its own content: the menu the rows sit in. */
 private val LocalMinputMenuFrame = compositionLocalOf<MinputMenuFrame?> { null }
@@ -794,8 +953,8 @@ private fun Dp.toPxIn(density: Density): Float = with(density) { toPx() }
  * [MinputPillDropdown], detached from the label-pill anchor so any control can summon it (an
  * icon-only sort button, a card's overflow).
  *
- * Place it in a `Box` alongside the anchor. Picking dismisses first, then commits only on an
- * actual change.
+ * Place it in a `Box` alongside the anchor. Picking closes the menu first (the whole cascade, when
+ * it is nested), then commits only on an actual change.
  *
  * @param placement where the menu sits relative to its anchor.
  * @param caret draws the pointer back at the summoning control.
@@ -803,7 +962,7 @@ private fun Dp.toPxIn(density: Density): Float = with(density) { toPx() }
  *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
  * @param actionGroups verbs that live with the choice (2026-10-14 — the hierarchy bar's pin menu
  *   carries the crumbs' collapse toggles): each group follows the options under a divider, its
- *   rows drawn as [MinputActionMenu]'s. Picking one dismisses first, then invokes.
+ *   rows drawn as [MinputActionMenu]'s. Picking one closes the menu (cascade) first, then invokes.
  */
 @Composable
 fun <T> BoxScope.MinputDropdownMenu(
@@ -835,6 +994,8 @@ fun <T> BoxScope.MinputDropdownMenu(
         ),
         modifier = modifier,
     ) {
+        // A pick closes the whole cascade, as a verb does (see MinputActionRow).
+        val menuFrame = LocalMinputMenuFrame.current
         options.forEach { option ->
             val menuIcon = optionIcon?.invoke(option)
             MinputMenuRow(
@@ -850,7 +1011,10 @@ fun <T> BoxScope.MinputDropdownMenu(
                         MinputIcon(Icons.Filled.Check, contentDescription = null, size = MinputMenuIconSize, slot = true)
                     }
                 } else null,
-                onClick = { onDismissRequest(); if (option != current) onPick(option) },
+                onClick = {
+                    menuFrame?.closeCascade?.invoke() ?: onDismissRequest()
+                    if (option != current) onPick(option)
+                },
             )
         }
         actionGroups.filter { it.isNotEmpty() }.forEach { group ->
@@ -901,10 +1065,6 @@ internal val MinputMenuItemPadding = 12.dp
  * The horizontal and vertical frame insets are simply not the same quantity.
  */
 val MinputMenuFramePadding = 5.dp
-
-/** M3's own `DropdownMenuVerticalPadding`, which isn't public. Mirrored so
- *  [collapseMenuVerticalPadding] can give the space back; keep in step if M3 ever changes it. */
-private val M3MenuVerticalPadding = 8.dp
 
 internal val MinputMenuCorner = 8.dp
 
