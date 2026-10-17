@@ -72,6 +72,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
@@ -621,7 +622,6 @@ internal fun RemapStage(
                     StageGroupBacking(
                         group = group,
                         light = backingLight.getValue(group),
-                        overhangPx = viewportWPx,
                         // The panel is the group's own tap target, exactly as its box is — the
                         // same gate, the same two gestures, the same cursor seating.
                         interactive = reveal.phaseOf(group) != EditPhase.EDIT,
@@ -1165,7 +1165,8 @@ internal fun RemapStage(
  * read as running beneath it.
  *
  * **A gradient overlays the fill** (Dylan, 2026-10-16), running from the INNER edge (the edge
- * line's side, facing the controller) to the box's OUTER edge, on its own knobs
+ * line's side, facing the controller) to the screen edge it runs off — its whole VISIBLE width,
+ * tracking the body's scroll — on its own knobs
  * ([GroupGradientInnerColor] / [GroupGradientInnerAlpha] and the outer pair). It sits under the
  * bevel strokes and, being part of the backing, under the edge line.
  *
@@ -1213,9 +1214,6 @@ private fun StageGroupBacking(
     /** 0 = resting plane, 1 = the cursor is in this group. Driven straight from the focus
      *  callback (see the stage), and read here in the DRAW phase. */
     light: Animatable<Float, AnimationVector1D>,
-    /** How far the rectangle runs past the box's OUTER edge, off the screen — the stage's
-     *  overhang (a viewport's width). The gradient spans the box, not the overhang. */
-    overhangPx: Int,
     interactive: Boolean,
     onOpenGroup: () -> Unit,
     /** Held — the group's own action menu (see [GroupActionMenu]). */
@@ -1233,25 +1231,38 @@ private fun StageGroupBacking(
     val gradientOuter = MaterialTheme.colorScheme.GroupGradientOuterColor()
         .copy(alpha = GroupGradientOuterAlpha)
     val interaction = remember { MutableInteractionSource() }
+    // The rectangle's VISIBLE horizontal extent, in its own coordinates: it runs a viewport's
+    // width off the screen, and the stage clips it, so the window-clipped bounds are exactly the
+    // part on screen — and they follow the body's scroll. NaN until first placed. Read in the
+    // DRAW phase only, so a scroll repaints the gradient and recomposes nothing.
+    var visibleLeft by remember { mutableFloatStateOf(Float.NaN) }
+    var visibleRight by remember { mutableFloatStateOf(Float.NaN) }
     Box(
         Modifier
             .fillMaxSize()
             .testTag(groupBackingTestTag(group))
+            .onGloballyPositioned { coords ->
+                val visible = coords.boundsInWindow()
+                val origin = coords.positionInWindow().x
+                visibleLeft = visible.left - origin
+                visibleRight = visible.right - origin
+            }
             // Everything here is a DRAW-phase read — the plane, and the zoom's fade — so a
             // group lighting up repaints one rectangle and recomposes nothing.
             .drawBehind {
                 val fill = lerp(base, lit, light.value)
                 drawRect(color = fill)
                 // The gradient overlay, inner (controller-facing, the edge line's side) → outer
-                // (the box's outer edge). It spans the BOX — the overhang past it off the screen
-                // just holds the outer colour (clamped). Painted before the content, so the edge
-                // line stays on top of it.
+                // (the screen edge the rectangle runs off). It spans the rectangle's VISIBLE width
+                // — the whole background as seen, not the box's content — and the part past the
+                // screen edge just holds the outer colour (clamped). Painted before the content,
+                // so the edge line stays on top of it.
                 val (innerX, outerX) = when (group.controllerEdge()) {
-                    GroupEdge.START -> 0f to size.width - overhangPx
-                    GroupEdge.END -> size.width to overhangPx.toFloat()
+                    GroupEdge.START -> 0f to visibleRight
+                    GroupEdge.END -> size.width to visibleLeft
                     GroupEdge.TOP -> 0f to 0f
                 }
-                if (innerX != outerX) {
+                if (!outerX.isNaN() && innerX != outerX) {
                     drawRect(
                         Brush.horizontalGradient(
                             0f to gradientInner,
@@ -2262,15 +2273,15 @@ private val GroupBevelStroke = 0.75.dp
 
 /**
  * **The group panel's gradient overlay** (Dylan, 2026-10-16), painted over the fill from the
- * panel's INNER edge (the edge line's side, facing the controller) to the box's OUTER edge; past
- * the box, off the screen, it holds the outer colour. Colours are picked off the theme (swap the
+ * panel's INNER edge (the edge line's side, facing the controller) to the screen edge it runs
+ * off — the background's whole visible width; past the screen edge it holds the outer colour. Colours are picked off the theme (swap the
  * token, or return any `Color` to experiment); alpha is each end's opacity over the fill.
  * Start values: a faint accent wash at the inner edge fading to nothing at the outer.
  */
 private val GroupGradientInnerColor: ColorScheme.() -> Color = { primary }
-private const val GroupGradientInnerAlpha = 0.08f
+private const val GroupGradientInnerAlpha = 0f
 private val GroupGradientOuterColor: ColorScheme.() -> Color = { primary }
-private const val GroupGradientOuterAlpha = 0f
+private const val GroupGradientOuterAlpha = 0.1f
 
 private const val GroupBackingLightMillis = 70
 private const val GroupBackingDarkMillis = 150
