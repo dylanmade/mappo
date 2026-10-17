@@ -43,6 +43,8 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.focus.FocusRequester
@@ -619,6 +621,7 @@ internal fun RemapStage(
                     StageGroupBacking(
                         group = group,
                         light = backingLight.getValue(group),
+                        overhangPx = viewportWPx,
                         // The panel is the group's own tap target, exactly as its box is — the
                         // same gate, the same two gestures, the same cursor seating.
                         interactive = reveal.phaseOf(group) != EditPhase.EDIT,
@@ -1161,6 +1164,11 @@ internal fun RemapStage(
  * and carries the accent line on the other — and the strokes end where that line begins, so they
  * read as running beneath it.
  *
+ * **A gradient overlays the fill** (Dylan, 2026-10-16), running from the INNER edge (the edge
+ * line's side, facing the controller) to the box's OUTER edge, on its own knobs
+ * ([GroupGradientInnerColor] / [GroupGradientInnerAlpha] and the outer pair). It sits under the
+ * bevel strokes and, being part of the backing, under the edge line.
+ *
  * **It is also the group's FOCUS affordance.** Holding the controller cursor steps the fill one
  * plane up (the same tint over `surfaceContainer`), which replaces the lift the box used to
  * take. A lit surface says "the cursor is here" at any distance, where a two-pixel rise had to be
@@ -1205,6 +1213,9 @@ private fun StageGroupBacking(
     /** 0 = resting plane, 1 = the cursor is in this group. Driven straight from the focus
      *  callback (see the stage), and read here in the DRAW phase. */
     light: Animatable<Float, AnimationVector1D>,
+    /** How far the rectangle runs past the box's OUTER edge, off the screen — the stage's
+     *  overhang (a viewport's width). The gradient spans the box, not the overhang. */
+    overhangPx: Int,
     interactive: Boolean,
     onOpenGroup: () -> Unit,
     /** Held — the group's own action menu (see [GroupActionMenu]). */
@@ -1217,6 +1228,10 @@ private fun StageGroupBacking(
     val base = minputBoxContainer()
     val lit = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
         .compositeOver(MaterialTheme.colorScheme.surfaceContainer)
+    val gradientInner = MaterialTheme.colorScheme.GroupGradientInnerColor()
+        .copy(alpha = GroupGradientInnerAlpha)
+    val gradientOuter = MaterialTheme.colorScheme.GroupGradientOuterColor()
+        .copy(alpha = GroupGradientOuterAlpha)
     val interaction = remember { MutableInteractionSource() }
     Box(
         Modifier
@@ -1227,6 +1242,25 @@ private fun StageGroupBacking(
             .drawBehind {
                 val fill = lerp(base, lit, light.value)
                 drawRect(color = fill)
+                // The gradient overlay, inner (controller-facing, the edge line's side) → outer
+                // (the box's outer edge). It spans the BOX — the overhang past it off the screen
+                // just holds the outer colour (clamped). Painted before the content, so the edge
+                // line stays on top of it.
+                val (innerX, outerX) = when (group.controllerEdge()) {
+                    GroupEdge.START -> 0f to size.width - overhangPx
+                    GroupEdge.END -> size.width to overhangPx.toFloat()
+                    GroupEdge.TOP -> 0f to 0f
+                }
+                if (innerX != outerX) {
+                    drawRect(
+                        Brush.horizontalGradient(
+                            0f to gradientInner,
+                            1f to gradientOuter,
+                            startX = innerX,
+                            endX = outerX,
+                        ),
+                    )
+                }
                 // The panel's lit top and bottom faces — the button bevel's derivation off the
                 // LIVE fill, so the lines brighten with the focus step, on the group's own knobs.
                 //
@@ -2225,6 +2259,18 @@ private const val GroupBevelTopAlpha = 1f
 private const val GroupBevelBottomStrength = 0.10f
 private const val GroupBevelBottomAlpha = 1f
 private val GroupBevelStroke = 0.75.dp
+
+/**
+ * **The group panel's gradient overlay** (Dylan, 2026-10-16), painted over the fill from the
+ * panel's INNER edge (the edge line's side, facing the controller) to the box's OUTER edge; past
+ * the box, off the screen, it holds the outer colour. Colours are picked off the theme (swap the
+ * token, or return any `Color` to experiment); alpha is each end's opacity over the fill.
+ * Start values: a faint accent wash at the inner edge fading to nothing at the outer.
+ */
+private val GroupGradientInnerColor: ColorScheme.() -> Color = { primary }
+private const val GroupGradientInnerAlpha = 0.08f
+private val GroupGradientOuterColor: ColorScheme.() -> Color = { primary }
+private const val GroupGradientOuterAlpha = 0f
 
 private const val GroupBackingLightMillis = 70
 private const val GroupBackingDarkMillis = 150
