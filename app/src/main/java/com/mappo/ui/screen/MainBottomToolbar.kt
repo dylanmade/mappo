@@ -94,7 +94,7 @@ fun MainBottomToolbar(
     steamAccountName: String?,
     mappoEnabled: Boolean,
     onSetMappoEnabled: (Boolean) -> Unit,
-    onEditOverlay: () -> Unit,
+    onEditVirtualButtons: () -> Unit,
     onEditControls: () -> Unit,
     onOpenApplications: () -> Unit,
     onOpenThemeStudio: () -> Unit,
@@ -125,7 +125,7 @@ fun MainBottomToolbar(
     val layoutEntries = listOf(
         ToolbarMenuEntry("layout_options", "Layout options", Icons.Filled.Person, onOpenApplications),
         ToolbarMenuEntry("edit_controls", "Edit controls", Icons.Filled.SportsEsports, onEditControls),
-        ToolbarMenuEntry("edit_overlay", "Edit overlay", Icons.Filled.Edit, onEditOverlay),
+        ToolbarMenuEntry("edit_overlay", "Edit virtual buttons", Icons.Filled.Edit, onEditVirtualButtons),
     )
     val optionEntries = buildList {
         add(ToolbarMenuEntry("theme_studio", "Theme studio", Icons.Filled.Palette, onOpenThemeStudio))

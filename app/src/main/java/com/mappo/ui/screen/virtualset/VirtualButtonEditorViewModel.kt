@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mappo.data.model.OverlayElement
 import com.mappo.data.settings.OverlaySettings
-import com.mappo.service.overlay.element.OverlayEditor
-import com.mappo.service.overlay.element.VirtualEditorSession
+import com.mappo.service.overlay.element.VirtualButtonEditor
+import com.mappo.service.overlay.element.VirtualButtonEditorSession
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,22 +20,22 @@ enum class AlignTarget(val label: String) { Selection("Selection"), Canvas("Canv
 enum class AlignOp { LEFT, CENTER_X, RIGHT, TOP, CENTER_Y, BOTTOM, STACK_V, STACK_H, DIST_X, DIST_Y }
 
 /**
- * The virtual set editor's own state — selection, clipboard, the editor-local toggles — and the
+ * The virtual button editor's own state — selection, clipboard, the editor-local toggles — and the
  * edits that aren't plain gestures (align, copy / paste, delete, nudge). The buttons themselves
- * live in [OverlayEditor] (shared with the run-mode overlay); this is everything around them.
+ * live in [VirtualButtonEditor] (shared with the run-mode overlay); this is everything around them.
  *
  * Ported from the retired `OverlayLiveEditController` (2026-10-15), minus its window plumbing.
  */
 @HiltViewModel
-class VirtualSetEditorViewModel @Inject constructor(
-    val overlayEditor: OverlayEditor,
+class VirtualButtonEditorViewModel @Inject constructor(
+    val virtualButtonEditor: VirtualButtonEditor,
     val overlaySettings: OverlaySettings,
-    val session: VirtualEditorSession,
+    val session: VirtualButtonEditorSession,
 ) : ViewModel() {
 
-    val elements: StateFlow<List<OverlayElement>> = overlayEditor.elements
+    val elements: StateFlow<List<OverlayElement>> = virtualButtonEditor.elements
 
-    // Multi-select: tapping buttons accumulates them; dragging any member moves the whole set.
+    // Multi-select: the marquee selects several; moving any member moves the whole set.
     private val _selectedIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedIds: StateFlow<Set<Long>> = _selectedIds.asStateFlow()
 
@@ -45,21 +45,20 @@ class VirtualSetEditorViewModel @Inject constructor(
     private val _clipboardHasContent = MutableStateFlow(false)
     val clipboardHasContent: StateFlow<Boolean> = _clipboardHasContent.asStateFlow()
 
-    // Editor-local toggles surfaced under Options. The grid is on by default and auto-sizes to the
+    // Editor-local toggles surfaced under the bar menu's Options. The grid is on by default and auto-sizes to the
     // editable bounds (see EditCanvas.gridCell).
     val showGrid = MutableStateFlow(true)
     val alignTo = MutableStateFlow(AlignTarget.Selection)
-    /** Core menu orientation: false = vertical panel, true = horizontal icon bar. */
-    val menuHorizontal = MutableStateFlow(false)
     val positionerOpen = MutableStateFlow(false)
 
-    /** The button whose config drawer is open, if any. */
+    /** The button whose config drawer is open, if any. (Nothing opens it since 2026-11-11 —
+     *  kept with the drawer until the Edit menu's rework decides its fate.) */
     val configElementId = MutableStateFlow<Long?>(null)
 
     init {
         // A different set / layer is a different canvas — nothing carries over.
         viewModelScope.launch {
-            overlayEditor.editingScope.collect {
+            virtualButtonEditor.editingScope.collect {
                 _selectedIds.value = emptySet()
                 configElementId.value = null
             }
@@ -75,43 +74,41 @@ class VirtualSetEditorViewModel @Inject constructor(
     }
 
     /**
-     * Tap on a button (no drag) builds a multi-selection by accumulation: an unselected button is
-     * added, the SOLE selection opens its config, one of several selected is removed.
+     * Tap on a button (no drag): it becomes THE selection — unless it is already part of one,
+     * which is kept whole — and the editor then opens the context menu for whatever is selected
+     * (2026-11-11). Several buttons are selected with the marquee; taps no longer accumulate (the
+     * tap that dismisses a menu would have silently grown the selection), and the sole selection
+     * no longer opens the config drawer (editing lives in the context menu's Edit).
      */
     fun tapElement(id: Long) {
-        val current = _selectedIds.value
-        when {
-            id !in current -> _selectedIds.value = current + id
-            current.size == 1 -> configElementId.value = id
-            else -> _selectedIds.value = current - id
-        }
+        if (id !in _selectedIds.value) _selectedIds.value = setOf(id)
     }
 
     fun addElement() {
-        overlayEditor.pushUndoSnapshot()
-        overlayEditor.addDefaultElement()
+        virtualButtonEditor.pushUndoSnapshot()
+        virtualButtonEditor.addDefaultElement()
     }
 
     /** Delete every selected button and clear the selection. */
     fun deleteSelected() {
         val ids = _selectedIds.value
         if (ids.isEmpty()) return
-        overlayEditor.pushUndoSnapshot()
-        ids.forEach { overlayEditor.delete(it) }
+        virtualButtonEditor.pushUndoSnapshot()
+        ids.forEach { virtualButtonEditor.delete(it) }
         _selectedIds.value = emptySet()
     }
 
     fun deleteElement(id: Long) {
-        overlayEditor.pushUndoSnapshot()
-        overlayEditor.delete(id)
+        virtualButtonEditor.pushUndoSnapshot()
+        virtualButtonEditor.delete(id)
         _selectedIds.value = _selectedIds.value - id
     }
 
     /** Commit a drag / resize: ONE undo entry, ONE batch write (no partial-commit flash). */
-    fun commitRects(rects: List<OverlayEditor.ElementRect>) {
+    fun commitRects(rects: List<VirtualButtonEditor.ElementRect>) {
         if (rects.isEmpty()) return
-        overlayEditor.pushUndoSnapshot()
-        overlayEditor.moveResizeAll(rects)
+        virtualButtonEditor.pushUndoSnapshot()
+        virtualButtonEditor.moveResizeAll(rects)
     }
 
     // ── Positioner nudges ───────────────────────────────────────────────────────────────────
@@ -129,7 +126,7 @@ class VirtualSetEditorViewModel @Inject constructor(
             nudgeAnchor = null
             return
         }
-        overlayEditor.pushUndoSnapshot()
+        virtualButtonEditor.pushUndoSnapshot()
         nudgeAnchor = els
         nudgeAccumX = 0f
         nudgeAccumY = 0f
@@ -141,9 +138,9 @@ class VirtualSetEditorViewModel @Inject constructor(
         if (canvasW <= 0f || canvasH <= 0f) return
         nudgeAccumX += dxPx
         nudgeAccumY += dyPx
-        overlayEditor.moveResizeAll(
+        virtualButtonEditor.moveResizeAll(
             anchor.map { el ->
-                OverlayEditor.ElementRect(
+                VirtualButtonEditor.ElementRect(
                     id = el.id,
                     x = el.x + nudgeAccumX / canvasW,
                     y = el.y + nudgeAccumY / canvasH,
@@ -162,13 +159,13 @@ class VirtualSetEditorViewModel @Inject constructor(
 
     /**
      * Align or distribute the selection relative to [target] (the selection's bounding box or the
-     * whole canvas). All in normalized space; [OverlayEditor.moveResizeAll] clamps + commits once.
+     * whole canvas). All in normalized space; [VirtualButtonEditor.moveResizeAll] clamps + commits once.
      */
     fun applyAlign(op: AlignOp, target: AlignTarget) {
         val ids = _selectedIds.value
         val els = elements.value.filter { it.id in ids }
         if (els.isEmpty()) return
-        overlayEditor.pushUndoSnapshot()
+        virtualButtonEditor.pushUndoSnapshot()
         val refL: Float; val refT: Float; val refR: Float; val refB: Float
         when (target) {
             AlignTarget.Canvas -> { refL = 0f; refT = 0f; refR = 1f; refB = 1f }
@@ -178,7 +175,7 @@ class VirtualSetEditorViewModel @Inject constructor(
             }
         }
         fun rect(el: OverlayElement, x: Float = el.x, y: Float = el.y) =
-            OverlayEditor.ElementRect(el.id, x, y, el.width, el.height)
+            VirtualButtonEditor.ElementRect(el.id, x, y, el.width, el.height)
         val rects = when (op) {
             AlignOp.LEFT -> els.map { rect(it, x = refL) }
             AlignOp.RIGHT -> els.map { rect(it, x = refR - it.width) }
@@ -199,7 +196,7 @@ class VirtualSetEditorViewModel @Inject constructor(
             AlignOp.DIST_X -> distribute(els, horizontal = true, target, refL, refR) { el, v -> rect(el, x = v) }
             AlignOp.DIST_Y -> distribute(els, horizontal = false, target, refT, refB) { el, v -> rect(el, y = v) }
         }
-        overlayEditor.moveResizeAll(rects)
+        virtualButtonEditor.moveResizeAll(rects)
     }
 
     /**
@@ -212,8 +209,8 @@ class VirtualSetEditorViewModel @Inject constructor(
         target: AlignTarget,
         refStart: Float,
         refEnd: Float,
-        place: (OverlayElement, Float) -> OverlayEditor.ElementRect,
-    ): List<OverlayEditor.ElementRect> {
+        place: (OverlayElement, Float) -> VirtualButtonEditor.ElementRect,
+    ): List<VirtualButtonEditor.ElementRect> {
         val pos = { e: OverlayElement -> if (horizontal) e.x else e.y }
         val len = { e: OverlayElement -> if (horizontal) e.width else e.height }
         val sorted = els.sortedBy { pos(it) }
@@ -245,16 +242,16 @@ class VirtualSetEditorViewModel @Inject constructor(
     fun paste(styleOnly: Boolean) {
         if (clipboard.isEmpty()) return
         if (!styleOnly) {
-            overlayEditor.pushUndoSnapshot()
-            overlayEditor.duplicate(clipboard.toList()) { ids -> _selectedIds.value = ids.toSet() }
+            virtualButtonEditor.pushUndoSnapshot()
+            virtualButtonEditor.duplicate(clipboard.toList()) { ids -> _selectedIds.value = ids.toSet() }
         } else {
             val ids = _selectedIds.value
             val targets = elements.value.filter { it.id in ids }
             if (targets.isEmpty()) return
-            overlayEditor.pushUndoSnapshot()
+            virtualButtonEditor.pushUndoSnapshot()
             val style = clipboard.first()
             targets.forEach { el ->
-                overlayEditor.update(
+                virtualButtonEditor.update(
                     el.copy(
                         shape = style.shape,
                         opacity = style.opacity,

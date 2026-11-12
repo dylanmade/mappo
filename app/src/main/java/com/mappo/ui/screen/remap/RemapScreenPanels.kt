@@ -156,7 +156,7 @@ internal fun SortDirectionButton(ascending: Boolean, onToggle: () -> Unit) {
 }
 
 /**
- * The Layout settings panel: the entries scoped to the layout being edited (Edit overlay
+ * The Layout settings panel: the entries scoped to the layout being edited (Edit virtual buttons
  * today; more per-layout settings land here as they exist). The global rows this panel
  * used to carry live in the wordmark drawer now.
  */
@@ -538,7 +538,7 @@ internal fun FontDebugRow(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) 
  * bound to it ([com.mappo.service.autoswitch.ApplicationAutoSwitcher]).
  *
  * Rehomed here 2026-08-30 (Dylan) from the remap controls top bar, where it rode a pod of
- * its own beside Edit overlay. It never belonged there: the bar's other controls all act on
+ * its own beside Edit virtual buttons. It never belonged there: the bar's other controls all act on
  * the layout ON SCREEN, while this is one app-wide switch — and activating a layout manually
  * turns it off from anywhere, so a control scoped to one view read as narrower than it is.
  * Same switch treatment as [PowerRow] / [FontDebugRow]; the drawer's switch rows must read

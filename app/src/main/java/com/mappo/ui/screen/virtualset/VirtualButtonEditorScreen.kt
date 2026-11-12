@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
@@ -31,6 +32,18 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.mappo.ui.minput.MinputActionMenu
+import com.mappo.ui.minput.MinputDraggableMenuFlyouts
+import com.mappo.ui.minput.MinputDraggableMenuState
+import com.mappo.ui.minput.MinputDraggableMenuWideWidthDp
+import com.mappo.ui.minput.MinputMenuPlacement
+import com.mappo.ui.minput.minputDraggableMenuHost
+import com.mappo.ui.theme.LocalMappoExtraColors
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -39,12 +52,12 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Constraints
@@ -53,14 +66,14 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mappo.data.model.OverlayElement
-import com.mappo.service.overlay.element.OverlayEditor
+import com.mappo.service.overlay.element.VirtualButtonEditor
 import com.mappo.ui.screen.overlay.OverlayElementVisual
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * **The virtual set editor** (2026-10-15) — the controls screen's second body, shown under the
+ * **The virtual button editor** (2026-10-15) — the controls screen's second body, shown under the
  * SAME hierarchy bar as the physical editor; switching between them is a crossfade, not a trip
  * to another activity. Buttons are placed free-form on a canvas that IS the screen (the editor
  * is laid out at the DISPLAY's full size and scaled to fit Mappo's screen, so a button reads exactly
@@ -71,29 +84,42 @@ import kotlin.math.roundToInt
  * the config drawer. While editing, buttons don't need windows — one window per button is a
  * RUN-MODE need (empty space passing through to the game) — so it is one composition now:
  *
- *  - ONE gesture layer over the canvas does all the canvas gestures, hit-testing geometrically:
- *    press a corner handle → resize the selection about the opposite corner; press a button →
- *    tap to select (accumulating; tapping the sole selection opens its config) or drag the
- *    selection, snapping; press empty space → tap to deselect, or drag a marquee.
+ *  - ONE gesture layer over the canvas does all the canvas gestures, hit-testing geometrically
+ *    (2026-11-11 — moving and resizing are no longer what a plain drag does):
+ *      · TAP a button → it is selected and its CONTEXT MENU opens beside it (the physical editor's
+ *        tile menu, for virtual buttons: Edit, Copy, Paste, Align, Templatize, Move, Resize, Delete);
+ *      · HOLD a button → it LIFTS (with the rest of the selection, when it is part of one) and the
+ *        drag carries it. The menu's Move does the same without the hold: the selection is lifted,
+ *        and the next drag — from anywhere — carries it. BLUE marks where a lifted button came
+ *        from, GREEN where it will land (snapping included), as on the physical editor;
+ *      · the menu's Resize shows the corner handles; dragging one scales the selection about the
+ *        opposite corner. They stay until the selection changes;
+ *      · DRAG from anywhere else — empty space, or a button not yet held long enough — draws a
+ *        marquee; releasing it selects what it covers and opens their context menu;
+ *      · TAP empty space → deselect.
  *  - Live drags draw from [preview] rects and commit ONCE on release (one undo entry, one batch
  *    write); the preview holds until the write lands, so nothing flashes back to where it was.
- *  - The core menu, its fly-outs, the Positioner and the config drawer sit above.
+ *  - Above the canvas: the context menu (a minput popup menu), Edit's fly-outs (the minput
+ *    draggable menu's, hosted here without its core panel), the Positioner, the config drawer.
+ *    The canvas-wide verbs live with the hierarchy bar: New and Undo | Redo on the toolbar row
+ *    under it ([VirtualButtonEditorToolbar]), Options and Layers in its menu
+ *    ([virtualButtonEditorBarActions]).
  *
  * [backdrop] = a frozen shot of the game when the editor was summoned over one; else the plain
  * content plane the physical editor sits on, so the crossfade between the two is just the body.
  */
 @Composable
-fun VirtualSetEditor(
+fun VirtualButtonEditorScreen(
     backdrop: Bitmap?,
     modifier: Modifier = Modifier,
 ) {
-    VirtualSetEditor(backdrop = backdrop, vm = hiltViewModel(), modifier = modifier)
+    VirtualButtonEditorScreen(backdrop = backdrop, vm = hiltViewModel(), modifier = modifier)
 }
 
 @Composable
-internal fun VirtualSetEditor(
+internal fun VirtualButtonEditorScreen(
     backdrop: Bitmap?,
-    vm: VirtualSetEditorViewModel,
+    vm: VirtualButtonEditorViewModel,
     modifier: Modifier = Modifier,
 ) {
     val elements by vm.elements.collectAsStateWithLifecycle()
@@ -101,10 +127,27 @@ internal fun VirtualSetEditor(
     val snapOn by vm.overlaySettings.snapEnabled.collectAsStateWithLifecycle()
     val squareOn by vm.overlaySettings.squareEditArea.collectAsStateWithLifecycle()
     val gridOn by vm.showGrid.collectAsStateWithLifecycle()
-    val horizontal by vm.menuHorizontal.collectAsStateWithLifecycle()
     val positionerOpen by vm.positionerOpen.collectAsStateWithLifecycle()
     val configId by vm.configElementId.collectAsStateWithLifecycle()
-    val menu = remember { CascadeMenuState() }
+    // Edit's fly-outs (Assign / Customize) — the draggable menu's levels, with no core panel.
+    val flyouts = remember { MinputDraggableMenuState() }
+    // The context menu of the selection, hung off [menuAnchor] (the selection's box, editor px,
+    // as it was when the menu opened — it must outlive a selection its own Delete just emptied).
+    var menuOpen by remember { mutableStateOf(false) }
+    var menuAnchor by remember { mutableStateOf(Rect.Zero) }
+    // The menu's Resize: the corner handles show (and take drags) only while this is on.
+    var resizeMode by remember { mutableStateOf(false) }
+    // The menu's Move: the selection is lifted, and the next drag — from anywhere — carries it.
+    var moveArmed by remember { mutableStateOf(false) }
+    // A move in flight: where each carried button came from, and where it would land.
+    val moveOrigin = remember { mutableStateMapOf<Long, Rect>() }
+    val moveLanding = remember { mutableStateMapOf<Long, Rect>() }
+    // Both modes belong to the selection they were asked for.
+    LaunchedEffect(selected) {
+        resizeMode = false
+        moveArmed = false
+        if (selected.isEmpty()) menuOpen = false
+    }
 
     // Live geometry of a drag / resize in progress, by element id (stage px).
     val preview = remember { mutableStateMapOf<Long, Rect>() }
@@ -126,7 +169,13 @@ internal fun VirtualSetEditor(
     }
     var marquee by remember { mutableStateOf<Rect?>(null) }
 
-    BackHandler(enabled = menu.levels.isNotEmpty()) { menu.dismissAll() }
+    BackHandler(enabled = flyouts.levels.isNotEmpty() || moveArmed || resizeMode) {
+        when {
+            flyouts.levels.isNotEmpty() -> flyouts.dismissAll()
+            moveArmed -> moveArmed = false
+            else -> resizeMode = false
+        }
+    }
 
     // The run-mode overlay hides while the editor is ON SCREEN (its windows would sit over Mappo,
     // and over the buttons being edited) — not merely while it's open: leaving Mappo with the
@@ -154,15 +203,8 @@ internal fun VirtualSetEditor(
             .testTag(VIRTUAL_EDITOR_TAG)
             // The lowest plane — the same the physical editor's body sits on.
             .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-            .onGloballyPositioned { menu.editorCoords = it }
-            // Every press, BEFORE its target: close the fly-outs it didn't land in. Observed, not
-            // consumed — the press still reaches the button / row / canvas under it.
-            .pointerInput(menu) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    menu.onPress(down.position)
-                }
-            },
+            // Every press, BEFORE its target, closes the Edit fly-outs it didn't land in.
+            .minputDraggableMenuHost(flyouts),
     ) {
         val density = LocalDensity.current
         val context = LocalContext.current
@@ -190,13 +232,15 @@ internal fun VirtualSetEditor(
         // Where the menu, Positioner and drawer may go: the whole editor — or with "1:1 screen"
         // on, the square (its serviceability test).
         val chromeBounds = if (squareOn) toEditor(canvas.bounds) else Rect(0f, 0f, boxW, boxH)
-        menu.canvasHeight = boxH
         // Handles keep their on-screen size at any stage scale.
         val chromeScale = if (fit > 0f) 1f / fit else 1f
 
         val currentElements by rememberUpdatedState(elements)
         val currentSelected by rememberUpdatedState(selected)
         val currentSnap by rememberUpdatedState(snapOn)
+        val currentResize by rememberUpdatedState(resizeMode)
+        val currentMoveArmed by rememberUpdatedState(moveArmed)
+        val haptic = LocalHapticFeedback.current
         val rectOf: (OverlayElement) -> Rect = { el -> preview[el.id] ?: canvas.rectOf(el) }
 
         // "1:1 screen" on (or already on when the editor opens): pull every button inside.
@@ -213,8 +257,24 @@ internal fun VirtualSetEditor(
                 if (moved) canvas.toElementRect(el.id, Rect(x, y, x + w, y + h)) else null
             }
             vm.commitRects(rects)
-            menu.dismissAll()
+            flyouts.dismissAll()
         }
+
+        // Open the context menu on [ids] — beside their box as it sits now.
+        val openMenu by rememberUpdatedState<(Set<Long>) -> Unit> { ids ->
+            unionOf(ids.mapNotNull { id -> currentElements.firstOrNull { it.id == id }?.let(rectOf) })?.let { box ->
+                flyouts.dismissAll()
+                menuAnchor = toEditor(box)
+                menuOpen = true
+            }
+        }
+        // What is lifted, and from where: a move in flight, or a selection the menu's Move armed.
+        val lifted: Map<Long, Rect> = when {
+            moveOrigin.isNotEmpty() -> moveOrigin
+            moveArmed -> elements.filter { it.id in selected }.associate { it.id to canvas.rectOf(it) }
+            else -> emptyMap()
+        }
+        val extras = LocalMappoExtraColors.current
 
         val selectionColor = MaterialTheme.colorScheme.primary
         val onPrimary = MaterialTheme.colorScheme.onPrimary
@@ -247,12 +307,26 @@ internal fun VirtualSetEditor(
             // The 1:1 mask and the grid guide, behind the buttons.
             Box(Modifier.fillMaxSize().drawBehind { drawCanvasGuides(canvas, squareOn, gridOn, gridColor, squareOutline, chromeScale) })
 
+            // A move's two ends, under the buttons: a BLUE copy of each lifted button where it came
+            // from, a GREEN one where it will land (once that is somewhere else) — the physical
+            // editor's origin / destination colours. The carried button itself draws translucent
+            // (below), so the end it is standing on shows through it.
+            lifted.forEach { (id, origin) ->
+                val el = elements.firstOrNull { it.id == id } ?: return@forEach
+                key("origin", id) { MoveGhost(el, { origin }, extras.dropZoneOrigin) }
+                if (moveLanding[id]?.let { it != origin } == true) {
+                    key("landing", id) { MoveGhost(el, { moveLanding[id] ?: origin }, extras.dropZoneValid) }
+                }
+            }
+
             // The buttons — the run-mode visual itself (WYSIWYG), plus a selection outline.
             // Geometry is read at layout, so a drag frame relayouts without recomposing.
             elements.sortedBy { it.zIndex }.forEach { el ->
                 key(el.id) {
+                    val carried = el.id in lifted
                     Box(
                         Modifier
+                            .graphicsLayer { alpha = if (carried) CARRIED_ALPHA else 1f }
                             .offset {
                                 val r = rectOf(el)
                                 IntOffset(r.left.roundToInt(), r.top.roundToInt())
@@ -275,7 +349,7 @@ internal fun VirtualSetEditor(
             Box(
                 Modifier.fillMaxSize().drawBehind {
                     val box = unionOf(selected.mapNotNull { id -> elements.firstOrNull { it.id == id }?.let(rectOf) })
-                    if (box != null) drawSelectionChrome(box, multi = selected.size > 1, selectionColor, onPrimary, chromeScale)
+                    if (box != null) drawSelectionChrome(box, multi = selected.size > 1, handles = resizeMode, selectionColor, onPrimary, chromeScale)
                     marquee?.let { m ->
                         drawRect(selectionColor.copy(alpha = 0.12f), topLeft = m.topLeft, size = m.size)
                         drawRect(selectionColor, topLeft = m.topLeft, size = m.size, style = Stroke(width = 1.5.dp.toPx() * chromeScale))
@@ -295,28 +369,67 @@ internal fun VirtualSetEditor(
                             val start = down.position
                             val els = currentElements
                             val sel = currentSelected
-                            val selRects = sel.mapNotNull { id -> els.firstOrNull { it.id == id }?.let { id to rectOf(it) } }.toMap()
+                            fun rectsOf(ids: Set<Long>): Map<Long, Rect> =
+                                ids.mapNotNull { id -> els.firstOrNull { it.id == id }?.let { id to rectOf(it) } }.toMap()
+                            val selRects = rectsOf(sel)
                             val box = unionOf(selRects.values)
-                            val corner = box?.let { b ->
+                            // Handles exist only in resize mode.
+                            val corner = if (currentResize && box != null) {
                                 Corner.entries.firstOrNull { c ->
-                                    val p = c.pointOf(b)
+                                    val p = c.pointOf(box)
                                     abs(p.x - start.x) <= handleHalf && abs(p.y - start.y) <= handleHalf
                                 }
-                            }
+                            } else null
                             val hit = if (corner == null) {
                                 els.sortedByDescending { it.zIndex }.firstOrNull { rectOf(it).contains(start) }
                             } else null
-                            // What moves with an element drag: the whole selection when it's
-                            // part of it, else just it.
-                            val groupStart: Map<Long, Rect> = when {
-                                corner != null -> selRects
-                                hit != null -> {
-                                    val ids = if (hit.id in sel) sel else setOf(hit.id)
-                                    ids.mapNotNull { id -> els.firstOrNull { it.id == id }?.let { id to rectOf(it) } }.toMap()
-                                }
-                                else -> emptyMap()
+                            // The menu's Move armed the selection: this press carries it, wherever it lands.
+                            val armed = currentMoveArmed && selRects.isNotEmpty()
+
+                            var press = when {
+                                armed -> Press.Move
+                                corner != null -> Press.Resize
+                                hit != null -> Press.Undecided
+                                else -> Press.Marquee
                             }
+                            var group: Map<Long, Rect> = if (press == Press.Move || press == Press.Resize) selRects else emptyMap()
+                            // The member that snaps (the rest keep their offsets from it).
+                            var primaryId = hit?.id?.takeIf { it in group } ?: group.keys.firstOrNull()
                             var dragging = false
+
+                            if (press == Press.Undecided && hit != null) {
+                                // A press on a button is decided by what happens first: up → a
+                                // tap; travel → a marquee, started on the button; neither, for the
+                                // long-press time → the button lifts.
+                                when (awaitPressOutcome(down.id, start, slop)) {
+                                    PressOutcome.Tap -> {
+                                        val ids = if (hit.id in sel) sel else setOf(hit.id)
+                                        vm.tapElement(hit.id)
+                                        openMenu(ids)
+                                        return@awaitEachGesture
+                                    }
+                                    PressOutcome.Cancelled -> return@awaitEachGesture
+                                    PressOutcome.Travelled -> {
+                                        press = Press.Marquee
+                                        dragging = true
+                                    }
+                                    PressOutcome.Held -> {
+                                        // The whole selection when it's part of it, else just it.
+                                        val ids = if (hit.id in sel) sel else setOf(hit.id)
+                                        if (hit.id !in sel) vm.select(ids)
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        press = Press.Move
+                                        group = rectsOf(ids)
+                                        primaryId = hit.id
+                                    }
+                                }
+                            }
+                            if (press == Press.Move) {
+                                moveLanding.clear()
+                                moveOrigin.clear()
+                                moveOrigin.putAll(group)
+                            }
+
                             var released = false
                             try {
                                 while (true) {
@@ -329,11 +442,15 @@ internal fun VirtualSetEditor(
                                     if (!dragging && d.getDistance() > slop) dragging = true
                                     if (!dragging) continue
                                     change.consume()
-                                    when {
-                                        corner != null && box != null ->
-                                            preview.putAll(resizeGroup(canvas, corner, box, groupStart, d))
-                                        hit != null ->
-                                            preview.putAll(moveGroup(canvas, hit.id, groupStart, d, currentSnap, els, rectOf))
+                                    when (press) {
+                                        Press.Resize -> if (corner != null && box != null) {
+                                            preview.putAll(resizeGroup(canvas, corner, box, group, d))
+                                        }
+                                        Press.Move -> primaryId?.let { primary ->
+                                            val moved = moveGroup(canvas, primary, group, d, currentSnap, els, rectOf)
+                                            preview.putAll(moved.carried)
+                                            moveLanding.putAll(moved.landing)
+                                        }
                                         else -> marquee = Rect(
                                             minOf(start.x, change.position.x), minOf(start.y, change.position.y),
                                             maxOf(start.x, change.position.x), maxOf(start.y, change.position.y),
@@ -341,24 +458,47 @@ internal fun VirtualSetEditor(
                                     }
                                 }
                             } finally {
-                                when {
-                                    !dragging -> if (released) {
-                                        if (hit != null) vm.tapElement(hit.id)
-                                        else if (corner == null) vm.clearSelection()
+                                when (press) {
+                                    Press.Move -> {
+                                        // Dropped: the buttons settle on their landing spots.
+                                        val landed = if (released && dragging) {
+                                            group.keys.mapNotNull { id -> moveLanding[id]?.takeIf { it != group[id] }?.let { id to it } }.toMap()
+                                        } else emptyMap()
+                                        if (landed.isNotEmpty()) {
+                                            preview.putAll(landed)
+                                            // Members that landed where they started hold no preview.
+                                            group.keys.filter { it !in landed }.forEach { preview.remove(it) }
+                                            vm.commitRects(landed.map { (id, r) -> canvas.toElementRect(id, r) })
+                                            awaitingCommit = true
+                                        } else {
+                                            preview.clear()
+                                        }
+                                        moveOrigin.clear()
+                                        moveLanding.clear()
+                                        // A drop ends the menu's Move — and so does a tap (a cancel).
+                                        moveArmed = false
                                     }
-                                    hit != null || corner != null -> {
-                                        val rects = groupStart.keys.mapNotNull { id -> preview[id]?.let { canvas.toElementRect(id, it) } }
-                                        if (released && rects.isNotEmpty()) {
+                                    Press.Resize -> {
+                                        val rects = group.keys.mapNotNull { id -> preview[id]?.let { canvas.toElementRect(id, it) } }
+                                        if (released && dragging && rects.isNotEmpty()) {
                                             vm.commitRects(rects)
                                             awaitingCommit = true
                                         } else {
                                             preview.clear()
                                         }
                                     }
-                                    else -> {
+                                    else -> if (!dragging) {
+                                        if (released) {
+                                            vm.clearSelection()
+                                            resizeMode = false
+                                        }
+                                    } else {
                                         val m = marquee
                                         if (released && m != null) {
-                                            vm.select(els.filter { rectOf(it).overlaps(m) }.mapTo(mutableSetOf()) { it.id })
+                                            // Select what the box covers — and open their menu.
+                                            val ids = els.filter { rectOf(it).overlaps(m) }.mapTo(mutableSetOf()) { it.id }
+                                            vm.select(ids)
+                                            if (ids.isNotEmpty()) openMenu(ids)
                                         }
                                         marquee = null
                                     }
@@ -369,14 +509,34 @@ internal fun VirtualSetEditor(
             )
         }
 
-        CoreMenuPanel(menu, chromeBounds, horizontal) {
-            rootMenuEntries(vm, onRotate = {
-                menu.dismissAll()
-                menu.settlePanel(with(density) { MENU_SHADOW_MARGIN.dp.toPx() })
-                vm.menuHorizontal.value = !vm.menuHorizontal.value
-            })
+        // The selection's context menu, hung off the selection's box (as the tile menus hang off
+        // their tile): beside it, mirrored to the other side when there's no room.
+        Box(
+            Modifier
+                .offset { IntOffset(menuAnchor.left.roundToInt(), menuAnchor.top.roundToInt()) }
+                .size(with(density) { menuAnchor.width.toDp() }, with(density) { menuAnchor.height.toDp() }),
+        ) {
+            MinputActionMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                actions = virtualButtonContextActions(
+                    vm = vm,
+                    onEdit = { which, id ->
+                        when (which) {
+                            EditFlyout.Assign ->
+                                flyouts.openAt("edit:assign", menuAnchor, MinputDraggableMenuWideWidthDp) { assignEntries(vm, id) }
+                            EditFlyout.Customize ->
+                                flyouts.openAt("edit:customize", menuAnchor) { customizeEntries(vm, id) }
+                        }
+                    },
+                    onMove = { moveArmed = true },
+                    onResize = { resizeMode = true },
+                ),
+                placement = MinputMenuPlacement.End,
+                caret = true,
+            )
         }
-        MenuFlyouts(menu, chromeBounds)
+        MinputDraggableMenuFlyouts(flyouts, chromeBounds)
         if (positionerOpen) Positioner(vm, canvas, chromeBounds)
 
         configId?.let { id ->
@@ -387,10 +547,10 @@ internal fun VirtualSetEditor(
                 LaunchedEffect(id) { vm.configElementId.value = null }
             } else {
                 key(id) {
-                    VirtualEditorConfigDrawer(
+                    VirtualButtonEditorConfigDrawer(
                         element = element,
                         stage = chromeBounds,
-                        onChange = { vm.overlayEditor.update(it) },
+                        onChange = { vm.virtualButtonEditor.update(it) },
                         onDelete = { vm.deleteElement(id) },
                         onClosed = { vm.configElementId.value = null },
                     )
@@ -400,9 +560,13 @@ internal fun VirtualSetEditor(
     }
 }
 
+/** A move's two readings of the group: where each button is CARRIED (under the finger, bounds
+ *  clamped but unsnapped) and where it would LAND if dropped now (snapping applied). */
+private class MovedGroup(val carried: Map<Long, Rect>, val landing: Map<Long, Rect>)
+
 /**
- * The group [groupStart] dragged by [d]: only the [primaryId] (under the finger) snaps; its
- * resolved delta moves every member, so the group keeps its shape. Members aren't snap targets.
+ * The group [groupStart] dragged by [d]: only the [primaryId] snaps; its resolved delta moves
+ * every member, so the group keeps its shape. Members aren't snap targets.
  */
 private fun moveGroup(
     canvas: EditCanvas,
@@ -412,23 +576,77 @@ private fun moveGroup(
     snap: Boolean,
     elements: List<OverlayElement>,
     rectOf: (OverlayElement) -> Rect,
-): Map<Long, Rect> {
+): MovedGroup {
     val b = canvas.bounds
-    val ps = groupStart[primaryId] ?: return emptyMap()
-    var px = EditCanvas.clamp(ps.left + d.x, ps.width, b.left, b.right)
-    var py = EditCanvas.clamp(ps.top + d.y, ps.height, b.top, b.bottom)
-    if (snap) {
-        val others = elements.filter { it.id !in groupStart }.map(rectOf)
-        val snapped = canvas.snap(px, py, ps.width, ps.height, others)
-        px = snapped.x
-        py = snapped.y
-    }
-    val dx = px - ps.left
-    val dy = py - ps.top
-    return groupStart.mapValues { (_, r) ->
+    val ps = groupStart[primaryId] ?: return MovedGroup(emptyMap(), emptyMap())
+    val px = EditCanvas.clamp(ps.left + d.x, ps.width, b.left, b.right)
+    val py = EditCanvas.clamp(ps.top + d.y, ps.height, b.top, b.bottom)
+    fun shifted(dx: Float, dy: Float) = groupStart.mapValues { (_, r) ->
         val nx = EditCanvas.clamp(r.left + dx, r.width, b.left, b.right)
         val ny = EditCanvas.clamp(r.top + dy, r.height, b.top, b.bottom)
         Rect(nx, ny, nx + r.width, ny + r.height)
+    }
+    val carried = shifted(px - ps.left, py - ps.top)
+    if (!snap) return MovedGroup(carried, carried)
+    val others = elements.filter { it.id !in groupStart }.map(rectOf)
+    val snapped = canvas.snap(px, py, ps.width, ps.height, others)
+    return MovedGroup(carried, shifted(snapped.x - ps.left, snapped.y - ps.top))
+}
+
+/** How a press that began on a button resolved (see [awaitPressOutcome]). */
+private enum class PressOutcome { Tap, Travelled, Held, Cancelled }
+
+/** What a press on the canvas is doing. */
+private enum class Press { Undecided, Move, Resize, Marquee }
+
+/**
+ * Wait out a press on a button: [PressOutcome.Tap] if it lifts first, [PressOutcome.Travelled] if
+ * it moves past [slop] first, [PressOutcome.Held] once it has stayed put for the long-press time.
+ */
+private suspend fun AwaitPointerEventScope.awaitPressOutcome(pointer: PointerId, start: Offset, slop: Float): PressOutcome =
+    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+        var outcome: PressOutcome? = null
+        while (outcome == null) {
+            val change = awaitPointerEvent().changes.firstOrNull { it.id == pointer }
+            outcome = when {
+                change == null -> PressOutcome.Cancelled
+                change.changedToUpIgnoreConsumed() -> PressOutcome.Tap
+                (change.position - start).getDistance() > slop -> PressOutcome.Travelled
+                else -> null
+            }
+        }
+        outcome
+    } ?: PressOutcome.Held
+
+/**
+ * One end of a move: a copy of [element] at [rect], washed in [color] through its own silhouette
+ * (the wash is drawn SrcAtop on the copy's layer, so it takes the button's shape, whatever that is).
+ */
+@Composable
+private fun MoveGhost(element: OverlayElement, rect: () -> Rect, color: Color) {
+    Box(
+        Modifier
+            .offset {
+                val r = rect()
+                IntOffset(r.left.roundToInt(), r.top.roundToInt())
+            }
+            .layout { measurable, _ ->
+                val r = rect()
+                val w = r.width.roundToInt().coerceAtLeast(1)
+                val h = r.height.roundToInt().coerceAtLeast(1)
+                val p = measurable.measure(Constraints.fixed(w, h))
+                layout(w, h) { p.place(0, 0) }
+            }
+            .graphicsLayer {
+                alpha = GHOST_ALPHA
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawWithContent {
+                drawContent()
+                drawRect(color.copy(alpha = GHOST_WASH_ALPHA), blendMode = BlendMode.SrcAtop)
+            },
+    ) {
+        OverlayElementVisual(element = element)
     }
 }
 
@@ -444,8 +662,8 @@ private fun resizeGroup(
     d: Offset,
 ): Map<Long, Rect> {
     if (startBox.width <= 0f || startBox.height <= 0f || startRects.isEmpty()) return emptyMap()
-    val minW = OverlayEditor.MIN_SIZE * canvas.width
-    val minH = OverlayEditor.MIN_SIZE * canvas.height
+    val minW = VirtualButtonEditor.MIN_SIZE * canvas.width
+    val minH = VirtualButtonEditor.MIN_SIZE * canvas.height
     // The smallest box that keeps every member at/above MIN_SIZE after scaling.
     val minBoxW = (startBox.width * startRects.values.maxOf { minW / it.width }).coerceIn(1f, startBox.width)
     val minBoxH = (startBox.height * startRects.values.maxOf { minH / it.height }).coerceIn(1f, startBox.height)
@@ -502,9 +720,9 @@ private fun DrawScope.drawCanvasGuides(
     }
 }
 
-/** The resize chrome: a corner dot on each corner of the selection box (+ a dashed outline of the
- *  box when several are selected). */
-private fun DrawScope.drawSelectionChrome(box: Rect, multi: Boolean, primary: Color, onPrimary: Color, scale: Float) {
+/** The selection chrome: a dashed outline of the box when several are selected, and — in resize
+ *  mode ([handles]) — a corner dot on each corner of it. */
+private fun DrawScope.drawSelectionChrome(box: Rect, multi: Boolean, handles: Boolean, primary: Color, onPrimary: Color, scale: Float) {
     if (multi) {
         drawRect(
             primary,
@@ -516,6 +734,7 @@ private fun DrawScope.drawSelectionChrome(box: Rect, multi: Boolean, primary: Co
             ),
         )
     }
+    if (!handles) return
     val r = HANDLE_DOT_DP.dp.toPx() * scale / 2f
     Corner.entries.forEach { c ->
         val p = c.pointOf(box)
@@ -551,5 +770,10 @@ internal const val VIRTUAL_STAGE_TAG = "virtual-editor:stage"
 private const val HANDLE_TOUCH_DP = 32
 private const val HANDLE_DOT_DP = 14
 private const val COMMIT_FALLBACK_MS = 600L
+// A lifted button, drawn translucent so the move end it stands on shows through it.
+private const val CARRIED_ALPHA = 0.6f
+// A move's ends: the button's copy, and how strongly it is washed in the end's colour.
+private const val GHOST_ALPHA = 0.75f
+private const val GHOST_WASH_ALPHA = 0.7f
 // The frozen game under the editor is dimmed like the old edit scrim (~40% black).
 private const val BACKDROP_SCRIM_ALPHA = 0.4f

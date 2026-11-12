@@ -44,7 +44,9 @@ Background remapping works even when Mappo is not visible on any screen.
   game-overlay model — discrete, **free-positioned** buttons (normalized x/y + size),
   each button its **own** `TYPE_APPLICATION_OVERLAY` window. Empty space is passthrough
   for free (no window exists there), replacing the single-window + `@hide`
-  touchable-region hack. A new **"Edit Overlay"** drawer entry opens a button editor.
+  touchable-region hack. The editor for these buttons is the **virtual button editor** (formerly
+  "overlay editor" — don't use the old name): the controls screen's second body under the
+  hierarchy bar (`ui/screen/virtualset/`, engine `service/overlay/element/VirtualButtonEditor`).
 - New code lives under `service/overlay/element/` + `data/.../OverlayElement*`; it
   **coexists** with the legacy keyboard overlay (nothing deleted yet). MVP buttons emit
   via the existing `RemapTarget` + `InputDispatcher` dispatch; they migrate to the

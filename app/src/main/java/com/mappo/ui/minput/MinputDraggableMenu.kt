@@ -1,4 +1,4 @@
-package com.mappo.ui.screen.virtualset
+package com.mappo.ui.minput
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -11,6 +11,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +62,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -69,34 +72,50 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.mappo.ui.compact.CompactCheckbox
-import com.mappo.ui.minput.MinputIcon
-import com.mappo.ui.minput.MinputIconSize
-import com.mappo.ui.minput.MinputCascadeSide
-import com.mappo.ui.minput.MinputSubmenuArrow
-import com.mappo.ui.minput.minputCascadeLeft
-import com.mappo.ui.minput.minputCascadeSide
-import com.mappo.ui.minput.MinputMenuMotion
 import kotlin.math.roundToInt
 
-// The virtual editor's menu (2026-10-15, ported from the retired OverlayLiveEditController): ONE
-// always-visible core panel — a vertical list or a horizontal icon bar, grab-anywhere draggable —
-// whose rows open CASCADING fly-outs beside them, deeper rows cascading further. It used to be one
-// overlay window per level; it is all one composition now, so the levels are placed by a Layout
-// off their parent's measured bounds, and an outside press is seen at the editor root's Initial
-// pass (it still reaches whatever is underneath — a button, another row).
+/**
+ * **The minput DRAGGABLE MENU** — a floating, grab-anywhere tool menu that lives IN the host's
+ * composition (no popup window): ONE always-visible core panel, a vertical list or a horizontal
+ * icon bar ([MinputDraggableMenu]'s `horizontal`, morphing between the two about its pinned edge),
+ * whose rows open CASCADING fly-outs beside them, deeper rows cascading further
+ * ([MinputDraggableMenuFlyouts]). Rows are data ([MinputDraggableMenuEntry]): leaf actions, check
+ * toggles, value rows, submenu openers, split select+submenu rows, and custom rows hosting embedded
+ * controls (sliders, pickers) that can spawn fly-outs of their own.
+ *
+ * Born as the virtual button editor's core menu (ported 2026-10-15 from the retired
+ * `OverlayLiveEditController`, where it was one overlay window per level) and EXTERNALIZED here
+ * 2026-11-11 when that editor moved its commands onto the bar, a toolbar row and per-button
+ * context menus. The editor still hosts the FLY-OUTS alone — opened beside a button with
+ * [MinputDraggableMenuState.openAt] — for its rich per-button editing levels.
+ *
+ * Unlike the popup menus ([MinputActionMenu] / [MinputDropdownMenu]) nothing here takes focus or
+ * swallows outside touches: a press outside a fly-out closes it AND still reaches whatever is
+ * underneath. That is why it is in-composition, and what it asks of its host:
+ *
+ *  1. one [MinputDraggableMenuState], `remember`ed;
+ *  2. [Modifier.minputDraggableMenuHost] on the host's root — the box the menu floats in. It gives
+ *     rows a coordinate space and watches every press (Initial pass, never consumed) to close the
+ *     fly-outs it didn't land in;
+ *  3. [MinputDraggableMenu] (optional — the core panel) and [MinputDraggableMenuFlyouts], composed
+ *     LAST in that root so they sit above its content, both handed the bounds (host-local px) the
+ *     menu may occupy.
+ *
+ * Fly-outs carry the one minput menu motion ([MinputMenuMotion]) and the shared cascade side rule
+ * ([minputCascadeSide]).
+ */
 
-/** A trailing affordance on a menu row. (A submenu's arrow is implied by [MenuEntry.Item.submenu].) */
-internal sealed interface MenuTrailing {
-    data object None : MenuTrailing
-    data class Check(val checked: Boolean, val onToggle: (Boolean) -> Unit) : MenuTrailing
-    data class Value(val text: String) : MenuTrailing
+/** A trailing affordance on a menu row. (A submenu's arrow is implied by [MinputDraggableMenuEntry.Item.submenu].) */
+internal sealed interface MinputDraggableMenuTrailing {
+    data object None : MinputDraggableMenuTrailing
+    data class Check(val checked: Boolean, val onToggle: (Boolean) -> Unit) : MinputDraggableMenuTrailing
+    data class Value(val text: String) : MinputDraggableMenuTrailing
 }
 
 /** One menu entry: a divider, an item (leaf action, submenu opener, or a split select+submenu
  *  row), or a custom-composable row (embedded controls — sliders, pill pairs, pickers). */
-internal sealed interface MenuEntry {
-    data object Divider : MenuEntry
+internal sealed interface MinputDraggableMenuEntry {
+    data object Divider : MinputDraggableMenuEntry
     data class Item(
         val label: String,
         val enabled: Boolean = true,
@@ -104,48 +123,48 @@ internal sealed interface MenuEntry {
         val selected: Boolean = false,
         val indent: Boolean = false,
         val leadingIcon: ImageVector? = null,
-        val trailing: MenuTrailing = MenuTrailing.None,
+        val trailing: MinputDraggableMenuTrailing = MinputDraggableMenuTrailing.None,
         // A leaf action closes only THIS level (keeps its parent open) — in-menu pickers.
         val closeToParentOnly: Boolean = false,
         // A leaf action leaves every level open (in-place mutations like "+ Fill").
         val keepOpen: Boolean = false,
         // Non-null → a cascading fly-out. @Composable + lazy so its contents recompose live.
-        val submenu: (@Composable () -> List<MenuEntry>)? = null,
-        // Width of the fly-out [submenu] opens (dp); null = [MENU_WIDTH_DP].
+        val submenu: (@Composable () -> List<MinputDraggableMenuEntry>)? = null,
+        // Width of the fly-out [submenu] opens (dp); null = [MinputDraggableMenuWidthDp].
         val submenuWidthDp: Int? = null,
         // Leaf action. With a [submenu] too, the row is SPLIT: body = onClick, arrow = open.
         val onClick: (() -> Unit)? = null,
-    ) : MenuEntry
+    ) : MinputDraggableMenuEntry
 
     /** A row rendered by [content] itself; `openSubmenu(subKey, builder)` opens a standard-width
      *  fly-out anchored at this row (how embedded pills spawn their pickers). */
     data class Custom(
         val key: String,
-        val content: @Composable ((subKey: String, builder: @Composable () -> List<MenuEntry>) -> Unit) -> Unit,
-    ) : MenuEntry
+        val content: @Composable ((subKey: String, builder: @Composable () -> List<MinputDraggableMenuEntry>) -> Unit) -> Unit,
+    ) : MinputDraggableMenuEntry
 }
 
 /** Where a fly-out sits. */
-internal sealed interface FlyoutAnchor {
+internal sealed interface MinputFlyoutAnchor {
     /** Beside a parent whose visible edges are [parentLeft]…[parentRight], its top at [top]. */
-    data class Side(val parentLeft: Float, val parentRight: Float, val top: Float) : FlyoutAnchor
+    data class Side(val parentLeft: Float, val parentRight: Float, val top: Float) : MinputFlyoutAnchor
 
     /** Below [edgeY] (above it when [growUp]), its left at [left] — the horizontal bar's levels. */
-    data class Vertical(val left: Float, val edgeY: Float, val growUp: Boolean) : FlyoutAnchor
+    data class Vertical(val left: Float, val edgeY: Float, val growUp: Boolean) : MinputFlyoutAnchor
 }
 
-internal class MenuLevel(
+internal class MinputDraggableMenuLevel(
     val id: Int,
     val depth: Int,
     // The row that opened this level, so re-tapping it toggles it closed.
     val sourceKey: String,
-    val anchor: FlyoutAnchor,
+    val anchor: MinputFlyoutAnchor,
     val widthDp: Int,
-    val builder: @Composable () -> List<MenuEntry>,
+    val builder: @Composable () -> List<MinputDraggableMenuEntry>,
 ) {
     val visible = MutableTransitionState(false).apply { targetState = true }
 
-    // Where the level was last placed (visible surface, editor-local px). Plain fields: written in
+    // Where the level was last placed (visible surface, host-local px). Plain fields: written in
     // placement, read by press handlers — never by composition.
     var bounds: Rect = Rect.Zero
     var side: MinputCascadeSide? = null
@@ -156,17 +175,18 @@ internal class MenuLevel(
  * in the list), the levels still playing their close, and the core panel's position.
  */
 @Stable
-internal class CascadeMenuState {
-    val levels = mutableStateListOf<MenuLevel>()
-    val closing = mutableStateListOf<MenuLevel>()
+internal class MinputDraggableMenuState {
+    val levels = mutableStateListOf<MinputDraggableMenuLevel>()
+    val closing = mutableStateListOf<MinputDraggableMenuLevel>()
     private var nextId = 0
 
     // Which way the current cascade opens — decided by its FIRST side-placed level, inherited by
     // deeper ones so they don't fold back over their parents. Reset by a fresh root submenu.
     var cascadeSide: MinputCascadeSide? = null
 
-    /** The editor root's coordinates, so rows can report their bounds editor-local. */
-    var editorCoords: LayoutCoordinates? = null
+    /** The host root's coordinates, so rows can report their bounds host-local. Set by
+     *  [minputDraggableMenuHost]. */
+    var hostCoords: LayoutCoordinates? = null
 
     // ── The core panel ──
     // Position: NaN until first moved (placed at the default — the left edge, vertically centred).
@@ -176,7 +196,7 @@ internal class CascadeMenuState {
     var panelEdgeY by mutableFloatStateOf(Float.NaN)
     var panelPinTop by mutableStateOf(true)
 
-    /** The panel's visible surface as last placed (editor-local px). */
+    /** The panel's visible surface as last placed (host-local px). */
     var panelBounds: Rect = Rect.Zero
     var canvasHeight: Float = 0f
 
@@ -185,7 +205,7 @@ internal class CascadeMenuState {
     val rootRowBounds = mutableMapOf<String, Rect>()
 
     fun boundsOf(coords: LayoutCoordinates): Rect? =
-        editorCoords?.takeIf { it.isAttached && coords.isAttached }?.localBoundingBoxOf(coords, clipBounds = false)
+        hostCoords?.takeIf { it.isAttached && coords.isAttached }?.localBoundingBoxOf(coords, clipBounds = false)
 
     /** Close levels until only [keep] remain (0 = all; the core panel stays). */
     fun truncate(keep: Int) {
@@ -198,19 +218,44 @@ internal class CascadeMenuState {
 
     fun dismissAll() = truncate(0)
 
+    /**
+     * Open a fly-out with NO core panel behind it: a first level beside [anchor] (host-local px —
+     * the thing being acted on, e.g. a button on a canvas), on whichever side it fits, its top
+     * level with the anchor's. Replaces whatever cascade was open.
+     */
+    fun openAt(
+        sourceKey: String,
+        anchor: Rect,
+        widthDp: Int = MinputDraggableMenuWidthDp,
+        builder: @Composable () -> List<MinputDraggableMenuEntry>,
+    ) {
+        truncate(0)
+        cascadeSide = null
+        levels.add(
+            MinputDraggableMenuLevel(nextId++, 1, sourceKey, MinputFlyoutAnchor.Side(anchor.left, anchor.right, anchor.top), widthDp, builder),
+        )
+    }
+
+    /** Call just before flipping the core panel's `horizontal`: closes the fly-outs and pins the
+     *  panel where it sits, so the morph grows into its own half of the host. */
+    fun prepareRotate(shadowMarginPx: Float) {
+        dismissAll()
+        settlePanel(shadowMarginPx)
+    }
+
     /** Re-tapping the row that opened the level at this depth closes it; else (re)open. */
     fun toggle(
         parentDepth: Int,
         sourceKey: String,
-        anchor: FlyoutAnchor,
+        anchor: MinputFlyoutAnchor,
         widthDp: Int,
-        builder: @Composable () -> List<MenuEntry>,
+        builder: @Composable () -> List<MinputDraggableMenuEntry>,
     ) {
         val openHere = levels.getOrNull(parentDepth)
         truncate(parentDepth)
         if (openHere != null && openHere.sourceKey == sourceKey) return
         if (parentDepth == 0) cascadeSide = null
-        levels.add(MenuLevel(nextId++, parentDepth + 1, sourceKey, anchor, widthDp, builder))
+        levels.add(MinputDraggableMenuLevel(nextId++, parentDepth + 1, sourceKey, anchor, widthDp, builder))
     }
 
     /** A root row's fly-out: beside the vertical panel, or below / above the horizontal bar. */
@@ -219,21 +264,21 @@ internal class CascadeMenuState {
         itemBounds: Rect,
         horizontal: Boolean,
         widthDp: Int,
-        builder: @Composable () -> List<MenuEntry>,
+        builder: @Composable () -> List<MinputDraggableMenuEntry>,
     ) {
         val p = panelBounds
         val anchor = if (!horizontal) {
-            FlyoutAnchor.Side(p.left, p.right, itemBounds.top)
+            MinputFlyoutAnchor.Side(p.left, p.right, itemBounds.top)
         } else if (p.center.y < canvasHeight / 2f) {
-            FlyoutAnchor.Vertical(itemBounds.left, p.bottom, growUp = false)
+            MinputFlyoutAnchor.Vertical(itemBounds.left, p.bottom, growUp = false)
         } else {
-            FlyoutAnchor.Vertical(itemBounds.left, p.top, growUp = true)
+            MinputFlyoutAnchor.Vertical(itemBounds.left, p.top, growUp = true)
         }
         toggle(0, sourceKey, anchor, widthDp, builder)
     }
 
     /**
-     * A press anywhere in the editor (seen BEFORE its target): close every level deeper than the
+     * A press anywhere in the host (seen BEFORE its target): close every level deeper than the
      * one it landed in — all of them if it landed in none. A press on a root row is the row's.
      */
     fun onPress(position: Offset) {
@@ -255,13 +300,13 @@ internal class CascadeMenuState {
 }
 
 /**
- * Make ripples in the editor menus / Positioner clearly visible: a primary-tinted ripple with a
+ * Make ripples in the draggable menu (and tool pads styled after it) clearly visible: a primary-tinted ripple with a
  * stronger-than-default pressed alpha (the stock onSurface ripple over the menu surface reads too
  * faint).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ProvideMenuRipple(content: @Composable () -> Unit) {
+internal fun MinputDraggableMenuRipple(content: @Composable () -> Unit) {
     val cfg = RippleConfiguration(
         color = MaterialTheme.colorScheme.primary,
         rippleAlpha = RippleAlpha(draggedAlpha = 0.20f, focusedAlpha = 0.26f, hoveredAlpha = 0.16f, pressedAlpha = 0.32f),
@@ -272,9 +317,9 @@ internal fun ProvideMenuRipple(content: @Composable () -> Unit) {
 /**
  * A soft, blurred drop shadow for a menu surface, drawn with [android.graphics.BlurMaskFilter]
  * rather than `Modifier.shadow` (the doctrine — see `MainScreen.softDropShadow`). Draws into the
- * surrounding [MENU_SHADOW_MARGIN] inset.
+ * surrounding [MinputDraggableMenuShadowMarginDp] inset.
  */
-internal fun Modifier.menuDropShadow(cornerRadius: Dp): Modifier = drawBehind {
+internal fun Modifier.minputDraggableMenuShadow(cornerRadius: Dp): Modifier = drawBehind {
     val blurPx = 8.dp.toPx()
     val offsetYPx = 2.dp.toPx()
     val cornerPx = cornerRadius.toPx()
@@ -298,13 +343,13 @@ internal fun Modifier.menuDropShadow(cornerRadius: Dp): Modifier = drawBehind {
  * Rotating morphs between the vertical panel and the horizontal bar about the pinned edge.
  */
 @Composable
-internal fun CoreMenuPanel(
-    state: CascadeMenuState,
+internal fun MinputDraggableMenu(
+    state: MinputDraggableMenuState,
     bounds: Rect,
     horizontal: Boolean,
-    entries: @Composable () -> List<MenuEntry>,
+    entries: @Composable () -> List<MinputDraggableMenuEntry>,
 ) {
-    val marginPx = with(LocalDensity.current) { MENU_SHADOW_MARGIN.dp.toPx() }
+    val marginPx = with(LocalDensity.current) { MinputDraggableMenuShadowMarginDp.dp.toPx() }
     Layout(
         modifier = Modifier.fillMaxSize(),
         content = {
@@ -325,11 +370,11 @@ internal fun CoreMenuPanel(
                             onDragCancel = { state.settlePanel(marginPx) },
                         )
                     }
-                    .padding(MENU_SHADOW_MARGIN.dp),
+                    .padding(MinputDraggableMenuShadowMarginDp.dp),
             ) {
                 val shape = if (horizontal) CircleShape else MaterialTheme.shapes.large
                 val shadowCorner = if (horizontal) 100.dp else 16.dp
-                Box(Modifier.menuDropShadow(shadowCorner)) {
+                Box(Modifier.minputDraggableMenuShadow(shadowCorner)) {
                     Surface(
                         shape = shape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -361,8 +406,8 @@ internal fun CoreMenuPanel(
             state.panelPinTop -> state.panelEdgeY
             else -> state.panelEdgeY - h
         }
-        val px = EditCanvas.clamp(x, w, bounds.left, bounds.right)
-        val py = EditCanvas.clamp(top, h, bounds.top, bounds.bottom)
+        val px = clampSpan(x, w, bounds.left, bounds.right)
+        val py = clampSpan(top, h, bounds.top, bounds.bottom)
         state.panelBounds = Rect(px + marginPx, py + marginPx, px + w - marginPx, py + h - marginPx)
         layout(constraints.maxWidth, constraints.maxHeight) {
             panel.place(px.roundToInt(), py.roundToInt())
@@ -371,45 +416,45 @@ internal fun CoreMenuPanel(
 }
 
 @Composable
-private fun VerticalPanel(state: CascadeMenuState, entries: @Composable () -> List<MenuEntry>) {
-    Column(Modifier.width(MENU_WIDTH_DP.dp).padding(vertical = 6.dp)) {
+private fun VerticalPanel(state: MinputDraggableMenuState, entries: @Composable () -> List<MinputDraggableMenuEntry>) {
+    Column(Modifier.width(MinputDraggableMenuWidthDp.dp).padding(vertical = 6.dp)) {
         entries().forEach { entry ->
             when (entry) {
-                is MenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
-                is MenuEntry.Item -> RootRow(state, entry)
-                is MenuEntry.Custom -> {} // custom rows are fly-out-only
+                is MinputDraggableMenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
+                is MinputDraggableMenuEntry.Item -> RootRow(state, entry)
+                is MinputDraggableMenuEntry.Custom -> {} // custom rows are fly-out-only
             }
         }
     }
 }
 
 @Composable
-private fun HorizontalBar(state: CascadeMenuState, entries: @Composable () -> List<MenuEntry>) {
+private fun HorizontalBar(state: MinputDraggableMenuState, entries: @Composable () -> List<MinputDraggableMenuEntry>) {
     Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         entries().forEach { entry ->
             when (entry) {
-                is MenuEntry.Divider -> VerticalDivider(Modifier.height(26.dp).padding(horizontal = 2.dp))
-                is MenuEntry.Item -> RootIcon(state, entry)
-                is MenuEntry.Custom -> {}
+                is MinputDraggableMenuEntry.Divider -> VerticalDivider(Modifier.height(26.dp).padding(horizontal = 2.dp))
+                is MinputDraggableMenuEntry.Item -> RootIcon(state, entry)
+                is MinputDraggableMenuEntry.Custom -> {}
             }
         }
     }
 }
 
 /** A root item's tap: open (toggle) its fly-out, or act and close the fly-outs. */
-private fun rootTap(state: CascadeMenuState, item: MenuEntry.Item, bounds: Rect, horizontal: Boolean) {
+private fun rootTap(state: MinputDraggableMenuState, item: MinputDraggableMenuEntry.Item, bounds: Rect, horizontal: Boolean) {
     if (!item.enabled) return
     val sub = item.submenu
     if (sub != null) {
-        state.toggleRoot(item.label, bounds, horizontal, item.submenuWidthDp ?: MENU_WIDTH_DP, sub)
+        state.toggleRoot(item.label, bounds, horizontal, item.submenuWidthDp ?: MinputDraggableMenuWidthDp, sub)
     } else {
         item.onClick?.invoke()
         state.dismissAll()
     }
 }
 
-/** Track a root item's editor-local bounds (for its fly-out anchor and the outside-press sweep). */
-private fun Modifier.rootBounds(state: CascadeMenuState, label: String, onBounds: (Rect) -> Unit): Modifier =
+/** Track a root item's host-local bounds (for its fly-out anchor and the outside-press sweep). */
+private fun Modifier.rootBounds(state: MinputDraggableMenuState, label: String, onBounds: (Rect) -> Unit): Modifier =
     onGloballyPositioned { c ->
         state.boundsOf(c)?.let {
             state.rootRowBounds[label] = it
@@ -418,7 +463,7 @@ private fun Modifier.rootBounds(state: CascadeMenuState, label: String, onBounds
     }
 
 @Composable
-private fun RootRow(state: CascadeMenuState, item: MenuEntry.Item) {
+private fun RootRow(state: MinputDraggableMenuState, item: MinputDraggableMenuEntry.Item) {
     val contentColor =
         if (item.enabled) MaterialTheme.colorScheme.onSurface
         // 0.38 = M3 disabled-content opacity (no dedicated scheme token).
@@ -451,7 +496,7 @@ private fun RootRow(state: CascadeMenuState, item: MenuEntry.Item) {
 }
 
 @Composable
-private fun RootIcon(state: CascadeMenuState, item: MenuEntry.Item) {
+private fun RootIcon(state: MinputDraggableMenuState, item: MinputDraggableMenuEntry.Item) {
     val tint =
         if (item.enabled) MaterialTheme.colorScheme.onSurface
         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
@@ -472,22 +517,22 @@ private fun RootIcon(state: CascadeMenuState, item: MenuEntry.Item) {
 
 /** Every open (and closing) fly-out level, each placed off its anchor inside [bounds]. */
 @Composable
-internal fun MenuFlyouts(state: CascadeMenuState, bounds: Rect) {
+internal fun MinputDraggableMenuFlyouts(state: MinputDraggableMenuState, bounds: Rect) {
     (state.levels + state.closing).forEach { level ->
         key(level.id) { FlyoutLevel(state, level, bounds) }
     }
 }
 
 @Composable
-private fun FlyoutLevel(state: CascadeMenuState, level: MenuLevel, bounds: Rect) {
+private fun FlyoutLevel(state: MinputDraggableMenuState, level: MinputDraggableMenuLevel, bounds: Rect) {
     val density = LocalDensity.current
-    val marginPx = with(density) { MENU_SHADOW_MARGIN.dp.toPx() }
+    val marginPx = with(density) { MinputDraggableMenuShadowMarginDp.dp.toPx() }
     // A closing level leaves the list once its close has played.
     LaunchedEffect(level) {
         snapshotFlow { level.visible.isIdle && !level.visible.currentState && !level.visible.targetState }
             .collect { gone -> if (gone) state.closing.remove(level) }
     }
-    val growUp = (level.anchor as? FlyoutAnchor.Vertical)?.growUp == true
+    val growUp = (level.anchor as? MinputFlyoutAnchor.Vertical)?.growUp == true
     val origin = TransformOrigin(0f, if (growUp) 1f else 0f)
     Layout(
         modifier = Modifier.fillMaxSize(),
@@ -500,8 +545,8 @@ private fun FlyoutLevel(state: CascadeMenuState, level: MenuLevel, bounds: Rect)
                 exit = fadeOut(MinputMenuMotion.fadeExit()) +
                     scaleOut(MinputMenuMotion.scaleExit(), targetScale = MinputMenuMotion.ClosedScale, transformOrigin = origin),
             ) {
-                Box(Modifier.padding(MENU_SHADOW_MARGIN.dp)) {
-                    Box(Modifier.menuDropShadow(12.dp)) {
+                Box(Modifier.padding(MinputDraggableMenuShadowMarginDp.dp)) {
+                    Box(Modifier.minputDraggableMenuShadow(12.dp)) {
                         Surface(
                             // surfaceContainerHighest = the canonical M3 menu surface.
                             color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -510,7 +555,7 @@ private fun FlyoutLevel(state: CascadeMenuState, level: MenuLevel, bounds: Rect)
                         ) {
                             // Fly-outs may scroll up to the editable height — anchored to their
                             // parent, a scrolling surface carries no drag expectation.
-                            val maxH = with(density) { bounds.height.toDp() } - (2 * MENU_SHADOW_MARGIN).dp
+                            val maxH = with(density) { bounds.height.toDp() } - (2 * MinputDraggableMenuShadowMarginDp).dp
                             MenuList(state, level, Modifier.heightIn(max = maxH))
                         }
                     }
@@ -529,8 +574,8 @@ private fun FlyoutLevel(state: CascadeMenuState, level: MenuLevel, bounds: Rect)
 
 /** A level's top-left (its shadow margin included), clamped inside [b]; records its bounds. */
 private fun placeFlyout(
-    state: CascadeMenuState,
-    level: MenuLevel,
+    state: MinputDraggableMenuState,
+    level: MinputDraggableMenuLevel,
     w: Float,
     h: Float,
     margin: Float,
@@ -539,11 +584,11 @@ private fun placeFlyout(
     val visW = w - 2 * margin
     val visH = h - 2 * margin
     val (visLeft, baseTop) = when (val a = level.anchor) {
-        is FlyoutAnchor.Side -> placeSide(state, level, a, visW, b) to a.top
-        is FlyoutAnchor.Vertical ->
-            EditCanvas.clamp(a.left, visW, b.left, b.right) to (if (a.growUp) a.edgeY - visH else a.edgeY)
+        is MinputFlyoutAnchor.Side -> placeSide(state, level, a, visW, b) to a.top
+        is MinputFlyoutAnchor.Vertical ->
+            clampSpan(a.left, visW, b.left, b.right) to (if (a.growUp) a.edgeY - visH else a.edgeY)
     }
-    val visTop = EditCanvas.clamp(baseTop, visH, b.top, b.bottom)
+    val visTop = clampSpan(baseTop, visH, b.top, b.bottom)
     if (w > 0f) level.bounds = Rect(visLeft, visTop, visLeft + visW, visTop + visH)
     return (visLeft - margin) to (visTop - margin)
 }
@@ -552,17 +597,17 @@ private fun placeFlyout(
  * x for a level beside its parent, by the shared minput cascade rule ([minputCascadeSide]): the
  * cascade's first level picks a side, deeper levels inherit it. Decided once per level.
  */
-private fun placeSide(state: CascadeMenuState, level: MenuLevel, a: FlyoutAnchor.Side, width: Float, b: Rect): Float {
+private fun placeSide(state: MinputDraggableMenuState, level: MinputDraggableMenuLevel, a: MinputFlyoutAnchor.Side, width: Float, b: Rect): Float {
     val side = level.side ?: minputCascadeSide(a.parentLeft, a.parentRight, width, b.left, b.right, state.cascadeSide)
         .also {
             level.side = it
             if (state.cascadeSide == null) state.cascadeSide = it
         }
-    return EditCanvas.clamp(minputCascadeLeft(side, a.parentLeft, a.parentRight, width), width, b.left, b.right)
+    return clampSpan(minputCascadeLeft(side, a.parentLeft, a.parentRight, width), width, b.left, b.right)
 }
 
 @Composable
-private fun MenuList(state: CascadeMenuState, level: MenuLevel, modifier: Modifier) {
+private fun MenuList(state: MinputDraggableMenuState, level: MinputDraggableMenuLevel, modifier: Modifier) {
     Column(
         modifier = modifier
             .width(level.widthDp.dp)
@@ -571,9 +616,9 @@ private fun MenuList(state: CascadeMenuState, level: MenuLevel, modifier: Modifi
     ) {
         level.builder().forEach { entry ->
             when (entry) {
-                is MenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
-                is MenuEntry.Item -> MenuRow(state, level, entry)
-                is MenuEntry.Custom -> MenuCustomRow(state, level, entry)
+                is MinputDraggableMenuEntry.Divider -> HorizontalDivider(Modifier.padding(vertical = 2.dp))
+                is MinputDraggableMenuEntry.Item -> MenuRow(state, level, entry)
+                is MinputDraggableMenuEntry.Custom -> MenuCustomRow(state, level, entry)
             }
         }
     }
@@ -581,19 +626,19 @@ private fun MenuList(state: CascadeMenuState, level: MenuLevel, modifier: Modifi
 
 /** Open (toggle) a fly-out of a row at [rowTop] inside [level]. */
 private fun openBeside(
-    state: CascadeMenuState,
-    level: MenuLevel,
+    state: MinputDraggableMenuState,
+    level: MinputDraggableMenuLevel,
     rowTop: Float,
     key: String,
     widthDp: Int,
-    builder: @Composable () -> List<MenuEntry>,
+    builder: @Composable () -> List<MinputDraggableMenuEntry>,
 ) {
     val b = level.bounds
-    state.toggle(level.depth, key, FlyoutAnchor.Side(b.left, b.right, rowTop), widthDp, builder)
+    state.toggle(level.depth, key, MinputFlyoutAnchor.Side(b.left, b.right, rowTop), widthDp, builder)
 }
 
 @Composable
-private fun MenuCustomRow(state: CascadeMenuState, level: MenuLevel, entry: MenuEntry.Custom) {
+private fun MenuCustomRow(state: MinputDraggableMenuState, level: MinputDraggableMenuLevel, entry: MinputDraggableMenuEntry.Custom) {
     var rowTop by remember { mutableFloatStateOf(0f) }
     Box(
         Modifier
@@ -601,16 +646,16 @@ private fun MenuCustomRow(state: CascadeMenuState, level: MenuLevel, entry: Menu
             .onGloballyPositioned { c -> state.boundsOf(c)?.let { rowTop = it.top } }
             .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
-        entry.content { subKey, builder -> openBeside(state, level, rowTop, subKey, MENU_WIDTH_DP, builder) }
+        entry.content { subKey, builder -> openBeside(state, level, rowTop, subKey, MinputDraggableMenuWidthDp, builder) }
     }
 }
 
 @Composable
-private fun MenuRow(state: CascadeMenuState, level: MenuLevel, item: MenuEntry.Item) {
+private fun MenuRow(state: MinputDraggableMenuState, level: MinputDraggableMenuLevel, item: MinputDraggableMenuEntry.Item) {
     var rowTop by remember { mutableFloatStateOf(0f) }
     val hasSub = item.submenu != null
     val trailing = item.trailing
-    val openSub = { openBeside(state, level, rowTop, item.label, item.submenuWidthDp ?: MENU_WIDTH_DP, item.submenu!!) }
+    val openSub = { openBeside(state, level, rowTop, item.label, item.submenuWidthDp ?: MinputDraggableMenuWidthDp, item.submenu!!) }
     // Check rows toggle in place; a leaf runs + closes the fly-outs (or just this level when
     // closeToParentOnly); a pure submenu row toggles its fly-out. (A split row selects on the
     // body and exposes the arrow as its own target.)
@@ -618,7 +663,7 @@ private fun MenuRow(state: CascadeMenuState, level: MenuLevel, item: MenuEntry.I
         if (item.closeToParentOnly) ({ state.truncate(level.depth - 1) }) else ({ state.dismissAll() })
     val rowClick: (() -> Unit)? = when {
         !item.enabled -> null
-        trailing is MenuTrailing.Check -> ({ trailing.onToggle(!trailing.checked) })
+        trailing is MinputDraggableMenuTrailing.Check -> ({ trailing.onToggle(!trailing.checked) })
         item.onClick != null -> ({ item.onClick.invoke(); if (!item.keepOpen) leafClose() })
         hasSub -> openSub
         else -> null
@@ -653,13 +698,13 @@ private fun MenuRow(state: CascadeMenuState, level: MenuLevel, item: MenuEntry.I
         }
         when (trailing) {
             // onCheckedChange = null so the ROW owns the toggle (the whole row is tappable).
-            is MenuTrailing.Check -> CompactCheckbox(checked = trailing.checked, onCheckedChange = null, enabled = item.enabled)
-            is MenuTrailing.Value -> Text(
+            is MinputDraggableMenuTrailing.Check -> MinputCheckbox(checked = trailing.checked, onCheckedChange = null, enabled = item.enabled)
+            is MinputDraggableMenuTrailing.Value -> Text(
                 trailing.text,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            MenuTrailing.None -> {}
+            MinputDraggableMenuTrailing.None -> {}
         }
         if (hasSub) {
             val arrow = Icons.AutoMirrored.Filled.ArrowRight
@@ -682,11 +727,33 @@ private fun MenuRow(state: CascadeMenuState, level: MenuLevel, item: MenuEntry.I
     }
 }
 
-// Editor menu sizing: a narrow fixed width; levels scroll past the editable height.
-internal const val MENU_WIDTH_DP = 156
+// Sizing: a narrow fixed width; levels scroll past the bounds' height.
+internal const val MinputDraggableMenuWidthDp = 156
 // Fly-out levels hosting embedded controls (Assign rows, sliders, the gradient editor).
-internal const val WIDE_MENU_WIDTH_DP = 240
+internal const val MinputDraggableMenuWideWidthDp = 240
 // Transparent inset around each menu surface, giving the drop shadow room.
-internal const val MENU_SHADOW_MARGIN = 10
+internal const val MinputDraggableMenuShadowMarginDp = 10
 // The vertical ↔ horizontal morph.
 private const val ROTATE_MS = 200
+
+/**
+ * The host side of a draggable menu (see the file header): reports the host's coordinates and
+ * height to [state], and watches every press BEFORE its target to close the fly-outs it didn't
+ * land in. Observed, never consumed — the press still reaches the row / content under it.
+ */
+internal fun Modifier.minputDraggableMenuHost(state: MinputDraggableMenuState): Modifier = this
+    .onGloballyPositioned {
+        state.hostCoords = it
+        state.canvasHeight = it.size.height.toFloat()
+    }
+    .pointerInput(state) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            state.onPress(down.position)
+        }
+    }
+
+/** [value] clamped so an [extent]-long span stays inside [lo, hi]; a span bigger than the bounds
+ *  may overflow past an edge. */
+private fun clampSpan(value: Float, extent: Float, lo: Float, hi: Float): Float =
+    value.coerceIn(minOf(lo, hi - extent), maxOf(lo, hi - extent))

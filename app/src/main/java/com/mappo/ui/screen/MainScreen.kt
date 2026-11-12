@@ -159,7 +159,9 @@ import com.mappo.ui.screen.remap.LocalTileReveal
 import com.mappo.ui.screen.remap.ApplicationsScreen
 import com.mappo.ui.screen.remap.LayoutsScreen
 import com.mappo.ui.screen.remap.RemapOptionEntry
-import com.mappo.ui.screen.virtualset.VirtualSetEditor
+import com.mappo.ui.screen.virtualset.VirtualButtonEditorScreen
+import com.mappo.ui.screen.virtualset.VirtualButtonEditorToolbar
+import com.mappo.ui.screen.virtualset.virtualButtonEditorBarActions
 import com.mappo.service.autoswitch.ApplicationAutoSwitcher
 import com.mappo.ui.screen.keyboard.KeyboardTabBar
 import com.mappo.ui.screen.keyboard.TabActionDialog
@@ -273,13 +275,13 @@ fun MainScreen(
     // on launch. `frameVisible` drives its fade-in entrance / fade-out exit; dismissing it on
     // MAIN means "leave Mappo" (see the effects below). Replaces the old floating toolbar.
     var frameVisible by remember { mutableStateOf(true) }
-    // The virtual set editor (2026-10-15) is the controls screen's second body, swapped in under
+    // The virtual button editor (2026-10-15) is the controls screen's second body, swapped in under
     // the same hierarchy bar — every entry (the bar's Buttons crumb, the Layout settings panel, a
     // just-created virtual set) just flips it open, in place. Mappo no longer steps aside for it.
     val virtualEditorOpen by viewModel.virtualEditorOpen.collectAsStateWithLifecycle()
     val virtualEditorSetId by viewModel.virtualEditorSetId.collectAsStateWithLifecycle()
     val virtualEditorBackdrop by viewModel.virtualEditorBackdrop.collectAsStateWithLifecycle()
-    val startOverlayEdit: (virtualSetId: Long?) -> Unit = { virtualSetId ->
+    val startVirtualButtonEdit: (virtualSetId: Long?) -> Unit = { virtualSetId ->
         viewModel.openVirtualEditor(virtualSetId)
     }
     // Dev tooling: the floating Theme Studio font picker (wordmark-drawer toggle).
@@ -503,19 +505,23 @@ fun MainScreen(
                     // ── Layout settings panel: the layout-scoped entries (the global
                     // options moved to the wordmark drawer) ──
                     optionsEntries = listOf(
-                        RemapOptionEntry("edit_overlay", "Edit overlay", Icons.Filled.Layers) {
-                            startOverlayEdit(null)
+                        RemapOptionEntry("edit_overlay", "Edit virtual buttons", Icons.Filled.Layers) {
+                            startVirtualButtonEdit(null)
                         },
                     ),
-                    // The controls bar's Edit overlay button (2026-08-29) — the same entry
+                    // The controls bar's Edit virtual buttons button (2026-08-29) — the same entry
                     // the panel carries, given a real home.
-                    onEditOverlay = startOverlayEdit,
+                    onEditVirtualButtons = startVirtualButtonEdit,
                     virtualEditorOpen = virtualEditorOpen,
                     virtualEditorSetId = virtualEditorSetId,
                     onCloseVirtualEditor = viewModel::closeVirtualEditor,
                     virtualEditor = { editorModifier ->
-                        VirtualSetEditor(backdrop = virtualEditorBackdrop, modifier = editorModifier)
+                        VirtualButtonEditorScreen(backdrop = virtualEditorBackdrop, modifier = editorModifier)
                     },
+                    virtualEditorToolbar = { vertical, menuPlacement ->
+                        VirtualButtonEditorToolbar(vertical = vertical, menuPlacement = menuPlacement)
+                    },
+                    virtualEditorMenuActions = { virtualButtonEditorBarActions() },
                     // ── Viewing vs active (2026-08-20) ──
                     isActiveLayout = isActiveLayout,
                     autoSwitchEnabled = autoSwitchEnabled,
@@ -564,10 +570,10 @@ fun MainScreen(
                             title = title,
                             inheritFromSetId = inheritFromSetId,
                             kind = kind,
-                            // A new virtual set is empty — straight into the overlay editor
+                            // A new virtual set is empty — straight into the virtual button editor
                             // to place its buttons.
                             onCreated = { id ->
-                                if (kind == ActionSetKind.VIRTUAL) startOverlayEdit(id)
+                                if (kind == ActionSetKind.VIRTUAL) startVirtualButtonEdit(id)
                             },
                         )
                     },

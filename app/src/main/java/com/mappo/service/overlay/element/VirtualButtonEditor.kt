@@ -30,7 +30,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Which action set / layer the overlay editor is currently editing. An [OverlayElement] is
+ * Which action set / layer the virtual button editor is currently editing. An [OverlayElement] is
  * owned by exactly one of these (see the entity doc).
  */
 sealed interface OverlayScope {
@@ -48,7 +48,7 @@ data class ScopeOption(
 
 /**
  * Shared edit operations on the rebuilt overlay's [OverlayElement]s (Brick C of
- * `OVERLAY_REBUILD_PLAN.md`). `@Singleton` so the virtual set editor writes through a single
+ * `OVERLAY_REBUILD_PLAN.md`). `@Singleton` so the virtual button editor writes through a single
  * source of truth that the run-mode [OverlayPresenter] also observes.
  *
  * Operations target the **current [editingScope]** — a single action set or layer of the
@@ -57,7 +57,7 @@ data class ScopeOption(
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
-class OverlayEditor @Inject constructor(
+class VirtualButtonEditor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val overlayRepository: OverlayRepository,
     private val layoutRepository: LayoutRepository,

@@ -55,7 +55,7 @@ import com.mappo.service.input.CompiledConfig
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.input.toCompiled
 import com.mappo.service.keyboard.KeyboardController
-import com.mappo.service.overlay.element.VirtualEditorSession
+import com.mappo.service.overlay.element.VirtualButtonEditorSession
 import com.mappo.service.overlay.element.OverlayPresenter
 import com.mappo.service.overlay.element.ToolbarOverlayManager
 import com.mappo.ui.screen.keyboard.KeyboardHostState
@@ -121,7 +121,7 @@ class MainViewModel @Inject constructor(
     private val keyboardTemplateRepository: KeyboardTemplateRepository,
     private val inputDispatcher: InputDispatcher,
     private val overlayPresenter: OverlayPresenter,
-    private val virtualEditorSession: VirtualEditorSession,
+    private val virtualEditorSession: VirtualButtonEditorSession,
     private val toolbarOverlayManager: ToolbarOverlayManager,
     private val keyboardController: KeyboardController,
     steamCredentialStore: SteamCredentialStore,
@@ -356,7 +356,7 @@ class MainViewModel @Inject constructor(
     /**
      * Brick 5.3: which [com.mappo.data.model.steam.ActionLayer] within the currently-viewed
      * action set the editor is focused on. Null = base set (no layer overlay focus); a
-     * non-null id targets a specific layer for overlay editing (5.5) and is the source of
+     * non-null id targets a specific layer for virtual button editing (5.5) and is the source of
      * truth for the layer pill row's selected state (5.4).
      *
      * Layers are *per-set*: each [ActionSet] has its own layer namespace. Maintenance:
@@ -455,7 +455,7 @@ class MainViewModel @Inject constructor(
             viewedLayout.map { it?.id }.distinctUntilChanged().collect { id ->
                 _viewingActionSetId.value = null
                 _viewingLayerId.value = null
-                // The virtual editor edits the layout on screen, like the physical one.
+                // The virtual button editor edits the layout on screen, like the physical one.
                 virtualEditorSession.editLayout(id)
             }
         }
@@ -924,7 +924,7 @@ class MainViewModel @Inject constructor(
         inheritFromSetId: Long? = null,
         kind: ActionSetKind = ActionSetKind.PHYSICAL,
         /** Called with the new set's id once it exists — the caller opens a VIRTUAL one in the
-         *  overlay editor (this screen's viewing pointer only follows physical sets). */
+         *  virtual button editor (this screen's viewing pointer only follows physical sets). */
         onCreated: (Long) -> Unit = {},
     ) {
         val cpId = viewedControllerConfig.value?.controllerProfile?.id ?: return
@@ -1867,16 +1867,16 @@ class MainViewModel @Inject constructor(
         toolbarOverlayManager.toggle()
     }
 
-    /** Whether the controls screen shows the virtual set editor (vs the physical one). */
+    /** Whether the controls screen shows the virtual button editor (vs the physical one). */
     val virtualEditorOpen: StateFlow<Boolean> = virtualEditorSession.open
 
-    /** The game shot behind the virtual editor when it was summoned over one; else null. */
+    /** The game shot behind the virtual button editor when it was summoned over one; else null. */
     val virtualEditorBackdrop: StateFlow<android.graphics.Bitmap?> = virtualEditorSession.backdrop
 
     /** The virtual set the editor is on (the bar's Buttons crumb title while it is open). */
     val virtualEditorSetId: StateFlow<Long?> = virtualEditorSession.setId
 
-    /** Switch the controls screen to the virtual editor — on [virtualSetId] when given. */
+    /** Switch the controls screen to the virtual button editor — on [virtualSetId] when given. */
     fun openVirtualEditor(virtualSetId: Long? = null) {
         virtualEditorSession.open(virtualSetId)
     }

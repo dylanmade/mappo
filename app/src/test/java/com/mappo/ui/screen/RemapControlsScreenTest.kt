@@ -1375,7 +1375,7 @@ class RemapControlsScreenTest {
     @Test
     // The crumb panels carry the caret: a path outline, which only NATIVE graphics hit-tests.
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
-    fun hierarchyBar_buttonsCrumb_listsBothKinds_andAVirtualSetOpensTheOverlayEditor() {
+    fun hierarchyBar_buttonsCrumb_listsBothKinds_andAVirtualSetOpensTheVirtualButtonEditor() {
         var opened: Long? = null
         val virtual = ActionSetGraph(
             actionSet = ActionSet(
@@ -1395,7 +1395,7 @@ class RemapControlsScreenTest {
                         ).copy(virtualSets = listOf(virtual)),
                         viewingActionSetId = 1L,
                         onOpenInputEditor = { _, _, _ -> },
-                        onEditOverlay = { opened = it },
+                        onEditVirtualButtons = { opened = it },
                         onBack = {},
                         modifier = androidx.compose.ui.Modifier.fillMaxSize(),
                     )
@@ -1404,7 +1404,7 @@ class RemapControlsScreenTest {
         }
 
         composeRule.onNodeWithText("BUTTONS", useUnmergedTree = true).assertExists()
-        composeRule.onAllNodesWithText("Edit overlay").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Edit virtual buttons").assertCountEquals(0)
         composeRule.onNodeWithTag("bar:buttons").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("New physical set", useUnmergedTree = true).assertExists()
@@ -1412,11 +1412,11 @@ class RemapControlsScreenTest {
         composeRule.onNodeWithText("New virtual set", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("Touch pad", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
-        assert(opened == 30L) { "the overlay editor should have opened on set 30, got $opened" }
+        assert(opened == 30L) { "the virtual button editor should have opened on set 30, got $opened" }
     }
 
     /**
-     * **The virtual editor is this screen's second body** (2026-10-15) — open, it replaces the
+     * **The virtual button editor is this screen's second body** (2026-10-15) — open, it replaces the
      * controls view UNDER the same bar (the Buttons crumb then names the virtual set), and picking
      * a physical set in that crumb switches straight back: no other activity, no exit confirm.
      */
@@ -1464,7 +1464,7 @@ class RemapControlsScreenTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Menu", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
-        assert(closed == 1) { "picking a physical set should close the virtual editor, closed=$closed" }
+        assert(closed == 1) { "picking a physical set should close the virtual button editor, closed=$closed" }
         assert(selected == 2L) { "the physical set should become the viewed one, got $selected" }
     }
 
@@ -1762,7 +1762,7 @@ class RemapControlsScreenTest {
         composeRule.onAllNodesWithText("Vehicle", useUnmergedTree = true).assertCountEquals(0)
     }
 
-    // ── Overlay editing mode (Brick 5.5.c) ────────────────────────────────────
+    // ── Virtual button editing mode (Brick 5.5.c) ────────────────────────────────────
 
     @Test
     fun overlayMode_ghostRow_showsBaseBindingWhenLayerHasNoOverride() {

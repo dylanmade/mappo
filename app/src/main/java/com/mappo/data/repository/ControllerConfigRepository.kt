@@ -649,7 +649,7 @@ class ControllerConfigRepository @Inject constructor(
                 val layerIdMap = cloneSetContents(inheritFromSetId, newSetId)
                 if (setKind == ActionSetKind.VIRTUAL) cloneOverlayElements(inheritFromSetId, newSetId, layerIdMap)
             }
-            // A fresh virtual set starts empty — its buttons are placed in the overlay editor.
+            // A fresh virtual set starts empty — its buttons are placed in the virtual button editor.
             setKind == ActionSetKind.PHYSICAL -> seedDefaultSetContents(newSetId)
         }
         configDirtyTick.value = configDirtyTick.value + 1
@@ -830,7 +830,7 @@ class ControllerConfigRepository @Inject constructor(
     /**
      * Find-or-create the override chain for `(layerId, inputSource, groupInputKey)`.
      *
-     * When the user taps a "ghost" row in overlay-editing mode, the row has no
+     * When the user taps a "ghost" row in virtual button editing mode, the row has no
      * persisted override yet — only the parent set's binding inherits through. This
      * call materializes the scaffolding: an overlay [BindingGroup] on the layer (one
      * per input source, shared across that source's sub-inputs to mirror the base

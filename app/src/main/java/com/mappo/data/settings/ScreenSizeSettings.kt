@@ -39,7 +39,7 @@ class ScreenSizeSettings @Inject constructor(
     }
 
     companion object {
-        /** Fullscreen by default (2026-10-15, Dylan) — the virtual editor needs the whole display. */
+        /** Fullscreen by default (2026-10-15, Dylan) — the virtual button editor needs the whole display. */
         const val DEFAULT_FULLSCREEN = true
 
         private const val PREFS_NAME = "mappo_settings"

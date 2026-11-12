@@ -14,7 +14,7 @@ package com.mappo.data.model.steam
  * The established fix in this codebase is to update the rendered source of truth immediately
  * and let the DB emission reconcile afterwards — see `KeyboardController.replaceLayoutById`
  * ("update the source of truth optimistically before the DB roundtrip"), which is how the
- * keyboard editor's button drag and the overlay editor's element placement avoid the same
+ * keyboard editor's button drag and the virtual button editor's element placement avoid the same
  * flash. These functions are that same idea for the controller binding graph.
  *
  * ## The contract

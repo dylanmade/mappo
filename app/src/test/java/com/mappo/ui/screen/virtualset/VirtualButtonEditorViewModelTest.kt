@@ -2,7 +2,7 @@ package com.mappo.ui.screen.virtualset
 
 import com.mappo.data.model.OverlayElement
 import com.mappo.data.settings.OverlaySettings
-import com.mappo.service.overlay.element.OverlayEditor
+import com.mappo.service.overlay.element.VirtualButtonEditor
 import com.mappo.service.overlay.element.OverlayScope
 import io.mockk.every
 import io.mockk.mockk
@@ -20,9 +20,9 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
-/** The virtual editor's non-gesture edits (ported from the retired overlay-window editor). */
+/** The virtual button editor's non-gesture edits (ported from the retired overlay-window editor). */
 @OptIn(ExperimentalCoroutinesApi::class)
-class VirtualSetEditorViewModelTest {
+class VirtualButtonEditorViewModelTest {
 
     private val elements = MutableStateFlow(
         listOf(
@@ -31,38 +31,37 @@ class VirtualSetEditorViewModelTest {
         ),
     )
     private val scope = MutableStateFlow<OverlayScope?>(OverlayScope.Set(10L))
-    private lateinit var editor: OverlayEditor
-    private lateinit var vm: VirtualSetEditorViewModel
+    private lateinit var editor: VirtualButtonEditor
+    private lateinit var vm: VirtualButtonEditorViewModel
 
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         editor = mockk(relaxed = true) {
-            every { this@mockk.elements } returns this@VirtualSetEditorViewModelTest.elements
+            every { this@mockk.elements } returns this@VirtualButtonEditorViewModelTest.elements
             every { editingScope } returns scope
         }
-        vm = VirtualSetEditorViewModel(editor, mockk<OverlaySettings>(relaxed = true), mockk(relaxed = true))
+        vm = VirtualButtonEditorViewModel(editor, mockk<OverlaySettings>(relaxed = true), mockk(relaxed = true))
     }
 
     @After
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun tap_accumulates_soleSelectionOpensConfig_andOneOfManyDeselects() {
+    fun tap_selectsThatButtonAlone_butKeepsASelectionItIsPartOf() {
         vm.tapElement(1L)
         assertEquals(setOf(1L), vm.selectedIds.value)
-        vm.tapElement(1L)
-        assertEquals(1L, vm.configElementId.value)
         vm.tapElement(2L)
-        assertEquals(setOf(1L, 2L), vm.selectedIds.value)
-        vm.tapElement(1L)
         assertEquals(setOf(2L), vm.selectedIds.value)
+        vm.select(setOf(1L, 2L))
+        vm.tapElement(1L)
+        assertEquals(setOf(1L, 2L), vm.selectedIds.value)
     }
 
     @Test
     fun aDifferentScope_clearsTheSelectionAndConfig() {
         vm.tapElement(1L)
-        vm.tapElement(1L)
+        vm.configElementId.value = 1L
         scope.value = OverlayScope.Set(11L)
         assertEquals(emptySet<Long>(), vm.selectedIds.value)
         assertNull(vm.configElementId.value)
@@ -71,7 +70,7 @@ class VirtualSetEditorViewModelTest {
     @Test
     fun alignLeftToSelection_movesEveryMemberToTheLeftmostEdge_inOneWrite() {
         vm.select(setOf(1L, 2L))
-        val rects = slot<List<OverlayEditor.ElementRect>>()
+        val rects = slot<List<VirtualButtonEditor.ElementRect>>()
         every { editor.moveResizeAll(capture(rects)) } returns Unit
 
         vm.applyAlign(AlignOp.LEFT, AlignTarget.Selection)

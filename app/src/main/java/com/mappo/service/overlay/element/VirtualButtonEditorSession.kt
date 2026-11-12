@@ -15,7 +15,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Whether the virtual set editor is open (2026-10-15). The editor is NOT its own activity any
+ * Whether the virtual button editor is open (2026-10-15). The editor is NOT its own activity any
  * more: it is the controls screen's second body, swapped in under the SAME hierarchy bar the
  * physical editor uses — picking a set of the other kind in the bar's Buttons crumb crossfades
  * the body, nothing else moves. No exit confirm: leaving is just switching back.
@@ -29,9 +29,9 @@ import javax.inject.Singleton
  * Mappo's screen — and it comes back, if it was showing, when the editor leaves the screen.
  */
 @Singleton
-class VirtualEditorSession @Inject constructor(
+class VirtualButtonEditorSession @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val overlayEditor: OverlayEditor,
+    private val virtualButtonEditor: VirtualButtonEditor,
     private val runPresenter: OverlayPresenter,
     private val inputDispatcher: InputDispatcher,
 ) {
@@ -48,24 +48,24 @@ class VirtualEditorSession @Inject constructor(
     private var shown = false
 
     /** The virtual set being edited (a layer's parent set while a layer is) — null before any. */
-    val setId: StateFlow<Long?> = overlayEditor.editingSetId
+    val setId: StateFlow<Long?> = virtualButtonEditor.editingSetId
 
     /** Edit layout [layoutId]'s virtual sets (the layout the controls screen is viewing). */
-    fun editLayout(layoutId: Long?) = overlayEditor.setLayout(layoutId)
+    fun editLayout(layoutId: Long?) = virtualButtonEditor.setLayout(layoutId)
 
     /** Open the editor, on virtual set [virtualSetId] when given (else its current one). */
     fun open(virtualSetId: Long? = null) {
-        virtualSetId?.let(overlayEditor::focusSet)
+        virtualSetId?.let(virtualButtonEditor::focusSet)
         if (_open.value) return
         _open.value = true
-        Log.i(TAG, "virtual editor opened (set=$virtualSetId)")
+        Log.i(TAG, "virtual button editor opened (set=$virtualSetId)")
     }
 
     fun close() {
         if (!_open.value) return
         _open.value = false
         _backdrop.value = null
-        Log.i(TAG, "virtual editor closed")
+        Log.i(TAG, "virtual button editor closed")
     }
 
     /** The editor is on screen: get the run-mode overlay out of its way. */
@@ -85,7 +85,7 @@ class VirtualEditorSession @Inject constructor(
     }
 
     /**
-     * The out-of-Mappo entry (the over-game toolbar's Edit overlay): shoot the game first so the
+     * The out-of-Mappo entry (the over-game toolbar's Edit virtual buttons): shoot the game first so the
      * editor can show it behind the buttons, then bring Mappo up on the controls screen with the
      * editor open.
      */
@@ -97,7 +97,7 @@ class VirtualEditorSession @Inject constructor(
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 .putExtra(MainActivity.EXTRA_ROUTE, MappoRoute.remapControls())
             runCatching { context.startActivity(intent) }
-                .onFailure { Log.e(TAG, "open Mappo for the virtual editor failed", it) }
+                .onFailure { Log.e(TAG, "open Mappo for the virtual button editor failed", it) }
         }
         // queryPrimaryDisplayForegroundPackage is null while Mappo itself is foreground — a shot
         // then would only be Mappo's own screen.
@@ -109,6 +109,6 @@ class VirtualEditorSession @Inject constructor(
     }
 
     private companion object {
-        const val TAG = "VirtualEditorSession"
+        const val TAG = "VirtualButtonEditorSession"
     }
 }

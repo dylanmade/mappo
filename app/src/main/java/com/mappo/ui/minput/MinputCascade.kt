@@ -9,7 +9,7 @@ enum class MinputCascadeSide { Left, Right }
 
 /**
  * **THE cascade placement rule** — which side of its parent a nested menu opens on. Shared by the
- * minput popup menus' [MinputAction.submenu] cascades and the virtual editor's fly-out panel
+ * minput popup menus' [MinputAction.submenu] cascades and the virtual button editor's fly-out panel
  * (migrated from there, 2026-10-16), so every cascade in the app makes the same call.
  *
  * Beside the PARENT MENU (its visible edges [parentLeft]…[parentRight]), never beside the row: a

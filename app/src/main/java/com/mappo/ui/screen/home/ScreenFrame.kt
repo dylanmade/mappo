@@ -85,7 +85,7 @@ private const val ExpandMillis = 320
  *
  * The global-options drawer ([drawerContent]) is hosted here inside the canvas so it slides
  * within Mappo's screen. 2026-10-15: the bottom bar that carried its Mappo button and the
- * screen-size toggle is GONE — it took layout space from the routes (the virtual set editor
+ * screen-size toggle is GONE — it took layout space from the routes (the virtual button editor
  * needs the whole display). The drawer opens by its swipe from the leading edge; the size
  * toggle is one of its rows.
  *

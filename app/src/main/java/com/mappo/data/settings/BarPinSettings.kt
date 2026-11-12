@@ -14,7 +14,7 @@ import javax.inject.Singleton
  * since 2026-10-14, was six top/bottom spots) — the middle of one screen edge. Top and bottom lay
  * the bar out as a row; the sides ([sideways]) stack its crumbs in a column down the edge. The
  * bar is a compact floating group rather than a full-width strip, so it can get out of the way of
- * whatever sits under it; the choice is global (the physical and virtual editors share it), not a
+ * whatever sits under it; the choice is global (the physical and virtual button editors share it), not a
  * layout property. START / END follow the layout direction, as the bar's placement does.
  */
 enum class BarPin(

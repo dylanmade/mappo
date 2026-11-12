@@ -102,7 +102,7 @@ fun AddSetDialog(
                     )
                     Text(
                         text = if (inheritFrom == null) {
-                            if (kind == ActionSetKind.VIRTUAL) "Starts empty — place its buttons in the overlay editor."
+                            if (kind == ActionSetKind.VIRTUAL) "Starts empty — place its buttons in the virtual button editor."
                             else "Starts blank — every input is unbound."
                         } else if (kind == ActionSetKind.VIRTUAL) {
                             "Copies every button from \"${inheritFrom!!.actionSet.title}\"."

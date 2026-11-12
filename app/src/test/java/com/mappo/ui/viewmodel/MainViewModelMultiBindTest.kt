@@ -26,7 +26,7 @@ import com.mappo.service.foreground.ForegroundAppFilter
 import com.mappo.service.foreground.ForegroundAppMonitor
 import com.mappo.service.input.InputDispatcher
 import com.mappo.service.keyboard.KeyboardController
-import com.mappo.service.overlay.element.VirtualEditorSession
+import com.mappo.service.overlay.element.VirtualButtonEditorSession
 import com.mappo.service.overlay.element.ToolbarOverlayManager
 import com.mappo.service.overlay.element.OverlayPresenter
 import com.mappo.steam.auth.SteamCredentialStore
@@ -76,7 +76,7 @@ class MainViewModelMultiBindTest {
     private lateinit var templateRepo: KeyboardTemplateRepository
     private lateinit var inputDispatcher: InputDispatcher
     private lateinit var overlayPresenter: OverlayPresenter
-    private lateinit var virtualEditorSession: VirtualEditorSession
+    private lateinit var virtualEditorSession: VirtualButtonEditorSession
     private lateinit var toolbarOverlayManager: ToolbarOverlayManager
     private lateinit var steamCredentialStore: SteamCredentialStore
     private lateinit var keyboardController: KeyboardController

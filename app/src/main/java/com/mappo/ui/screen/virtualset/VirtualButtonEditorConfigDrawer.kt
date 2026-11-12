@@ -55,7 +55,7 @@ import kotlin.math.roundToInt
  * edge, slide) lives inside it, exactly as on a 1:1 display; taps beyond it dismiss.
  */
 @Composable
-internal fun VirtualEditorConfigDrawer(
+internal fun VirtualButtonEditorConfigDrawer(
     element: OverlayElement,
     /** The drawer's stage (editor px): the whole editor, or the "1:1 screen" square. */
     stage: Rect,

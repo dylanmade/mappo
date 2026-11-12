@@ -8,15 +8,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import com.mappo.data.model.OverlayElement
-import com.mappo.service.overlay.element.OverlayEditor
+import com.mappo.service.overlay.element.VirtualButtonEditor
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * The virtual editor's canvas in px: the DISPLAY ([displaySizePx] — buttons are display fractions,
+ * The virtual button editor's canvas in px: the DISPLAY ([displaySizePx] — buttons are display fractions,
  * so the editor lays them out at full size and scales the whole stage to fit Mappo's screen) and
  * the editable bounds inside it — the whole display, or with "1:1 screen" on the centred square of
- * side min(w, h). Buttons clamp to [bounds]; [OverlayEditor] clamps persisted geometry the same.
+ * side min(w, h). Buttons clamp to [bounds]; [VirtualButtonEditor] clamps persisted geometry the same.
  *
  * Ported from the retired `OverlayLiveEditController`, whose window positions were this math.
  */
@@ -40,8 +40,8 @@ internal class EditCanvas(
     fun rectOf(el: OverlayElement): Rect =
         Rect(el.x * width, el.y * height, (el.x + el.width) * width, (el.y + el.height) * height)
 
-    fun toElementRect(id: Long, r: Rect): OverlayEditor.ElementRect =
-        OverlayEditor.ElementRect(id, r.left / width, r.top / height, r.width / width, r.height / height)
+    fun toElementRect(id: Long, r: Rect): VirtualButtonEditor.ElementRect =
+        VirtualButtonEditor.ElementRect(id, r.left / width, r.top / height, r.width / width, r.height / height)
 
     /**
      * Cell size of the editor grid: the count per axis is chosen so cells are as close to square

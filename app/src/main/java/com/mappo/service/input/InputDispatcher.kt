@@ -108,7 +108,7 @@ interface InputSink {
 
     /**
      * Capture a screenshot of the default display as a software [Bitmap] (used as a frozen
-     * backdrop for the overlay editor). Returns null via [onResult] when unavailable —
+     * backdrop for the virtual button editor). Returns null via [onResult] when unavailable —
      * `AccessibilityService.takeScreenshot` is API 30+, so older devices always get null.
      * [onResult] is invoked on the main thread.
      */

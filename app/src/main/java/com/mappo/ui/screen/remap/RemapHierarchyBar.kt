@@ -83,7 +83,7 @@ import kotlinx.collections.immutable.ImmutableList
 /**
  * **The editors' hierarchy bar** (Dylan, 2026-10-07) — replaced the full-width top bar, the
  * layouts drawer (and its applications mode), the layout-set switch + kebab, and the
- * physical/virtual editor switch with ONE compact group that floats at a pinned edge of the
+ * physical/virtual button editor switch with ONE compact group that floats at a pinned edge of the
  * screen.
  *
  * Anatomy, an M3 button group's: a [MinputBreadcrumbRow] of three joined crumbs reading the
@@ -110,7 +110,7 @@ import kotlinx.collections.immutable.ImmutableList
  * that keeps them. Rows preview on FOCUS and commit on TAP, as the drawer's did.
  *
  * Editor-agnostic on purpose: it carries no screen state of its own beyond the pin menu, so the
- * virtual (overlay) editor can mount the same bar with [editor] = VIRTUAL.
+ * virtual button editor can mount the same bar with [editor] = VIRTUAL.
  */
 @Composable
 internal fun RemapHierarchyBar(
@@ -154,6 +154,9 @@ internal fun RemapHierarchyBar(
     // ── Menu ──
     /** The bar menu's Settings row: opens the app's global-options drawer. */
     onOpenSettings: () -> Unit,
+    /** The hosting editor's own rows in the bar menu, between Move and Settings — the virtual
+     *  button editor's Options and Layers (2026-11-11); none on the physical editor. */
+    editorMenuActions: List<MinputAction> = emptyList(),
     // ── Compact ──
     /** The smaller bar: [BarCompactSize] controls, no overlines over the crumbs' titles,
      *  and a smaller menu glyph. */
@@ -291,6 +294,7 @@ internal fun RemapHierarchyBar(
             collapsed = collapsed,
             onCollapsedChange = onCollapsedChange,
             onOpenSettings = onOpenSettings,
+            editorActions = editorMenuActions,
             compact = compact,
             onCompactChange = onCompactChange,
             size = size,
@@ -640,6 +644,9 @@ private fun rememberControllerFocusSeat(): FocusRequester {
  * collapse rows are shown DISABLED — still there, so the menu doesn't change shape — and the top /
  * bottom bar's [collapsed] set is kept for when the bar goes back.
  *
+ * Between them, the hosting editor's own rows ([editorActions]) — the virtual button editor's
+ * Options and Layers, listed only while it is the editor on screen (2026-11-11).
+ *
  * **Settings** opens the app's global-options drawer.
  */
 @Composable
@@ -649,6 +656,7 @@ private fun BarMenuButton(
     collapsed: Set<HierarchyCrumb>,
     onCollapsedChange: (Set<HierarchyCrumb>) -> Unit,
     onOpenSettings: () -> Unit,
+    editorActions: List<MinputAction>,
     compact: Boolean,
     onCompactChange: (Boolean) -> Unit,
     size: MinputSize,
@@ -686,7 +694,7 @@ private fun BarMenuButton(
         MinputActionMenu(
             expanded = open,
             onDismissRequest = { open = false },
-            actions = listOf(move, settings),
+            actions = listOf(move) + editorActions + settings,
             placement = pin.panelPlacement(),
             caret = true,
         )
@@ -744,7 +752,7 @@ private fun BoxScope.BarMoveMenu(
 }
 
 /** Where the bar's menus open from its controls: away from the edge it is pinned to. */
-private fun BarPin.panelPlacement(): MinputMenuPlacement = when (this) {
+internal fun BarPin.panelPlacement(): MinputMenuPlacement = when (this) {
     BarPin.START -> MinputMenuPlacement.End
     BarPin.END -> MinputMenuPlacement.Start
     BarPin.TOP, BarPin.BOTTOM -> MinputMenuPlacement.Below

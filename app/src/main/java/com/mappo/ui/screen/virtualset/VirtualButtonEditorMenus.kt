@@ -82,6 +82,9 @@ import com.mappo.ui.component.ColorPicker
 import com.mappo.ui.component.GradientEditor
 import com.mappo.ui.component.colorpicker.ColorPickerButton
 import com.mappo.ui.minput.MinputButton
+import com.mappo.ui.minput.MinputDraggableMenuEntry as MenuEntry
+import com.mappo.ui.minput.MinputDraggableMenuTrailing as MenuTrailing
+import com.mappo.ui.minput.MinputDraggableMenuWideWidthDp as WIDE_MENU_WIDTH_DP
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconSize
 import com.mappo.ui.minput.MinputPercentSlider
@@ -90,217 +93,18 @@ import com.mappo.ui.minput.minputMiniTextStyle
 import com.mappo.ui.screen.overlay.OverlayCommonCommands
 import com.mappo.ui.screen.overlay.legacyAppearance
 
-// The virtual editor menu's contents (ported from the retired OverlayLiveEditController). Each
-// builder is @Composable so a level's rows recompose live as edits commit.
-
-/** Log-only placeholder for menu actions whose real behaviour isn't built yet (see the gap list). */
-private fun menuGap(name: String) {
-    Log.i("VirtualSetEditor", "editor menu action not implemented yet: $name")
-}
-
-/**
- * The core menu. (Its old "Exit" row is gone, 2026-10-15: the editor isn't a mode you leave —
- * the hierarchy bar's Buttons crumb switches back to a physical set.)
- */
-@Composable
-internal fun rootMenuEntries(
-    vm: VirtualSetEditorViewModel,
-    onRotate: () -> Unit,
-): List<MenuEntry> {
-    val editor = vm.overlayEditor
-    val sel by vm.selectedIds.collectAsStateWithLifecycle()
-    val scopes by editor.availableScopes.collectAsStateWithLifecycle()
-    val currentScope by editor.editingScope.collectAsStateWithLifecycle()
-    val hasClipboard by vm.clipboardHasContent.collectAsStateWithLifecycle()
-    val canUndo by editor.canUndo.collectAsStateWithLifecycle()
-    val canRedo by editor.canRedo.collectAsStateWithLifecycle()
-    val hasSel = sel.isNotEmpty()
-    val soleId = sel.singleOrNull()
-    val currentLabel = scopes.firstOrNull { it.scope == currentScope }?.label ?: "No button set"
-
-    return buildList {
-        add(MenuEntry.Item(label = currentLabel, leadingIcon = Icons.Default.Layers, submenu = { scopeEntries(vm) }))
-        add(MenuEntry.Divider)
-        add(
-            MenuEntry.Item(
-                "Add",
-                leadingIcon = Icons.Default.Add,
-                submenu = {
-                    listOf(
-                        MenuEntry.Item("Add new", leadingIcon = Icons.Default.Add, onClick = { vm.addElement() }),
-                        MenuEntry.Item("Add template", leadingIcon = Icons.Default.Widgets, onClick = { menuGap("Add template") }),
-                    )
-                },
-            ),
-        )
-        // Assign (commands) + Customize (appearance): all per-button controls live in the menu.
-        add(
-            MenuEntry.Item(
-                "Assign",
-                leadingIcon = Icons.Default.Edit,
-                enabled = soleId != null,
-                submenuWidthDp = WIDE_MENU_WIDTH_DP,
-                submenu = soleId?.let { id -> { assignEntries(vm, id) } },
-            ),
-        )
-        add(
-            MenuEntry.Item(
-                "Customize",
-                leadingIcon = Icons.Default.Palette,
-                enabled = soleId != null,
-                submenu = soleId?.let { id -> { customizeEntries(vm, id) } },
-            ),
-        )
-        add(MenuEntry.Item("Copy", leadingIcon = Icons.Default.ContentCopy, enabled = hasSel, onClick = { vm.copySelection() }))
-        add(
-            MenuEntry.Item(
-                "Paste",
-                leadingIcon = Icons.Default.ContentPaste,
-                enabled = hasClipboard,
-                submenu = {
-                    listOf(
-                        MenuEntry.Item("Paste new", leadingIcon = Icons.Default.ContentPaste, onClick = { vm.paste(styleOnly = false) }),
-                        MenuEntry.Item("Paste style", leadingIcon = Icons.Default.Style, enabled = hasSel, onClick = { vm.paste(styleOnly = true) }),
-                    )
-                },
-            ),
-        )
-        add(MenuEntry.Item("Align", leadingIcon = Icons.Default.AlignHorizontalLeft, submenu = { alignEntries(vm) }))
-        add(
-            MenuEntry.Item(
-                "Templatize",
-                leadingIcon = Icons.Default.Widgets,
-                submenu = {
-                    listOf(
-                        MenuEntry.Item("Whole overlay", leadingIcon = Icons.Default.SelectAll, onClick = { menuGap("Templatize whole overlay") }),
-                        MenuEntry.Item("Selection", leadingIcon = Icons.Default.HighlightAlt, enabled = hasSel, onClick = { menuGap("Templatize selection") }),
-                    )
-                },
-            ),
-        )
-        add(MenuEntry.Item("Delete", leadingIcon = Icons.Default.Delete, enabled = hasSel, onClick = { vm.deleteSelected() }))
-        add(MenuEntry.Divider)
-        add(MenuEntry.Item("Undo", leadingIcon = Icons.AutoMirrored.Filled.Undo, enabled = canUndo, onClick = { editor.undo() }))
-        add(MenuEntry.Item("Redo", leadingIcon = Icons.AutoMirrored.Filled.Redo, enabled = canRedo, onClick = { editor.redo() }))
-        add(MenuEntry.Divider)
-        add(MenuEntry.Item("Options", leadingIcon = Icons.Default.Tune, submenu = { optionsEntries(vm, onRotate) }))
-    }
-}
-
-/**
- * Button-set picker, flat + indented: each virtual set, then its layers (indented), then an
- * indented "Add layer"; "Add set" at the end. The current scope is theme-coloured + checked.
- */
-@Composable
-private fun scopeEntries(vm: VirtualSetEditorViewModel): List<MenuEntry> {
-    val editor = vm.overlayEditor
-    val scopes by editor.availableScopes.collectAsStateWithLifecycle()
-    val current by editor.editingScope.collectAsStateWithLifecycle()
-    return buildList {
-        scopes.filter { !it.isLayer }.forEach { setOpt ->
-            val setId = (setOpt.scope as? OverlayScope.Set)?.actionSetId
-            add(
-                MenuEntry.Item(
-                    label = setOpt.label,
-                    leadingIcon = Icons.Default.Layers,
-                    selected = setOpt.scope == current,
-                    onClick = { editor.setScope(setOpt.scope) },
-                ),
-            )
-            scopes.filter { it.isLayer && (it.scope as? OverlayScope.Layer)?.parentActionSetId == setId }
-                .forEach { layerOpt ->
-                    add(
-                        MenuEntry.Item(
-                            label = layerOpt.label,
-                            indent = true,
-                            leadingIcon = Icons.Outlined.Layers,
-                            selected = layerOpt.scope == current,
-                            onClick = { editor.setScope(layerOpt.scope) },
-                        ),
-                    )
-                }
-            add(
-                MenuEntry.Item(
-                    "Add layer",
-                    indent = true,
-                    leadingIcon = Icons.Default.Add,
-                    onClick = { setId?.let { sid -> editor.addLayer(sid) { editor.setScope(it) } } },
-                ),
-            )
-        }
-        add(MenuEntry.Item("Add set", leadingIcon = Icons.Default.Add, onClick = { editor.addActionSet { editor.setScope(it) } }))
-    }
-}
-
-/**
- * Align / space. "Align to" picks the reference (Selection vs Canvas); the buttons enable off it:
- * Canvas needs ≥1 selected, Selection needs ≥2.
- */
-@Composable
-private fun alignEntries(vm: VirtualSetEditorViewModel): List<MenuEntry> {
-    val target by vm.alignTo.collectAsStateWithLifecycle()
-    val sel by vm.selectedIds.collectAsStateWithLifecycle()
-    val canAlign = when (target) {
-        AlignTarget.Canvas -> sel.isNotEmpty()
-        AlignTarget.Selection -> sel.size >= 2
-    }
-    fun align(name: String, icon: ImageVector, op: AlignOp) =
-        MenuEntry.Item(name, leadingIcon = icon, enabled = canAlign, onClick = { vm.applyAlign(op, target) })
-    return buildList {
-        add(
-            MenuEntry.Item(
-                // The current value is intentionally NOT shown — it would crowd out "Align to".
-                "Align to",
-                leadingIcon = Icons.Default.FilterCenterFocus,
-                submenu = {
-                    AlignTarget.entries.map { t ->
-                        MenuEntry.Item(t.label, selected = t == target, closeToParentOnly = true, onClick = { vm.alignTo.value = t })
-                    }
-                },
-            ),
-        )
-        add(MenuEntry.Divider)
-        add(align("Align left", Icons.Default.AlignHorizontalLeft, AlignOp.LEFT))
-        add(align("Align vertically", Icons.Default.AlignHorizontalCenter, AlignOp.CENTER_X))
-        add(align("Align right", Icons.Default.AlignHorizontalRight, AlignOp.RIGHT))
-        add(align("Align top", Icons.Default.AlignVerticalTop, AlignOp.TOP))
-        add(align("Align horizontally", Icons.Default.AlignVerticalCenter, AlignOp.CENTER_Y))
-        add(align("Align bottom", Icons.Default.AlignVerticalBottom, AlignOp.BOTTOM))
-        add(MenuEntry.Divider)
-        add(align("Stack vertically", Icons.Default.ViewAgenda, AlignOp.STACK_V))
-        add(align("Stack horizontally", Icons.Default.ViewColumn, AlignOp.STACK_H))
-        add(MenuEntry.Divider)
-        add(align("Space vertically", Icons.Default.VerticalDistribute, AlignOp.DIST_Y))
-        add(align("Space horizontally", Icons.Default.HorizontalDistribute, AlignOp.DIST_X))
-    }
-}
-
-@Composable
-private fun optionsEntries(vm: VirtualSetEditorViewModel, onRotate: () -> Unit): List<MenuEntry> {
-    val settings = vm.overlaySettings
-    val snap by settings.snapEnabled.collectAsStateWithLifecycle()
-    val grid by vm.showGrid.collectAsStateWithLifecycle()
-    val square by settings.squareEditArea.collectAsStateWithLifecycle()
-    val positionerShown by vm.positionerOpen.collectAsStateWithLifecycle()
-    return listOf(
-        MenuEntry.Item("Snapping", leadingIcon = Icons.Default.GridOn, trailing = MenuTrailing.Check(snap) { settings.setSnapEnabled(it) }),
-        MenuEntry.Item("Show grid", leadingIcon = Icons.Default.Grid4x4, trailing = MenuTrailing.Check(grid) { vm.showGrid.value = it }),
-        MenuEntry.Item("1:1 screen", leadingIcon = Icons.Default.CropSquare, trailing = MenuTrailing.Check(square) { settings.setSquareEditArea(it) }),
-        MenuEntry.Divider,
-        MenuEntry.Item(
-            "Positioner",
-            leadingIcon = Icons.Default.ControlCamera,
-            trailing = MenuTrailing.Check(positionerShown) { vm.positionerOpen.value = it },
-        ),
-        MenuEntry.Item("Rotate menu", leadingIcon = Icons.Default.ScreenRotation, onClick = onRotate),
-    )
-}
+// The virtual button editor's EDIT fly-outs: Assign (commands) and Customize (appearance) — the
+// rich per-button levels (pill pairs, sliders, colour pickers, the gradient editor) the context
+// menu's Edit row opens beside the button, hosted by the minput draggable menu's fly-outs
+// (ported from the retired OverlayLiveEditController; the rest of that menu moved to the bar, the
+// toolbar row and the context menu 2026-11-11 — see VirtualButtonEditorActions.kt). Each builder is
+// @Composable so a level's rows recompose live as edits commit.
 
 // ── Assign / Customize: per-button commands + appearance ─────────────────────────────────────
 
 /** The element, live — builders recompose as edits commit. */
 @Composable
-private fun liveElement(vm: VirtualSetEditorViewModel, elementId: Long): OverlayElement? {
+private fun liveElement(vm: VirtualButtonEditorViewModel, elementId: Long): OverlayElement? {
     val els by vm.elements.collectAsStateWithLifecycle()
     return els.firstOrNull { it.id == elementId }
 }
@@ -319,7 +123,7 @@ private fun outputLabel(t: RemapTarget): String =
  * input→output row — plus "Add command". [draft] keeps freshly-added (unbound) rows visible.
  */
 @Composable
-private fun assignEntries(vm: VirtualSetEditorViewModel, elementId: Long): List<MenuEntry> {
+internal fun assignEntries(vm: VirtualButtonEditorViewModel, elementId: Long): List<MenuEntry> {
     val el = liveElement(vm, elementId) ?: return emptyList()
     val draft = remember(elementId) { mutableStateListOf<OverlayGesture>() }
     val rows = OverlayGesture.entries.filter { g -> el.targetFor(g) !is RemapTarget.Unbound || g in draft }
@@ -342,7 +146,7 @@ private fun assignEntries(vm: VirtualSetEditorViewModel, elementId: Long): List<
 
 @Composable
 private fun AssignmentRow(
-    vm: VirtualSetEditorViewModel,
+    vm: VirtualButtonEditorViewModel,
     el: OverlayElement,
     gesture: OverlayGesture,
     draft: MutableList<OverlayGesture>,
@@ -374,7 +178,7 @@ private fun AssignmentRow(
 /** Move this row's command to a different press type (occupied gestures are disabled). */
 @Composable
 private fun gesturePickEntries(
-    vm: VirtualSetEditorViewModel,
+    vm: VirtualButtonEditorViewModel,
     elementId: Long,
     from: OverlayGesture,
     draft: MutableList<OverlayGesture>,
@@ -392,7 +196,7 @@ private fun gesturePickEntries(
                 if (g != from) {
                     draft.remove(from)
                     if (target is RemapTarget.Unbound) draft.add(g)
-                    else vm.overlayEditor.update(el.withTarget(from, RemapTarget.Unbound).withTarget(g, target))
+                    else vm.virtualButtonEditor.update(el.withTarget(from, RemapTarget.Unbound).withTarget(g, target))
                 }
             },
         )
@@ -402,7 +206,7 @@ private fun gesturePickEntries(
 /** Output picker: None + the common-command palette (the full picker lands with the binding migration). */
 @Composable
 private fun outputPickEntries(
-    vm: VirtualSetEditorViewModel,
+    vm: VirtualButtonEditorViewModel,
     elementId: Long,
     gesture: OverlayGesture,
     draft: MutableList<OverlayGesture>,
@@ -418,7 +222,7 @@ private fun outputPickEntries(
                 onClick = {
                     // Keep the row visible as a draft so "None" doesn't make it vanish.
                     if (gesture !in draft) draft.add(gesture)
-                    vm.overlayEditor.update(el.withTarget(gesture, RemapTarget.Unbound))
+                    vm.virtualButtonEditor.update(el.withTarget(gesture, RemapTarget.Unbound))
                 },
             ),
         )
@@ -431,7 +235,7 @@ private fun outputPickEntries(
                     closeToParentOnly = true,
                     onClick = {
                         draft.remove(gesture) // bound now — the row persists on its own
-                        vm.overlayEditor.update(el.withTarget(gesture, t))
+                        vm.virtualButtonEditor.update(el.withTarget(gesture, t))
                     },
                 ),
             )
@@ -441,11 +245,11 @@ private fun outputPickEntries(
 
 /** Customize: Global (element-wide appearance) on top, then the layer stack (top layer first). */
 @Composable
-private fun customizeEntries(vm: VirtualSetEditorViewModel, elementId: Long): List<MenuEntry> {
+internal fun customizeEntries(vm: VirtualButtonEditorViewModel, elementId: Long): List<MenuEntry> {
     val el = liveElement(vm, elementId) ?: return emptyList()
     val defaultFill = MaterialTheme.colorScheme.secondaryContainer
     val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
-    fun commit(a: ElementAppearance) = vm.overlayEditor.update(el.copy(appearanceJson = a.encode()))
+    fun commit(a: ElementAppearance) = vm.virtualButtonEditor.update(el.copy(appearanceJson = a.encode()))
     return buildList {
         add(
             MenuEntry.Item(
@@ -494,17 +298,17 @@ private fun layerLabel(layers: List<AppearanceLayer>, layer: AppearanceLayer): S
 
 /** Global appearance: element opacity, corner radii, text colour. */
 @Composable
-private fun globalAppearanceEntries(vm: VirtualSetEditorViewModel, elementId: Long): List<MenuEntry> {
+private fun globalAppearanceEntries(vm: VirtualButtonEditorViewModel, elementId: Long): List<MenuEntry> {
     val el = liveElement(vm, elementId) ?: return emptyList()
     val defaultFill = MaterialTheme.colorScheme.secondaryContainer
     val defaultText = MaterialTheme.colorScheme.onSecondaryContainer
     val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
-    fun commit(a: ElementAppearance) = vm.overlayEditor.update(el.copy(appearanceJson = a.encode()))
+    fun commit(a: ElementAppearance) = vm.virtualButtonEditor.update(el.copy(appearanceJson = a.encode()))
     var perCorner by remember(elementId) { mutableStateOf(false) }
     return buildList {
         add(
             MenuEntry.Custom("g-opacity") { _ ->
-                MinputPercentSlider("Opacity", el.opacity, valueRange = 0.2f..1f, onChange = { vm.overlayEditor.update(el.copy(opacity = it)) })
+                MinputPercentSlider("Opacity", el.opacity, valueRange = 0.2f..1f, onChange = { vm.virtualButtonEditor.update(el.copy(opacity = it)) })
             },
         )
         add(
@@ -526,7 +330,7 @@ private fun globalAppearanceEntries(vm: VirtualSetEditorViewModel, elementId: Lo
 }
 
 @Composable
-private fun MenuTextColorRow(vm: VirtualSetEditorViewModel, el: OverlayElement, defaultText: Color) {
+private fun MenuTextColorRow(vm: VirtualButtonEditorViewModel, el: OverlayElement, defaultText: Color) {
     var picking by remember(el.id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -537,7 +341,7 @@ private fun MenuTextColorRow(vm: VirtualSetEditorViewModel, el: OverlayElement, 
                 modifier = Modifier.weight(1f),
             )
             if (el.contentColorArgb != null) {
-                MinputButton("Reset", onClick = { vm.overlayEditor.update(el.copy(contentColorArgb = null)) })
+                MinputButton("Reset", onClick = { vm.virtualButtonEditor.update(el.copy(contentColorArgb = null)) })
                 Spacer(Modifier.width(8.dp))
             }
             ColorPickerButton(
@@ -550,8 +354,8 @@ private fun MenuTextColorRow(vm: VirtualSetEditorViewModel, el: OverlayElement, 
             // Inline — a picker in a menu level keeps the level as its one surface.
             ColorPicker(
                 color = el.contentColorArgb?.let { Color(it) } ?: defaultText,
-                onChange = { c -> vm.overlayEditor.update(el.copy(contentColorArgb = c.copy(alpha = 1f).toArgb())) },
-                onClearOverride = { vm.overlayEditor.update(el.copy(contentColorArgb = null)) },
+                onChange = { c -> vm.virtualButtonEditor.update(el.copy(contentColorArgb = c.copy(alpha = 1f).toArgb())) },
+                onClearOverride = { vm.virtualButtonEditor.update(el.copy(contentColorArgb = null)) },
                 pickerKey = "menu-text-${el.id}",
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -561,13 +365,13 @@ private fun MenuTextColorRow(vm: VirtualSetEditorViewModel, el: OverlayElement, 
 
 /** One layer's full control set: paint, opacity, stroke geometry, ordering, delete. */
 @Composable
-private fun layerEntries(vm: VirtualSetEditorViewModel, elementId: Long, layerId: Long): List<MenuEntry> {
+private fun layerEntries(vm: VirtualButtonEditorViewModel, elementId: Long, layerId: Long): List<MenuEntry> {
     val el = liveElement(vm, elementId) ?: return emptyList()
     val defaultFill = MaterialTheme.colorScheme.secondaryContainer
     val appearance = decodeElementAppearance(el.appearanceJson) ?: legacyAppearance(el, defaultFill)
     val layer = appearance.layers.firstOrNull { it.id == layerId } ?: return emptyList()
     val index = appearance.layers.indexOfFirst { it.id == layerId }
-    fun commit(a: ElementAppearance) = vm.overlayEditor.update(el.copy(appearanceJson = a.encode()))
+    fun commit(a: ElementAppearance) = vm.virtualButtonEditor.update(el.copy(appearanceJson = a.encode()))
     fun updateLayer(updated: AppearanceLayer) =
         commit(appearance.copy(layers = appearance.layers.map { if (it.id == layerId) updated else it }))
     fun swapWith(other: Int) = commit(

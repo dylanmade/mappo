@@ -237,7 +237,7 @@ internal fun BoxScope.MinputMenuSurface(
     //
     // A nested menu opens BESIDE ITS PARENT MENU — flush against the parent's body edge, its first
     // row level with the row that opened it — on the side [minputCascadeSide] picks (the rule the
-    // virtual editor's fly-outs use): right if it fits, else left, deeper levels inheriting.
+    // virtual button editor's fly-outs use): right if it fits, else left, deeper levels inheriting.
     // Beside the ROW (its anchor) would put it over the parent, and the window-space fit test above
     // is meaningless here: inside the parent's popup, "the window" is that popup. So this works in
     // SCREEN space against the app's visible display frame — which is also the space Compose
@@ -769,6 +769,8 @@ internal class MinputCaretMenuShape(
  * @param caret draws the pointer back at the summoning control.
  * @param framePadding inset above the first row and below the last. Defaults to
  *   [MinputMenuFramePadding]; pass `0.dp` for rows flush with the menu's ends.
+ * @param actionGroups further verbs in divider-separated groups after [actions] (2026-11-11 — the
+ *   virtual button editor's Align menu), as [MinputDropdownMenu]'s follow its options.
  */
 @Composable
 fun BoxScope.MinputActionMenu(
@@ -779,7 +781,11 @@ fun BoxScope.MinputActionMenu(
     placement: MinputMenuPlacement = MinputMenuPlacement.Below,
     caret: Boolean = false,
     framePadding: Dp = MinputMenuFramePadding,
+    actionGroups: List<List<MinputAction>> = emptyList(),
 ) {
+    val groups = actionGroups.filter { it.isNotEmpty() }
+    val all = actions + groups.flatten()
+    val hasCheck = all.any { it.checked != null }
     MinputMenuSurface(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
@@ -787,15 +793,19 @@ fun BoxScope.MinputActionMenu(
         caret = caret,
         framePadding = framePadding,
         menuWidth = rememberMinputMenuWidth(
-            labels = actions.map { it.label },
+            labels = all.map { it.label },
             hasLeadingIcon = true,
-            // A cascade row's arrow.
-            hasTrailingIcon = actions.any { it.submenu != null },
-            trailingWidth = minputSubmenuArrowWidth(),
+            // A cascade row's arrow, or a toggle row's (wider) checkbox.
+            hasTrailingIcon = hasCheck || all.any { it.submenu != null },
+            trailingWidth = if (hasCheck) MinputCheckboxSize else minputSubmenuArrowWidth(),
         ),
         modifier = modifier,
     ) {
         actions.forEach { action -> MinputActionRow(action, menuExpanded = expanded, onDismissMenu = onDismissRequest) }
+        groups.forEachIndexed { index, group ->
+            if (index > 0 || actions.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = MinputMenuFramePadding))
+            group.forEach { action -> MinputActionRow(action, menuExpanded = expanded, onDismissMenu = onDismissRequest) }
+        }
     }
 }
 

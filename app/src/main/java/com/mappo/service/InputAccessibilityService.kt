@@ -446,7 +446,7 @@ class InputAccessibilityService : AccessibilityService(), InputSink {
 
     /**
      * Capture the default display via `AccessibilityService.takeScreenshot` (API 30+) and
-     * hand back a software [Bitmap]. Used as a frozen game backdrop for the overlay editor.
+     * hand back a software [Bitmap]. Used as a frozen game backdrop for the virtual button editor.
      * Below API 30 (or on any failure) returns null — the editor falls back to a plain
      * backdrop. The callback is delivered on the main thread.
      */

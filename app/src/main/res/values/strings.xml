@@ -18,7 +18,7 @@
 
     
     <string name="theme_studio_drawer_label">Theme Studio</string>
-    <string name="overlay_edit_drawer_label">Edit overlay</string>
+    <string name="virtual_button_editor_drawer_label">Edit virtual buttons</string>
     <string name="shizuku_drawer_label">Shizuku setup</string>
     <string name="steam_drawer_label_connect">Connect to Steam</string>
     <string name="steam_drawer_label_signed_in">Steam account</string>

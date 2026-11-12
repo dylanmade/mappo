@@ -44,6 +44,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mappo.ui.minput.MinputDraggableMenuRipple
+import com.mappo.ui.minput.MinputDraggableMenuShadowMarginDp
 import com.mappo.ui.minput.MinputIcon
 import com.mappo.ui.minput.MinputIconSize
 import kotlinx.coroutines.Job
@@ -56,15 +58,15 @@ import kotlin.math.roundToInt
  * The Positioner: a grab-anywhere-draggable d-pad for nudging the selection — a plus of two
  * fully-rounded bars (the menu container colour) carrying bare arrows, a small (1px) and a large
  * (10px) per arm. Tap to nudge once, hold to repeat; a press that travels past the slop drags the
- * whole d-pad instead. The centre is bare drag space; Options ▸ Positioner toggles it.
+ * whole d-pad instead. The centre is bare drag space; the bar menu's Options ▸ Positioner toggles it.
  *
- * Ported from the retired overlay editor's own window; the press → ripple wiring stays geometric
+ * Ported from the retired virtual button editor's own window; the press → ripple wiring stays geometric
  * (one gesture detector over the whole pad drives each zone's ripple), because the pad must stay
  * draggable from any point, buttons included.
  */
 @Composable
 internal fun Positioner(
-    vm: VirtualSetEditorViewModel,
+    vm: VirtualButtonEditorViewModel,
     canvas: EditCanvas,
     bounds: Rect,
 ) {
@@ -77,7 +79,7 @@ internal fun Positioner(
     // The pad lives beside the stage (editor px); its nudges move buttons in display px.
     val b = bounds
     val half = with(density) { POSITIONER_DP.dp.toPx() } / 2f
-    val centre = with(density) { MENU_SHADOW_MARGIN.dp.toPx() } + half
+    val centre = with(density) { MinputDraggableMenuShadowMarginDp.dp.toPx() } + half
 
     fun hit(p: Offset): String? {
         val rx = (p.x - centre) / half
@@ -152,9 +154,9 @@ internal fun Positioner(
                             }
                         }
                     }
-                    .padding(MENU_SHADOW_MARGIN.dp),
+                    .padding(MinputDraggableMenuShadowMarginDp.dp),
             ) {
-                ProvideMenuRipple { PositionerPad(sources) }
+                MinputDraggableMenuRipple { PositionerPad(sources) }
             }
         },
     ) { measurables, constraints ->

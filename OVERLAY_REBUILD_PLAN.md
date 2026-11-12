@@ -344,6 +344,36 @@ bar is common to both, and the "Exit overlay editing?" confirm goes. Picked (of 
   (`ScreenSizeSettings`, default FULLSCREEN), the drawer opens by its edge swipe only; auto-detect
   now defaults ON.
 
+### 2026-11-11 — renamed "virtual button editor"; draggable menu retired from it
+
+- **Naming:** the overlay editor is the **virtual button editor** everywhere. `OverlayEditor` →
+  `VirtualButtonEditor` (the edit engine), `VirtualSetEditor` → `VirtualButtonEditorScreen`,
+  `VirtualSetEditorViewModel` → `VirtualButtonEditorViewModel`, `VirtualEditorSession` →
+  `VirtualButtonEditorSession`, `onEditOverlay` → `onEditVirtualButtons`. (Older entries above keep
+  the names of their day. The DATA is still "overlay elements" — `OverlayElement`, `OverlayScope`,
+  `OverlayRepository` — and the run-mode overlay is still the overlay.)
+- **The draggable core menu left the editor** and lives on as minput's `MinputDraggableMenu`
+  (`ui/minput/MinputDraggableMenu.kt`: core panel + rotate + cascading fly-outs + entry model).
+  Its commands moved:
+  - **Toolbar row** — the hierarchy bar's second row while this editor is the body
+    (`VirtualButtonEditorToolbar`; compact-bar size): **New** (menu: New button / From template)
+    and **Undo | Redo** in one `MinputButtonCluster`. Under a top bar, over a bottom one, beside
+    a side one (vertical).
+  - **Bar menu (hamburger)** — `virtualButtonEditorBarActions`, listed only while this editor is
+    on screen: **Options** (Snapping, Show grid, 1:1 screen, Positioner) and **Layers** (the set's
+    base + layers + Add layer — the old menu's scope row; sets themselves are the Buttons crumb).
+  - **Context menu** — a `MinputActionMenu` beside a tapped button / a released marquee's
+    selection (`virtualButtonContextActions`): Edit ▸ (Assign, Customize), Copy, Paste ▸, Align ▸,
+    Templatize ▸, Move, Resize, Delete. Assign / Customize still open as in-composition fly-outs
+    (`MinputDraggableMenuState.openAt`) — they host sliders / pickers a popup menu row can't.
+- **Gestures:** tap = select (replaces; a tap on a member keeps a multi-selection) + menu; HOLD =
+  lift and carry; menu Move = lifted, next drag from anywhere carries; blue copy at the origin,
+  green copy at the (snapped) landing, carried button translucent; Resize handles only after the
+  menu's Resize; a plain drag anywhere (a button included) = marquee, which opens the menu on
+  release. Taps no longer accumulate a selection; the config drawer is no longer reachable.
+- **Dropped:** "Rotate menu" (no menu to rotate — the minput component keeps the capability).
+- **Open:** Edit's rework (Dylan, next); Paste new is only reachable from a button's menu.
+
 ---
 
 ## Verification (end-to-end)

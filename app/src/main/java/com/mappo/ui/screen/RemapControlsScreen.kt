@@ -4,7 +4,21 @@ import com.mappo.ui.minput.MinputIconSize
 import com.mappo.ui.minput.MinputIcon
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import com.mappo.ui.minput.MinputAction
+import com.mappo.ui.minput.MinputMenuPlacement
+import com.mappo.ui.minput.MinputSegmentGap
+import com.mappo.ui.screen.remap.panelPlacement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -237,17 +251,24 @@ fun RemapControlsScreen(
     viewedAppPackage: String? = null,
     // ── Layout settings panel (physical Start) ─────────────────────────────────────
     optionsEntries: List<RemapOptionEntry> = emptyList(),
-    /** Opens the virtual set editor — on the given virtual set, else on its current one. */
-    onEditOverlay: (virtualSetId: Long?) -> Unit = {},
-    // ── The virtual set editor (2026-10-15): this screen's SECOND body, under the same bar ──
-    /** True while the body is the virtual editor rather than the physical controls view. */
+    /** Opens the virtual button editor — on the given virtual set, else on its current one. */
+    onEditVirtualButtons: (virtualSetId: Long?) -> Unit = {},
+    // ── The virtual button editor (2026-10-15): this screen's SECOND body, under the same bar ──
+    /** True while the body is the virtual button editor rather than the physical controls view. */
     virtualEditorOpen: Boolean = false,
     /** The virtual set the editor is on — the bar's Buttons crumb title while it is open. */
     virtualEditorSetId: Long? = null,
     /** Back to the physical editor (picking a physical set, or back). */
     onCloseVirtualEditor: () -> Unit = {},
-    /** The virtual editor itself, supplied by the host (it is ViewModel-backed). */
+    /** The virtual button editor itself, supplied by the host (it is ViewModel-backed). */
     virtualEditor: @Composable (Modifier) -> Unit = {},
+    /** The virtual button editor's toolbar row (New, Undo | Redo) — the bar's second row while
+     *  that editor is the body: under a top bar, over a bottom one, beside a side one (then
+     *  `vertical`). Its menus open [MinputMenuPlacement] away from the bar's edge. */
+    virtualEditorToolbar: @Composable (vertical: Boolean, menuPlacement: MinputMenuPlacement) -> Unit = { _, _ -> },
+    /** The virtual button editor's rows in the bar menu (Options, Layers) — read only while that
+     *  editor is the body. */
+    virtualEditorMenuActions: @Composable () -> List<MinputAction> = { emptyList() },
     // ── 2026-08-20 flow re-imagining: viewing vs active ────────────────────────────
     // True when the layout on screen IS the runtime-active layout (the home state);
     // false = a layout under inspection — the bar grows the Activate pill.
@@ -409,11 +430,11 @@ fun RemapControlsScreen(
             ?: cfg.activeActionSet
     }
     val viewingLayer = viewingSet?.layers?.firstOrNull { it.layer.id == viewingLayerId }
-    // The virtual set on screen while the virtual editor is open (its own scope, set by the bar).
+    // The virtual set on screen while the virtual button editor is open (its own scope, set by the bar).
     val viewingVirtualSet = config?.virtualSets?.let { sets ->
         sets.firstOrNull { it.actionSet.id == virtualEditorSetId } ?: sets.firstOrNull()
     }
-    // Nothing to edit (no layout at all, or the app has none): the virtual editor can't stay open.
+    // Nothing to edit (no layout at all, or the app has none): the virtual button editor can't stay open.
     LaunchedEffect(showNoLayoutState, virtualEditorOpen) {
         if (showNoLayoutState && virtualEditorOpen) onCloseVirtualEditor()
     }
@@ -442,9 +463,9 @@ fun RemapControlsScreen(
                 onSelectActionSet(snap.setId)
                 onSelectLayer(null)
             }
-            // A virtual set focus-previewed in the virtual editor goes back too.
+            // A virtual set focus-previewed in the virtual button editor goes back too.
             if (snap.virtualSetId != null && snap.virtualSetId != virtualEditorSetId) {
-                onEditOverlay(snap.virtualSetId)
+                onEditVirtualButtons(snap.virtualSetId)
             }
         }
         commitCrumb()
@@ -590,14 +611,22 @@ fun RemapControlsScreen(
         // on the top or bottom, a vertical breadcrumb down a side.
         // The bar menu's Settings row opens the frame's global-options drawer.
         val openAppDrawer = com.mappo.ui.screen.home.LocalOpenAppDrawer.current
+        val virtualBodyShown = virtualEditorOpen && !showNoLayoutState
+        // The virtual button editor's bar-menu rows — only while it is the editor on screen.
+        val editorMenuActions = if (virtualBodyShown) virtualEditorMenuActions() else emptyList()
         val hierarchyBar: @Composable (Modifier) -> Unit = { barModifier ->
             // Sized to the bar alone (it FLOATS over the content), so the screen around it
             // still takes touches — the inset off the edge included.
-            Box(
+            HierarchyBarStack(
+                pin = barPin,
                 modifier = barModifier.padding(
                     horizontal = if (barPin.sideways) HierarchyBarSlotPadding else MinputBarEdgePadding,
                     vertical = if (barPin.sideways) MinputBarEdgePadding else HierarchyBarSlotPadding,
                 ),
+                // The bar's SECOND row (2026-11-11): the virtual button editor's toolbar, on the
+                // bar's content side.
+                secondRowVisible = virtualBodyShown,
+                secondRow = { virtualEditorToolbar(barPin.sideways, barPin.panelPlacement()) },
             ) {
                 RemapHierarchyBar(
                     openCrumb = openCrumb,
@@ -641,18 +670,18 @@ fun RemapControlsScreen(
                     // A focus-preview is always of the hosting editor's own kind of set.
                     onPreviewSet = { id ->
                         if (virtualEditorOpen) {
-                            onEditOverlay(id)
+                            onEditVirtualButtons(id)
                         } else {
                             onSelectActionSet(id)
                             onSelectLayer(null)
                         }
                     },
                     // Both editors are this screen: a set of the other kind just swaps the body
-                    // under the bar (2026-10-15 — it used to leave for the overlay editor's own
+                    // under the bar (2026-10-15 — it used to leave for the virtual button editor's own
                     // activity, and come back through an exit confirm).
                     onSelectSet = { id, kind ->
                         if (kind == ActionSetKind.VIRTUAL) {
-                            onEditOverlay(id)
+                            onEditVirtualButtons(id)
                         } else {
                             onSelectActionSet(id)
                             onSelectLayer(null)
@@ -666,6 +695,7 @@ fun RemapControlsScreen(
                     collapsed = HierarchyCrumb.entries.filterTo(mutableSetOf()) { it.name in barCollapsedCrumbs },
                     onCollapsedChange = { crumbs -> onBarCollapsedCrumbsChange(crumbs.mapTo(mutableSetOf()) { it.name }) },
                     onOpenSettings = openAppDrawer,
+                    editorMenuActions = editorMenuActions,
                     compact = barCompact,
                     onCompactChange = onBarCompactChange,
                 )
@@ -687,10 +717,10 @@ fun RemapControlsScreen(
                     } else Modifier,
                 ),
         ) {
-            // The body: the physical controls view, or the virtual set editor — swapped IN PLACE
+            // The body: the physical controls view, or the virtual button editor — swapped IN PLACE
             // under the bar (2026-10-15), a crossfade rather than a trip to another activity.
             Crossfade(
-                targetState = virtualEditorOpen && !showNoLayoutState,
+                targetState = virtualBodyShown,
                 label = "editor-body",
             ) { virtualBody ->
                 if (virtualBody) {
@@ -1317,6 +1347,57 @@ private data class CrumbSnapshot(
     val previewLayoutId: Long?,
     val followsActive: Boolean,
     val setId: Long?,
-    // The virtual editor's set when the crumb opened over it (null over the physical editor).
+    // The virtual button editor's set when the crumb opened over it (null over the physical editor).
     val virtualSetId: Long? = null,
 )
+
+/**
+ * The hierarchy bar and its optional SECOND row (2026-11-11 — the virtual button editor's toolbar),
+ * stacked off the pinned edge: the bar against the edge, the row on its content side — under a top
+ * bar, over a bottom one, beside a side one. The row arrives and leaves along that axis; the bar
+ * itself never moves (the stack is aligned to the bar's edge).
+ */
+@Composable
+private fun HierarchyBarStack(
+    pin: BarPin,
+    secondRowVisible: Boolean,
+    secondRow: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    bar: @Composable () -> Unit,
+) {
+    if (pin.sideways) {
+        val row: @Composable RowScope.() -> Unit = {
+            AnimatedVisibility(
+                visible = secondRowVisible,
+                enter = fadeIn() + expandHorizontally(),
+                exit = fadeOut() + shrinkHorizontally(),
+            ) {
+                Box(Modifier.padding(if (pin == BarPin.START) PaddingValues(start = MinputSegmentGap) else PaddingValues(end = MinputSegmentGap))) {
+                    secondRow()
+                }
+            }
+        }
+        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+            if (pin == BarPin.END) row()
+            bar()
+            if (pin == BarPin.START) row()
+        }
+    } else {
+        val row: @Composable ColumnScope.() -> Unit = {
+            AnimatedVisibility(
+                visible = secondRowVisible,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                Box(Modifier.padding(if (pin == BarPin.TOP) PaddingValues(top = MinputSegmentGap) else PaddingValues(bottom = MinputSegmentGap))) {
+                    secondRow()
+                }
+            }
+        }
+        Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+            if (pin == BarPin.BOTTOM) row()
+            bar()
+            if (pin == BarPin.TOP) row()
+        }
+    }
+}
