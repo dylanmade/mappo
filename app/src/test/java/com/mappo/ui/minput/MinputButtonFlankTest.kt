@@ -41,7 +41,7 @@ class MinputButtonFlankTest {
 
     private val size = MinputSize.Large
     private val flank = MinputBoxStroke + size.contentPadding
-    private val glyphRun = size.iconSize.dp + MinputGlyphLabelGap
+    private val glyphRun = size.labelIconSize.dp + MinputGlyphLabelGap
 
     private fun assertDp(expected: Dp, actual: Dp, what: String) =
         assertEquals(what, expected.value, actual.value, 0.6f)

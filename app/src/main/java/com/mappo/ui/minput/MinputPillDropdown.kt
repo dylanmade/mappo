@@ -101,7 +101,7 @@ fun <T> MinputPillDropdown(
                     MinputIcon(
                         pillIcon,
                         contentDescription = null,
-                        size = size.iconSize,
+                        size = size.labelIconSize,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))

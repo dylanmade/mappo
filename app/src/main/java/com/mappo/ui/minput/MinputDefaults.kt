@@ -459,10 +459,10 @@ val MinputMorphCorner = 8.dp
  *
  * Each variant carries its [height] (the corner of a pill is always half of it — [corner]),
  * its horizontal [contentPadding] (between the frame and its label/glyph — ONE value per
- * variant, so a button and a field beside it measure alike), and its [iconSize] (a leading or
- * trailing glyph's INK size on the [MinputIconSize] scale; also an icon-only chromed button's
- * glyph). The text style is the mini
- * style at every size — the variants scale the frame around the text, not the text.
+ * variant, so a button and a field beside it measure alike), and its [iconSize] (the INK size,
+ * on the [MinputIconSize] scale, of a glyph standing ALONE in the frame — an icon-only button).
+ * The text style is the mini style at every size — the variants scale the frame around the
+ * text, not the text. A glyph BESIDE that text takes [labelIconSize] instead.
  *
  * Small's height is the tile height Dylan measured off the device on 2026-09-23 (42 physical
  * px at the test device's density of 2.0) — the tiles used to convert those pixels at
@@ -481,6 +481,17 @@ enum class MinputSize(val height: Dp, val contentPadding: Dp, val iconSize: Minp
 
     /** A pill at this scale: half the height. */
     val corner: Dp get() = height / 2
+
+    /**
+     * The size of a glyph sitting BESIDE a label (a button's leading / trailing icon, a
+     * dropdown's, a field's, a labelled segment's). It follows the TEXT, not the frame: the
+     * label is the mini style at every variant, so the glyph is [MinputIconSize.Xs] — about the
+     * text's own height — at every variant too. At [iconSize] (12dp on Standard / Large) the
+     * glyph stood well above and below the line of text it sat on (Dylan, 2026-11-12).
+     * [ExtraLarge] keeps its own: its glyph sits beside a two-line stack.
+     */
+    val labelIconSize: MinputIconSize
+        get() = if (this == ExtraLarge) iconSize else MinputIconSize.Xs
 }
 
 /** Width floor for pill dropdowns so short values ("None") don't collapse into a tiny chip. */

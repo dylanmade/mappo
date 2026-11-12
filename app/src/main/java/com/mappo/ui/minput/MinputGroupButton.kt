@@ -203,7 +203,8 @@ fun <T> MinputGroupButton(
                             // silhouette and a three-stroke outline do not read the same at one
                             // size (Dylan, 2026-09-27 — the editor switch's gamepad needed a
                             // step up and its layers mark did not).
-                            size = optionIconSize?.invoke(option) ?: size.iconSize,
+                            size = optionIconSize?.invoke(option)
+                                ?: if (label.isNotBlank()) size.labelIconSize else size.iconSize,
                             tint = content,
                         )
                         if (label.isNotBlank()) Spacer(Modifier.width(MinputGlyphLabelGap))

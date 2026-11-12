@@ -154,7 +154,7 @@ fun MinputTextField(
                 MinputIcon(
                     leadingIcon,
                     contentDescription = null,
-                    size = size.iconSize,
+                    size = size.labelIconSize,
                     // The glyph tracks the text slot's dimming: matched to the
                     // placeholder while empty, secondary once the field holds text —
                     // icon and placeholder read as one assembly (a device report had
@@ -415,7 +415,7 @@ internal fun MinputTextWell(
                         MinputIcon(
                             leadingIcon,
                             contentDescription = null,
-                            size = size.iconSize,
+                            size = size.labelIconSize,
                             // Matches the display pill: the glyph dims with the
                             // placeholder so the empty field reads as one assembly.
                             tint = if (value.isEmpty()) {

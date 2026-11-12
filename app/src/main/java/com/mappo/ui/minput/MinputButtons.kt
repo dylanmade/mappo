@@ -183,7 +183,7 @@ fun MinputButton(
                     MinputIcon(
                         leadingIcon,
                         contentDescription = null,
-                        size = iconSize ?: size.iconSize,
+                        size = iconSize ?: size.labelIconSize,
                         // Unspecified follows the content colour, as on the icon-only form.
                         // (Passed straight through, it drew the vector's OWN colours — a
                         // Lucide glyph came out black beside its onSurface label.)
@@ -206,7 +206,7 @@ fun MinputButton(
                     MinputIcon(
                         trailingIcon,
                         contentDescription = null,
-                        size = size.iconSize,
+                        size = size.labelIconSize,
                         tint = content,
                     )
                 }

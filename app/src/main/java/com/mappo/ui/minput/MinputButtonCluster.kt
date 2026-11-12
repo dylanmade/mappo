@@ -80,7 +80,8 @@ fun MinputClusterButton(
         // onSurface, not the bare utility grey.
         filled = true,
         leadingIcon = icon,
-        iconSize = size.iconSize,
+        // Alone, the variant's glyph (not the bare utility size); beside a label, the label's.
+        iconSize = if (text == null) size.iconSize else size.labelIconSize,
         size = size,
         contentDescription = contentDescription,
     )
