@@ -184,7 +184,10 @@ fun MinputButton(
                         leadingIcon,
                         contentDescription = null,
                         size = iconSize ?: size.iconSize,
-                        tint = leadingIconTint,
+                        // Unspecified follows the content colour, as on the icon-only form.
+                        // (Passed straight through, it drew the vector's OWN colours — a
+                        // Lucide glyph came out black beside its onSurface label.)
+                        tint = if (leadingIconTint == Color.Unspecified) content else leadingIconTint,
                     )
                     Spacer(Modifier.width(MinputGlyphLabelGap))
                 }

@@ -42,24 +42,25 @@ fun MinputButtonCluster(
         border = minputBevelBorder(container, size.corner),
         modifier = modifier,
     ) {
-        // The stroke rule: members sit inside the ring. The end inset keeps the outer members'
-        // glyphs off the pill's round ends.
+        // The stroke rule: members sit inside the ring, so a labelled member's flank measures
+        // exactly like a [MinputButton]'s beside it (stroke + the variant's content padding).
         if (vertical) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(size.height).padding(vertical = MinputClusterEndInset),
+                modifier = Modifier.width(size.height).padding(vertical = MinputBoxStroke),
             ) { content() }
         } else {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.height(size.height).padding(horizontal = MinputClusterEndInset),
+                modifier = Modifier.height(size.height).padding(horizontal = MinputBoxStroke),
             ) { content() }
         }
     }
 }
 
-/** One member of a [MinputButtonCluster]: a bare icon button at the cluster's [size], its glyph
- *  at the variant's size and the chromed buttons' label strength (the cluster is its chrome). */
+/** One member of a [MinputButtonCluster]: a bare button at the cluster's [size] — glyph + [text],
+ *  or the glyph alone when [text] is null (a vertical cluster's members) — at the variant's glyph
+ *  size and the chromed buttons' label strength (the cluster is its chrome). */
 @Composable
 fun MinputClusterButton(
     icon: ImageVector,
@@ -68,8 +69,10 @@ fun MinputClusterButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     size: MinputSize = MinputSize.Standard,
+    text: String? = null,
 ) {
     MinputButton(
+        text = text,
         onClick = onClick,
         modifier = modifier,
         enabled = enabled,
@@ -98,9 +101,6 @@ fun MinputClusterDivider(
             .background(MaterialTheme.colorScheme.outlineVariant),
     )
 }
-
-/** Air between a cluster's round end and its first / last member. */
-private val MinputClusterEndInset = 2.dp
 
 /** How far a cluster divider stops short of the container's edges, each end. */
 private val MinputClusterDividerInset = 5.dp

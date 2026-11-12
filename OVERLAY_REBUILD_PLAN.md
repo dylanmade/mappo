@@ -356,8 +356,8 @@ bar is common to both, and the "Exit overlay editing?" confirm goes. Picked (of 
   (`ui/minput/MinputDraggableMenu.kt`: core panel + rotate + cascading fly-outs + entry model).
   Its commands moved:
   - **Toolbar row** — the hierarchy bar's second row while this editor is the body
-    (`VirtualButtonEditorToolbar`; compact-bar size): **New** (menu: New button / From template)
-    and **Undo | Redo** in one `MinputButtonCluster`. Under a top bar, over a bottom one, beside
+    (`VirtualButtonEditorToolbar`; `MinputSize.Large` since 2026-11-12 — the compact-bar size read too small): **New** (menu: New button / From template)
+    and **Undo | Redo** (glyph + label each) in one `MinputButtonCluster`. Under a top bar, over a bottom one, beside
     a side one (vertical).
   - **Bar menu (hamburger)** — `virtualButtonEditorBarActions`, listed only while this editor is
     on screen: **Options** (Snapping, Show grid, 1:1 screen, Positioner) and **Layers** (the set's

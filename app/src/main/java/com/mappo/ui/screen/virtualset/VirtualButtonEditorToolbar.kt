@@ -36,10 +36,11 @@ import com.mappo.ui.minput.MinputSize
  * this editor is on screen, holding the canvas-wide verbs that used to sit on the draggable menu:
  *
  *  - **New** — its own button, opening a menu: a new button, or one from a template;
- *  - **Undo | Redo** — one shared container ([MinputButtonCluster]), a divider between them.
+ *  - **Undo | Redo** — one shared container ([MinputButtonCluster]), a divider between them,
+ *    each a glyph + its label.
  *
- * Always the hierarchy bar's COMPACT variant ([MinputSize.Standard]), whichever the bar is in.
- * [vertical] is the side-pinned bar's form: a column, New collapsed to its glyph. Menus open
+ * Always [MinputSize.Large] — one variant up from the compact bar's — whichever the bar is in.
+ * [vertical] is the side-pinned bar's form: a column, every button collapsed to its glyph. Menus open
  * [menuPlacement] — away from the edge the bar is pinned to, as the bar's own do.
  *
  * Mounted by the controls screen beside the bar (it is ViewModel-backed, so the host supplies it).
@@ -91,6 +92,7 @@ internal fun VirtualButtonEditorToolbar(
         MinputButtonCluster(size = size, vertical = vertical) {
             MinputClusterButton(
                 icon = Lucide.Undo2,
+                text = "Undo".takeUnless { vertical },
                 contentDescription = "Undo",
                 enabled = canUndo,
                 size = size,
@@ -100,6 +102,7 @@ internal fun VirtualButtonEditorToolbar(
             MinputClusterDivider(size = size, vertical = vertical)
             MinputClusterButton(
                 icon = Lucide.Redo2,
+                text = "Redo".takeUnless { vertical },
                 contentDescription = "Redo",
                 enabled = canRedo,
                 size = size,
@@ -125,8 +128,8 @@ internal fun VirtualButtonEditorToolbar(
     }
 }
 
-/** The hierarchy bar's compact variant. */
-private val ToolbarSize = MinputSize.Standard
+/** One variant above the hierarchy bar's compact one (Standard read too small, 2026-11-12). */
+private val ToolbarSize = MinputSize.Large
 
 internal const val TOOLBAR_NEW_TAG = "virtual-editor:new"
 internal const val TOOLBAR_UNDO_TAG = "virtual-editor:undo"
