@@ -3,6 +3,7 @@ package com.mappo.ui.screen.virtualset
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.lucide.AlignCenterHorizontal
@@ -18,7 +19,6 @@ import com.composables.icons.lucide.ClipboardPaste
 import com.composables.icons.lucide.Columns2
 import com.composables.icons.lucide.Command
 import com.composables.icons.lucide.Component
-import com.composables.icons.lucide.Copy
 import com.composables.icons.lucide.Crosshair
 import com.composables.icons.lucide.Frame
 import com.composables.icons.lucide.Grid3x3
@@ -29,28 +29,26 @@ import com.composables.icons.lucide.Magnet
 import com.composables.icons.lucide.Move
 import com.composables.icons.lucide.Paintbrush
 import com.composables.icons.lucide.Palette
-import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Rows2
-import com.composables.icons.lucide.Scaling
 import com.composables.icons.lucide.SlidersHorizontal
 import com.composables.icons.lucide.Square
-import com.composables.icons.lucide.Trash2
 import com.mappo.service.overlay.element.OverlayScope
 import com.mappo.ui.minput.MinputAction
 import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputDropdownMenu
 
-// Where the virtual button editor's commands live since 2026-11-11, when its draggable core menu
-// was retired (it is minput's `MinputDraggableMenu` now):
+// Where the virtual button editor's commands live (2026-11-13; the draggable core menu was retired
+// 2026-11-11 and is minput's `MinputDraggableMenu` now, the per-button context menu that
+// replaced it lasted two days):
 //
-//  - the CONTEXT MENU of a tapped button / a marquee'd selection — [virtualButtonContextActions]:
-//    Edit, Copy, Paste, Align, Templatize, Move, Resize, Delete;
+//  - the toolbar row under the hierarchy bar — New, Edit, Copy, Paste, Align, Undo | Redo, Delete
+//    (VirtualButtonEditorToolbar.kt; the menus' rows are built here);
 //  - the hierarchy bar's menu (the hamburger), while this is the editor on screen —
-//    [virtualButtonEditorBarActions]: Options, Layers;
-//  - the toolbar row under the bar — New, Undo | Redo (VirtualButtonEditorToolbar.kt).
+//    [virtualButtonEditorBarActions]: Options, Layers, Templatize.
 //
-// All of them are minput popup menus; only Edit's Assign / Customize levels (embedded sliders,
+// Move and Resize are gestures, not commands: hold a button to lift it, release to get its handles.
+// All menus are minput popup menus; only Edit's Assign / Customize levels (embedded sliders,
 // pickers, the gradient editor) still open as in-composition fly-outs beside the button.
 
 /** Log-only placeholder for menu actions whose real behaviour isn't built yet (templates). */
@@ -61,120 +59,63 @@ internal fun menuGap(name: String) {
 /** Which of Edit's fly-outs to open beside the button. */
 internal enum class EditFlyout { Assign, Customize }
 
+/** Edit's menu: the two fly-outs of the sole selected button (the toolbar's Edit needs exactly one). */
+internal fun editActions(vm: VirtualButtonEditorViewModel): List<MinputAction> = listOf(
+    // Commands + appearance: all per-button controls.
+    MinputAction("Assign", Lucide.Command, onClick = { vm.requestEdit(EditFlyout.Assign) }),
+    MinputAction("Customize", Lucide.Palette, onClick = { vm.requestEdit(EditFlyout.Customize) }),
+)
+
+/** Paste's menu. "Paste new" needs only a clipboard; "Paste style" a selection to restyle. */
+internal fun pasteActions(vm: VirtualButtonEditorViewModel, hasSelection: Boolean): List<MinputAction> = listOf(
+    MinputAction("Paste new", Lucide.ClipboardPaste, onClick = { vm.paste(styleOnly = false) }),
+    MinputAction("Paste style", Lucide.Paintbrush, enabled = hasSelection, onClick = { vm.paste(styleOnly = true) }),
+)
+
+/** Align's menu: the "Align to canvas" toggle (first), then the align / stack / space groups. */
+internal class AlignMenu(val actions: List<MinputAction>, val groups: List<List<MinputAction>>)
+
 /**
- * The context menu of the current selection — shown when a button is tapped, or a marquee is
- * released over some. The physical editor's tile menu, for virtual buttons: verbs act on the
- * whole selection; Edit needs exactly one button.
- *
- * [onEdit] opens one of the Edit fly-outs on the sole selected button; [onMove] lifts the
- * selection (the next drag carries it); [onResize] shows the resize handles.
+ * Align / space. "Align to canvas" picks the reference — off: the selection's own box (needs two
+ * or more), on: the canvas (one is enough) — and the rows enable off it.
  */
 @Composable
-internal fun virtualButtonContextActions(
-    vm: VirtualButtonEditorViewModel,
-    onEdit: (EditFlyout, elementId: Long) -> Unit,
-    onMove: () -> Unit,
-    onResize: () -> Unit,
-): List<MinputAction> {
+internal fun alignMenu(vm: VirtualButtonEditorViewModel): AlignMenu {
     val sel by vm.selectedIds.collectAsStateWithLifecycle()
-    val hasClipboard by vm.clipboardHasContent.collectAsStateWithLifecycle()
     val alignTo by vm.alignTo.collectAsStateWithLifecycle()
-    val soleId = sel.singleOrNull()
-    val hasSel = sel.isNotEmpty()
-
-    val edit = MinputAction(
-        label = "Edit",
-        icon = Lucide.Pencil,
-        enabled = soleId != null,
-        submenu = { sub ->
-            MinputActionMenu(
-                expanded = sub.expanded,
-                onDismissRequest = sub.onDismissRequest,
-                actions = listOf(
-                    // Commands + appearance: all per-button controls.
-                    MinputAction("Assign", Lucide.Command, onClick = { soleId?.let { onEdit(EditFlyout.Assign, it) } }),
-                    MinputAction("Customize", Lucide.Palette, onClick = { soleId?.let { onEdit(EditFlyout.Customize, it) } }),
-                ),
-            )
-        },
-    )
-    val copy = MinputAction("Copy", Lucide.Copy, enabled = hasSel, onClick = { vm.copySelection() })
-    val paste = MinputAction(
-        label = "Paste",
-        icon = Lucide.ClipboardPaste,
-        enabled = hasClipboard,
-        submenu = { sub ->
-            MinputActionMenu(
-                expanded = sub.expanded,
-                onDismissRequest = sub.onDismissRequest,
-                actions = listOf(
-                    MinputAction("Paste new", Lucide.ClipboardPaste, onClick = { vm.paste(styleOnly = false) }),
-                    MinputAction("Paste style", Lucide.Paintbrush, enabled = hasSel, onClick = { vm.paste(styleOnly = true) }),
-                ),
-            )
-        },
-    )
-    // Align / space. "Align to canvas" picks the reference — off: the selection's own box (needs
-    // two or more), on: the canvas (one is enough) — and the rows enable off it.
     val toCanvas = alignTo == AlignTarget.Canvas
-    val canAlign = if (toCanvas) hasSel else sel.size >= 2
-    fun alignOp(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, op: AlignOp) =
+    val canAlign = if (toCanvas) sel.isNotEmpty() else sel.size >= 2
+    fun alignOp(label: String, icon: ImageVector, op: AlignOp) =
         MinputAction(label, icon, enabled = canAlign, onClick = { vm.applyAlign(op, alignTo) })
-    val align = MinputAction(
-        label = "Align",
-        icon = Lucide.AlignStartVertical,
-        submenu = { sub ->
-            MinputActionMenu(
-                expanded = sub.expanded,
-                onDismissRequest = sub.onDismissRequest,
-                actions = listOf(
-                    // A toggle: flips in place, the menu staying up.
-                    MinputAction(
-                        "Align to canvas",
-                        Lucide.Crosshair,
-                        checked = toCanvas,
-                        onClick = { vm.alignTo.value = if (toCanvas) AlignTarget.Selection else AlignTarget.Canvas },
-                    ),
-                ),
-                actionGroups = listOf(
-                    listOf(
-                        alignOp("Align left", Lucide.AlignStartVertical, AlignOp.LEFT),
-                        alignOp("Align vertically", Lucide.AlignCenterVertical, AlignOp.CENTER_X),
-                        alignOp("Align right", Lucide.AlignEndVertical, AlignOp.RIGHT),
-                        alignOp("Align top", Lucide.AlignStartHorizontal, AlignOp.TOP),
-                        alignOp("Align horizontally", Lucide.AlignCenterHorizontal, AlignOp.CENTER_Y),
-                        alignOp("Align bottom", Lucide.AlignEndHorizontal, AlignOp.BOTTOM),
-                    ),
-                    listOf(
-                        alignOp("Stack vertically", Lucide.Rows2, AlignOp.STACK_V),
-                        alignOp("Stack horizontally", Lucide.Columns2, AlignOp.STACK_H),
-                    ),
-                    listOf(
-                        alignOp("Space vertically", Lucide.AlignVerticalSpaceAround, AlignOp.DIST_Y),
-                        alignOp("Space horizontally", Lucide.AlignHorizontalSpaceAround, AlignOp.DIST_X),
-                    ),
-                ),
-            )
-        },
+    return AlignMenu(
+        actions = listOf(
+            // A toggle: flips in place, the menu staying up.
+            MinputAction(
+                "Align to canvas",
+                Lucide.Crosshair,
+                checked = toCanvas,
+                onClick = { vm.alignTo.value = if (toCanvas) AlignTarget.Selection else AlignTarget.Canvas },
+            ),
+        ),
+        groups = listOf(
+            listOf(
+                alignOp("Align left", Lucide.AlignStartVertical, AlignOp.LEFT),
+                alignOp("Align vertically", Lucide.AlignCenterVertical, AlignOp.CENTER_X),
+                alignOp("Align right", Lucide.AlignEndVertical, AlignOp.RIGHT),
+                alignOp("Align top", Lucide.AlignStartHorizontal, AlignOp.TOP),
+                alignOp("Align horizontally", Lucide.AlignCenterHorizontal, AlignOp.CENTER_Y),
+                alignOp("Align bottom", Lucide.AlignEndHorizontal, AlignOp.BOTTOM),
+            ),
+            listOf(
+                alignOp("Stack vertically", Lucide.Rows2, AlignOp.STACK_V),
+                alignOp("Stack horizontally", Lucide.Columns2, AlignOp.STACK_H),
+            ),
+            listOf(
+                alignOp("Space vertically", Lucide.AlignVerticalSpaceAround, AlignOp.DIST_Y),
+                alignOp("Space horizontally", Lucide.AlignHorizontalSpaceAround, AlignOp.DIST_X),
+            ),
+        ),
     )
-    val templatize = MinputAction(
-        label = "Templatize",
-        icon = Lucide.Component,
-        submenu = { sub ->
-            MinputActionMenu(
-                expanded = sub.expanded,
-                onDismissRequest = sub.onDismissRequest,
-                actions = listOf(
-                    MinputAction("Whole overlay", Lucide.Frame, onClick = { menuGap("Templatize whole overlay") }),
-                    MinputAction("Selection", Lucide.BoxSelect, enabled = hasSel, onClick = { menuGap("Templatize selection") }),
-                ),
-            )
-        },
-    )
-    val move = MinputAction("Move", Lucide.Move, enabled = hasSel, onClick = onMove)
-    val resize = MinputAction("Resize", Lucide.Scaling, enabled = hasSel, onClick = onResize)
-    val delete = MinputAction("Delete", Lucide.Trash2, enabled = hasSel, destructive = true, onClick = { vm.deleteSelected() })
-    return listOf(edit, copy, paste, align, templatize, move, resize, delete)
 }
 
 /**
@@ -252,5 +193,21 @@ internal fun virtualButtonEditorBarActions(vm: VirtualButtonEditorViewModel): Li
             )
         },
     )
-    return listOf(options, layers)
+    // Stubs still (templates aren't built).
+    val hasSel by vm.selectedIds.collectAsStateWithLifecycle()
+    val templatize = MinputAction(
+        label = "Templatize",
+        icon = Lucide.Component,
+        submenu = { sub ->
+            MinputActionMenu(
+                expanded = sub.expanded,
+                onDismissRequest = sub.onDismissRequest,
+                actions = listOf(
+                    MinputAction("Whole overlay", Lucide.Frame, onClick = { menuGap("Templatize whole overlay") }),
+                    MinputAction("Selection", Lucide.BoxSelect, enabled = hasSel.isNotEmpty(), onClick = { menuGap("Templatize selection") }),
+                ),
+            )
+        },
+    )
+    return listOf(options, layers, templatize)
 }

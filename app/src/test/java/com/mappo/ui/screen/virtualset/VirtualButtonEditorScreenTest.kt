@@ -10,6 +10,8 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -37,13 +39,12 @@ import com.mappo.ui.minput.MinputMenuPlacement
 
 /**
  * The virtual button editor's canvas: one gesture layer over a stage laid out at the display's
- * size and scaled to fit. Since 2026-11-11 a tap selects and opens the context menu, a HOLD (or
- * the menu's Move) lifts and the drag commits ONCE, a plain drag is a marquee; New / Undo / Redo
- * live on the toolbar row.
+ * size and scaled to fit. A tap selects, a HOLD lifts (the drag commits ONCE) and letting go
+ * shows the resize handles, a plain drag is a marquee; every command is on the toolbar row.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], qualifiers = "w1280dp-h800dp")
-// The context menu's caret outline is a path — LEGACY graphics can't hit-test its rows.
+// A menu's caret outline is a path — LEGACY graphics can't hit-test its rows.
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class VirtualButtonEditorScreenTest {
 
@@ -100,18 +101,21 @@ class VirtualButtonEditorScreenTest {
     }
 
     @Test
-    fun tappingAButton_selectsIt_andOpensItsContextMenu() {
+    fun tappingAButton_selectsIt_andEnablesTheToolbarsVerbs() {
+        composeRule.onNodeWithTag(TOOLBAR_DELETE_TAG).assertIsNotEnabled()
         tapTheButton()
         assertEquals(setOf(1L), vm.selectedIds.value)
-        listOf("Edit", "Copy", "Paste", "Align", "Templatize", "Move", "Resize", "Delete").forEach {
-            composeRule.onNodeWithText(it).assertExists()
+        listOf(TOOLBAR_EDIT_TAG, TOOLBAR_COPY_TAG, TOOLBAR_ALIGN_TAG, TOOLBAR_DELETE_TAG).forEach {
+            composeRule.onNodeWithTag(it).assertIsEnabled()
         }
+        // No menu on the canvas any more.
+        composeRule.onAllNodesWithText("Templatize").assertCountEquals(0)
     }
 
     @Test
-    fun contextMenu_delete_deletesTheSelection() {
+    fun toolbar_delete_deletesTheSelection() {
         tapTheButton()
-        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.onNodeWithTag(TOOLBAR_DELETE_TAG).performClick()
         composeRule.waitForIdle()
         verify(exactly = 1) { editor.delete(1L) }
         assertEquals(emptySet<Long>(), vm.selectedIds.value)
@@ -120,9 +124,9 @@ class VirtualButtonEditorScreenTest {
     /** Regression (2026-10-15, re-homed): a fly-out's close dropped its content and its placement
      *  threw on the empty frame. Edit's fly-outs are what is left of that menu. */
     @Test
-    fun contextMenu_edit_opensTheAssignFlyout_andAnOutsidePressClosesIt() {
+    fun toolbar_edit_opensTheAssignFlyout_andAnOutsidePressClosesIt() {
         tapTheButton()
-        composeRule.onNodeWithText("Edit").performClick()
+        composeRule.onNodeWithTag(TOOLBAR_EDIT_TAG).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Assign").performClick()
         composeRule.waitForIdle()
@@ -148,9 +152,8 @@ class VirtualButtonEditorScreenTest {
         }
         composeRule.waitForIdle()
         verify(exactly = 0) { editor.moveResizeAll(any()) }
-        // The box covered the button: selected, and its menu is up.
+        // The box covered the button: selected.
         assertEquals(setOf(1L), vm.selectedIds.value)
-        composeRule.onNodeWithText("Copy").assertExists()
     }
 
     @Test
@@ -167,33 +170,34 @@ class VirtualButtonEditorScreenTest {
         assertMovedOnce(rects)
     }
 
-    @Test
-    fun contextMenu_move_armsTheSelection_andTheNextDragCarriesIt() {
-        val rects = slot<List<VirtualButtonEditor.ElementRect>>()
-        every { editor.moveResizeAll(capture(rects)) } returns Unit
-        tapTheButton()
-        composeRule.onNodeWithText("Move").performClick()
-        composeRule.waitForIdle()
-        // From empty space: the lifted selection follows the drag wherever it starts.
-        composeRule.onNodeWithTag(VIRTUAL_STAGE_TAG).performTouchInput {
-            swipe(Offset(width * 0.1f, height * 0.9f), Offset(width * 0.2f, height * 0.9f), durationMillis = 300)
-        }
-        composeRule.waitForIdle()
-        assertMovedOnce(rects)
-    }
-
-    @Test
-    fun resizeHandles_takeDragsOnlyAfterTheMenusResize() {
-        val rects = slot<List<VirtualButtonEditor.ElementRect>>()
-        every { editor.moveResizeAll(capture(rects)) } returns Unit
-        tapTheButton()
-        composeRule.onNodeWithText("Resize").performClick()
-        composeRule.waitForIdle()
-        // The bottom-right handle, dragged outward.
+    private fun dragTheBottomRightCornerOutward() {
         composeRule.onNodeWithTag(VIRTUAL_STAGE_TAG).performTouchInput {
             swipe(Offset(width * 0.6f, height * 0.6f), Offset(width * 0.7f, height * 0.7f), durationMillis = 300)
         }
         composeRule.waitForIdle()
+    }
+
+    @Test
+    fun resizeHandles_areNotThereForATappedButton() {
+        tapTheButton()
+        // Where the bottom-right handle would be: just a marquee.
+        dragTheBottomRightCornerOutward()
+        verify(exactly = 0) { editor.moveResizeAll(any()) }
+    }
+
+    @Test
+    fun holdingAButton_andLettingGo_showsItsResizeHandles_withoutMovingIt() {
+        val rects = slot<List<VirtualButtonEditor.ElementRect>>()
+        every { editor.moveResizeAll(capture(rects)) } returns Unit
+        composeRule.onNodeWithTag(VIRTUAL_STAGE_TAG).performTouchInput {
+            down(Offset(width * 0.5f, height * 0.5f))
+            advanceEventTime(1_000)
+            up()
+        }
+        composeRule.waitForIdle()
+        assertEquals(setOf(1L), vm.selectedIds.value)
+        verify(exactly = 0) { editor.moveResizeAll(any()) }
+        dragTheBottomRightCornerOutward()
         verify(exactly = 1) { editor.moveResizeAll(any()) }
         val r = rects.captured.single()
         assertEquals(0.4f, r.x, 0.01f)

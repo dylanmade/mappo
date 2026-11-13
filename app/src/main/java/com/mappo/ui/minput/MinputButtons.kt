@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -147,7 +149,9 @@ fun MinputButton(
                         indication = minputIndication(),
                         onClick = onClick,
                     )
-                } else Modifier.alpha(0.55f),
+                    // Dimmed, and SAID to be disabled: with no click action left, a screen
+                    // reader would otherwise read a dead button as plain text.
+                } else Modifier.alpha(0.55f).semantics { disabled() },
             ),
     ) {
         if (iconOnly) {

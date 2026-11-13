@@ -376,6 +376,18 @@ bar is common to both, and the "Exit overlay editing?" confirm goes. Picked (of 
 
 ---
 
+### 2026-11-13 — commands moved to the toolbar row; context menu removed
+
+- The per-button context menu is gone. The toolbar row is now, in order: **New ▸, Edit ▸
+  (Assign / Customize), Copy, Paste ▸, Align ▸, Undo | Redo, Delete**. Verbs act on the
+  selection and are disabled without one; Paste only needs a clipboard, so "Paste new" works on
+  an empty canvas. Edit's fly-outs still open beside the selected button (the toolbar asks the
+  canvas through `VirtualButtonEditorViewModel.editRequests`).
+- **Move and Resize are gestures only.** Hold a button to lift it; letting go (moved or not)
+  shows the resize handles, which stay while those buttons are the selection. A tap only selects.
+- **Templatize** (still a stub) moved to the bar menu beside Options and Layers.
+- `MinputButton` now reports disabled semantics when `enabled = false`.
+
 ## Verification (end-to-end)
 
 Device (single-screen phone primary; Thor secondary sanity):

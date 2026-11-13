@@ -37,11 +37,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import com.mappo.ui.minput.MinputActionMenu
 import com.mappo.ui.minput.MinputDraggableMenuFlyouts
 import com.mappo.ui.minput.MinputDraggableMenuState
 import com.mappo.ui.minput.MinputDraggableMenuWideWidthDp
-import com.mappo.ui.minput.MinputMenuPlacement
 import com.mappo.ui.minput.minputDraggableMenuHost
 import com.mappo.ui.theme.LocalMappoExtraColors
 import androidx.compose.ui.geometry.Offset
@@ -85,25 +83,24 @@ import kotlin.math.roundToInt
  * RUN-MODE need (empty space passing through to the game) — so it is one composition now:
  *
  *  - ONE gesture layer over the canvas does all the canvas gestures, hit-testing geometrically
- *    (2026-11-11 — moving and resizing are no longer what a plain drag does):
- *      · TAP a button → it is selected and its CONTEXT MENU opens beside it (the physical editor's
- *        tile menu, for virtual buttons: Edit, Copy, Paste, Align, Templatize, Move, Resize, Delete);
+ *    (2026-11-11 — moving and resizing are no longer what a plain drag does; 2026-11-13 — the
+ *    commands left the canvas for the toolbar row, and Move / Resize became pure gestures):
+ *      · TAP a button → it is selected (the toolbar's verbs act on the selection);
  *      · HOLD a button → it LIFTS (with the rest of the selection, when it is part of one) and the
- *        drag carries it. The menu's Move does the same without the hold: the selection is lifted,
- *        and the next drag — from anywhere — carries it. BLUE marks where a lifted button came
- *        from, GREEN where it will land (snapping included), as on the physical editor;
- *      · the menu's Resize shows the corner handles; dragging one scales the selection about the
- *        opposite corner. They stay until the selection changes;
+ *        drag carries it. BLUE marks where a lifted button came from, GREEN where it will land
+ *        (snapping included), as on the physical editor;
+ *      · RELEASE a held button — dragged or not — and its corner handles come up, as a
+ *        launcher's widgets do; dragging one scales the selection about the opposite corner.
+ *        They stay while those buttons stay the selection;
  *      · DRAG from anywhere else — empty space, or a button not yet held long enough — draws a
- *        marquee; releasing it selects what it covers and opens their context menu;
+ *        marquee; releasing it selects what it covers;
  *      · TAP empty space → deselect.
  *  - Live drags draw from [preview] rects and commit ONCE on release (one undo entry, one batch
  *    write); the preview holds until the write lands, so nothing flashes back to where it was.
- *  - Above the canvas: the context menu (a minput popup menu), Edit's fly-outs (the minput
- *    draggable menu's, hosted here without its core panel), the Positioner, the config drawer.
- *    The canvas-wide verbs live with the hierarchy bar: New and Undo | Redo on the toolbar row
- *    under it ([VirtualButtonEditorToolbar]), Options and Layers in its menu
- *    ([virtualButtonEditorBarActions]).
+ *  - Above the canvas: Edit's fly-outs (the minput draggable menu's, hosted here without its
+ *    core panel), the Positioner, the config drawer. Every command lives with the hierarchy bar:
+ *    the toolbar row under it ([VirtualButtonEditorToolbar]), Options, Layers and Templatize in
+ *    its menu ([virtualButtonEditorBarActions]).
  *
  * [backdrop] = a frozen shot of the game when the editor was summoned over one; else the plain
  * content plane the physical editor sits on, so the crossfade between the two is just the body.
@@ -131,23 +128,13 @@ internal fun VirtualButtonEditorScreen(
     val configId by vm.configElementId.collectAsStateWithLifecycle()
     // Edit's fly-outs (Assign / Customize) — the draggable menu's levels, with no core panel.
     val flyouts = remember { MinputDraggableMenuState() }
-    // The context menu of the selection, hung off [menuAnchor] (the selection's box, editor px,
-    // as it was when the menu opened — it must outlive a selection its own Delete just emptied).
-    var menuOpen by remember { mutableStateOf(false) }
-    var menuAnchor by remember { mutableStateOf(Rect.Zero) }
-    // The menu's Resize: the corner handles show (and take drags) only while this is on.
-    var resizeMode by remember { mutableStateOf(false) }
-    // The menu's Move: the selection is lifted, and the next drag — from anywhere — carries it.
-    var moveArmed by remember { mutableStateOf(false) }
+    // RESIZE: the corner handles show (and take drags) for the buttons a hold was just released
+    // on — moved or not, as a launcher's widgets do — and for as long as they stay the selection.
+    var resizeIds by remember { mutableStateOf(emptySet<Long>()) }
+    val resizeMode = resizeIds.isNotEmpty() && resizeIds == selected
     // A move in flight: where each carried button came from, and where it would land.
     val moveOrigin = remember { mutableStateMapOf<Long, Rect>() }
     val moveLanding = remember { mutableStateMapOf<Long, Rect>() }
-    // Both modes belong to the selection they were asked for.
-    LaunchedEffect(selected) {
-        resizeMode = false
-        moveArmed = false
-        if (selected.isEmpty()) menuOpen = false
-    }
 
     // Live geometry of a drag / resize in progress, by element id (stage px).
     val preview = remember { mutableStateMapOf<Long, Rect>() }
@@ -169,12 +156,8 @@ internal fun VirtualButtonEditorScreen(
     }
     var marquee by remember { mutableStateOf<Rect?>(null) }
 
-    BackHandler(enabled = flyouts.levels.isNotEmpty() || moveArmed || resizeMode) {
-        when {
-            flyouts.levels.isNotEmpty() -> flyouts.dismissAll()
-            moveArmed -> moveArmed = false
-            else -> resizeMode = false
-        }
+    BackHandler(enabled = flyouts.levels.isNotEmpty() || resizeMode) {
+        if (flyouts.levels.isNotEmpty()) flyouts.dismissAll() else resizeIds = emptySet()
     }
 
     // The run-mode overlay hides while the editor is ON SCREEN (its windows would sit over Mappo,
@@ -239,7 +222,6 @@ internal fun VirtualButtonEditorScreen(
         val currentSelected by rememberUpdatedState(selected)
         val currentSnap by rememberUpdatedState(snapOn)
         val currentResize by rememberUpdatedState(resizeMode)
-        val currentMoveArmed by rememberUpdatedState(moveArmed)
         val haptic = LocalHapticFeedback.current
         val rectOf: (OverlayElement) -> Rect = { el -> preview[el.id] ?: canvas.rectOf(el) }
 
@@ -260,20 +242,22 @@ internal fun VirtualButtonEditorScreen(
             flyouts.dismissAll()
         }
 
-        // Open the context menu on [ids] — beside their box as it sits now.
-        val openMenu by rememberUpdatedState<(Set<Long>) -> Unit> { ids ->
-            unionOf(ids.mapNotNull { id -> currentElements.firstOrNull { it.id == id }?.let(rectOf) })?.let { box ->
-                flyouts.dismissAll()
-                menuAnchor = toEditor(box)
-                menuOpen = true
+        // The toolbar's Edit: open the asked-for fly-out beside the one selected button.
+        val openEdit by rememberUpdatedState<(EditFlyout) -> Unit> { which ->
+            val el = currentSelected.singleOrNull()?.let { id -> currentElements.firstOrNull { it.id == id } }
+            if (el != null) {
+                val anchor = toEditor(rectOf(el))
+                when (which) {
+                    EditFlyout.Assign ->
+                        flyouts.openAt("edit:assign", anchor, MinputDraggableMenuWideWidthDp) { assignEntries(vm, el.id) }
+                    EditFlyout.Customize ->
+                        flyouts.openAt("edit:customize", anchor) { customizeEntries(vm, el.id) }
+                }
             }
         }
-        // What is lifted, and from where: a move in flight, or a selection the menu's Move armed.
-        val lifted: Map<Long, Rect> = when {
-            moveOrigin.isNotEmpty() -> moveOrigin
-            moveArmed -> elements.filter { it.id in selected }.associate { it.id to canvas.rectOf(it) }
-            else -> emptyMap()
-        }
+        LaunchedEffect(vm) { vm.editRequests.collect { openEdit(it) } }
+        // What is lifted (a move in flight), and from where.
+        val lifted: Map<Long, Rect> = moveOrigin
         val extras = LocalMappoExtraColors.current
 
         val selectionColor = MaterialTheme.colorScheme.primary
@@ -383,16 +367,13 @@ internal fun VirtualButtonEditorScreen(
                             val hit = if (corner == null) {
                                 els.sortedByDescending { it.zIndex }.firstOrNull { rectOf(it).contains(start) }
                             } else null
-                            // The menu's Move armed the selection: this press carries it, wherever it lands.
-                            val armed = currentMoveArmed && selRects.isNotEmpty()
 
                             var press = when {
-                                armed -> Press.Move
                                 corner != null -> Press.Resize
                                 hit != null -> Press.Undecided
                                 else -> Press.Marquee
                             }
-                            var group: Map<Long, Rect> = if (press == Press.Move || press == Press.Resize) selRects else emptyMap()
+                            var group: Map<Long, Rect> = if (press == Press.Resize) selRects else emptyMap()
                             // The member that snaps (the rest keep their offsets from it).
                             var primaryId = hit?.id?.takeIf { it in group } ?: group.keys.firstOrNull()
                             var dragging = false
@@ -403,9 +384,7 @@ internal fun VirtualButtonEditorScreen(
                                 // long-press time → the button lifts.
                                 when (awaitPressOutcome(down.id, start, slop)) {
                                     PressOutcome.Tap -> {
-                                        val ids = if (hit.id in sel) sel else setOf(hit.id)
                                         vm.tapElement(hit.id)
-                                        openMenu(ids)
                                         return@awaitEachGesture
                                     }
                                     PressOutcome.Cancelled -> return@awaitEachGesture
@@ -475,8 +454,9 @@ internal fun VirtualButtonEditorScreen(
                                         }
                                         moveOrigin.clear()
                                         moveLanding.clear()
-                                        // A drop ends the menu's Move — and so does a tap (a cancel).
-                                        moveArmed = false
+                                        // Let go of a held button — wherever, even where it was
+                                        // picked up — and its resize handles come up.
+                                        if (released) resizeIds = group.keys
                                     }
                                     Press.Resize -> {
                                         val rects = group.keys.mapNotNull { id -> preview[id]?.let { canvas.toElementRect(id, it) } }
@@ -488,17 +468,12 @@ internal fun VirtualButtonEditorScreen(
                                         }
                                     }
                                     else -> if (!dragging) {
-                                        if (released) {
-                                            vm.clearSelection()
-                                            resizeMode = false
-                                        }
+                                        if (released) vm.clearSelection()
                                     } else {
                                         val m = marquee
                                         if (released && m != null) {
-                                            // Select what the box covers — and open their menu.
-                                            val ids = els.filter { rectOf(it).overlaps(m) }.mapTo(mutableSetOf()) { it.id }
-                                            vm.select(ids)
-                                            if (ids.isNotEmpty()) openMenu(ids)
+                                            // Select what the box covers.
+                                            vm.select(els.filter { rectOf(it).overlaps(m) }.mapTo(mutableSetOf()) { it.id })
                                         }
                                         marquee = null
                                     }
@@ -509,33 +484,6 @@ internal fun VirtualButtonEditorScreen(
             )
         }
 
-        // The selection's context menu, hung off the selection's box (as the tile menus hang off
-        // their tile): beside it, mirrored to the other side when there's no room.
-        Box(
-            Modifier
-                .offset { IntOffset(menuAnchor.left.roundToInt(), menuAnchor.top.roundToInt()) }
-                .size(with(density) { menuAnchor.width.toDp() }, with(density) { menuAnchor.height.toDp() }),
-        ) {
-            MinputActionMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                actions = virtualButtonContextActions(
-                    vm = vm,
-                    onEdit = { which, id ->
-                        when (which) {
-                            EditFlyout.Assign ->
-                                flyouts.openAt("edit:assign", menuAnchor, MinputDraggableMenuWideWidthDp) { assignEntries(vm, id) }
-                            EditFlyout.Customize ->
-                                flyouts.openAt("edit:customize", menuAnchor) { customizeEntries(vm, id) }
-                        }
-                    },
-                    onMove = { moveArmed = true },
-                    onResize = { resizeMode = true },
-                ),
-                placement = MinputMenuPlacement.End,
-                caret = true,
-            )
-        }
         MinputDraggableMenuFlyouts(flyouts, chromeBounds)
         if (positionerOpen) Positioner(vm, canvas, chromeBounds)
 

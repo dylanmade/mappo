@@ -7,7 +7,10 @@ import com.mappo.data.settings.OverlaySettings
 import com.mappo.service.overlay.element.VirtualButtonEditor
 import com.mappo.service.overlay.element.VirtualButtonEditorSession
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -65,6 +68,16 @@ class VirtualButtonEditorViewModel @Inject constructor(
         }
     }
 
+    private val _editRequests = MutableSharedFlow<EditFlyout>(extraBufferCapacity = 1)
+
+    /** The toolbar's Edit asking the canvas to open one of the sole selected button's fly-outs
+     *  (the canvas hosts them, beside the button; the toolbar lives with the hierarchy bar). */
+    internal val editRequests: SharedFlow<EditFlyout> = _editRequests.asSharedFlow()
+
+    internal fun requestEdit(which: EditFlyout) {
+        _editRequests.tryEmit(which)
+    }
+
     fun select(ids: Set<Long>) {
         _selectedIds.value = ids
     }
@@ -75,10 +88,9 @@ class VirtualButtonEditorViewModel @Inject constructor(
 
     /**
      * Tap on a button (no drag): it becomes THE selection — unless it is already part of one,
-     * which is kept whole — and the editor then opens the context menu for whatever is selected
-     * (2026-11-11). Several buttons are selected with the marquee; taps no longer accumulate (the
-     * tap that dismisses a menu would have silently grown the selection), and the sole selection
-     * no longer opens the config drawer (editing lives in the context menu's Edit).
+     * which is kept whole. Several buttons are selected with the marquee; taps don't accumulate
+     * (2026-11-11), and the sole selection no longer opens the config drawer (editing is the
+     * toolbar's Edit).
      */
     fun tapElement(id: Long) {
         if (id !in _selectedIds.value) _selectedIds.value = setOf(id)
